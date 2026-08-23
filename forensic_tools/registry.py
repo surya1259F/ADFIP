@@ -1,9 +1,11 @@
 import sys
+import os
 import shutil
 import subprocess
 import time
+from pathlib import Path
 from typing import Dict, Any, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 class ToolDefinition(BaseModel):
     name: str
@@ -43,6 +45,7 @@ class PlatformAwareToolRegistry:
     def __init__(self):
         self.current_os = "windows" if sys.platform.startswith("win") else "linux" if sys.platform.startswith("linux") else "darwin"
         self._tools: Dict[str, ToolDefinition] = {}
+        self.root_dir = Path(__file__).resolve().parent.parent
         self._discover_and_register_tools()
 
     def _discover_and_register_tools(self):
@@ -115,16 +118,24 @@ class PlatformAwareToolRegistry:
             description="Read and parse metadata in digital images, documents, and files."
         )
 
-        # 4. Volatility 3
-        # Check standard PATH or virtualenv path
+        # 4. Volatility 3 (Check system PATH and local virtualenv)
         vol_path = shutil.which("vol.exe" if self.current_os == "windows" else "vol")
+        if not vol_path:
+            local_vol = self.root_dir / "volatility-env" / ("Scripts/vol.exe" if self.current_os == "windows" else "bin/vol")
+            if local_vol.exists():
+                vol_path = str(local_vol)
+
+        vol_ver = None
+        if vol_path:
+            vol_ver = "2.28.0"
+
         self._tools["volatility3"] = ToolDefinition(
             name="volatility3",
             display_name="Volatility 3 Memory Forensics",
             platforms=["linux", "windows", "darwin"],
             binary_name="vol",
             path=vol_path,
-            version="2.28.0" if vol_path else None,
+            version=vol_ver,
             is_available=vol_path is not None,
             supported_evidence_types=["memory_dump"],
             description="Advanced memory forensics framework for Windows, Linux, and Mac kernel dumps."
@@ -154,7 +165,6 @@ class PlatformAwareToolRegistry:
         start_time = time.time()
 
         try:
-            # Enforce shell=False and strict timeout
             res = subprocess.run(
                 cmd,
                 capture_output=True,
