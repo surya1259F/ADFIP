@@ -15,6 +15,10 @@ export const EvidencePage: React.FC = () => {
     setSelectedEvidence,
     custodyEvents,
     intakeEvidence,
+    executeDiskAnalysis,
+    executeMemoryAnalysis,
+    executeMalwareAnalysis,
+    executeLogAnalysis,
     loading,
     error
   } = useInvestigationStore();
@@ -32,6 +36,46 @@ export const EvidencePage: React.FC = () => {
       setFilePath('');
       setNotes('');
       setTimeout(() => setSuccessMsg(''), 4000);
+    } catch {
+      // Handled by store
+    }
+  };
+
+  const handleAnalyzeDisk = async (evidenceId: string) => {
+    try {
+      await executeDiskAnalysis(evidenceId);
+      setSuccessMsg('Disk analysis complete. Structured artifacts and findings recorded.');
+      setTimeout(() => setSuccessMsg(''), 5000);
+    } catch {
+      // Handled by store
+    }
+  };
+
+  const handleAnalyzeMemory = async (evidenceId: string) => {
+    try {
+      await executeMemoryAnalysis(evidenceId, 'windows.pslist');
+      setSuccessMsg('Memory analysis complete. Processes & sockets extracted.');
+      setTimeout(() => setSuccessMsg(''), 5000);
+    } catch {
+      // Handled by store
+    }
+  };
+
+  const handleAnalyzeMalware = async (evidenceId: string) => {
+    try {
+      await executeMalwareAnalysis(evidenceId, 'adfir_test_rules');
+      setSuccessMsg('Malware signature scan complete. YARA matches recorded.');
+      setTimeout(() => setSuccessMsg(''), 5000);
+    } catch {
+      // Handled by store
+    }
+  };
+
+  const handleAnalyzeLog = async (evidenceId: string) => {
+    try {
+      await executeLogAnalysis(evidenceId, 5000);
+      setSuccessMsg('Log analysis complete. Windows security events extracted.');
+      setTimeout(() => setSuccessMsg(''), 5000);
     } catch {
       // Handled by store
     }
@@ -80,7 +124,7 @@ export const EvidencePage: React.FC = () => {
               <input
                 type="text"
                 required
-                placeholder="e.g. /home/nandireddy/ADFIR/tests/fixtures/sample-evidence.txt"
+                placeholder="e.g. /home/nandireddy/ADFIR/tests/fixtures/log/sample_security_events.xml"
                 value={filePath}
                 onChange={(e) => setFilePath(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
@@ -90,7 +134,7 @@ export const EvidencePage: React.FC = () => {
               <label className="block text-slate-400 mb-1 font-mono">Acquisition Notes</label>
               <input
                 type="text"
-                placeholder="e.g. Memory dump captured by Lead Responder"
+                placeholder="e.g. Security.evtx or XML export captured from Domain Controller"
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-indigo-500"
@@ -127,7 +171,14 @@ export const EvidencePage: React.FC = () => {
               Evidence Metadata
             </h3>
             {selectedEvidence ? (
-              <EvidenceDetail evidence={selectedEvidence} />
+              <EvidenceDetail
+                evidence={selectedEvidence}
+                onAnalyzeDisk={handleAnalyzeDisk}
+                onAnalyzeMemory={handleAnalyzeMemory}
+                onAnalyzeMalware={handleAnalyzeMalware}
+                onAnalyzeLog={handleAnalyzeLog}
+                loading={loading}
+              />
             ) : (
               <div className="p-6 text-center text-xs font-mono text-slate-500 bg-slate-900/40 border border-slate-800 rounded-xl">
                 Select an evidence item to view cryptographic metadata.

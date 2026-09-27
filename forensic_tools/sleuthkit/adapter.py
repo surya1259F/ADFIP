@@ -1,57 +1,49 @@
-from typing import Dict, Any, List
-from pathlib import Path
-from forensic_tools.registry import tool_registry, ToolExecutionRequest
+from typing import Dict, Any, List, Optional
+from forensic_tools.registry import tool_registry, ToolExecutionRequest, ToolExecutionResult
 
 class SleuthKitAdapter:
     """
-    SleuthKit forensic adapter for disk image filesystem parsing.
-    Validates arguments, executes only approved binary via registry (shell=False),
-    and converts raw filesystem output into structured findings.
+    SleuthKit forensic adapter for volume and filesystem analysis.
+    Executes exclusively through the PlatformAwareToolRegistry (shell=False).
     """
 
     def __init__(self):
-        self.tool_def = tool_registry.get_tool("sleuthkit")
+        self.tool_name = "sleuthkit"
 
     def is_available(self) -> bool:
-        return self.tool_def is not None and self.tool_def.is_available
+        tool = tool_registry.get_tool(self.tool_name)
+        return tool is not None and tool.is_available
 
-    def parse_directory_structure(self, evidence_path: str, offset_sectors: int = 0) -> List[Dict[str, Any]]:
-        if not self.is_available():
-            return []
+    def get_tool_version(self) -> Optional[str]:
+        tool = tool_registry.get_tool(self.tool_name)
+        return tool.version if tool else None
 
-        args = ["-r", "-p"]
+    def execute_fls(
+        self,
+        evidence_path: str,
+        recursive: bool = True,
+        include_deleted: bool = True,
+        offset_sectors: int = 0,
+        timeout_seconds: int = 60,
+        execution_id: Optional[str] = None
+    ) -> ToolExecutionResult:
+        """
+        Executes 'fls' on a target disk/partition image.
+        Builds validated argument array without shell construction.
+        """
+        args = []
+        if recursive:
+            args.append("-r")
+        if include_deleted:
+            args.append("-p")
         if offset_sectors > 0:
             args.extend(["-o", str(offset_sectors)])
 
         req = ToolExecutionRequest(
-            tool_name="sleuthkit",
+            tool_name=self.tool_name,
             evidence_path=evidence_path,
             arguments=args,
-            timeout_seconds=60
+            timeout_seconds=timeout_seconds,
+            execution_id=execution_id
         )
-        result = tool_registry.execute_tool(req)
-        if not result.success:
-            return []
-
-        findings = []
-        for line in result.stdout.splitlines():
-            line_str = line.strip()
-            if not line_str:
-                continue
-            parts = line_str.split()
-            if len(parts) >= 3:
-                entry_type = parts[0]
-                inode = parts[1].rstrip(":")
-                file_rel_path = " ".join(parts[2:])
-                is_deleted = "*" in entry_type or "(deleted)" in line_str.lower()
-                findings.append({
-                    "tool": "SleuthKit",
-                    "finding_type": "filesystem_artifact",
-                    "title": f"Filesystem Entry: {file_rel_path}",
-                    "description": f"Inode {inode} ({'Deleted' if is_deleted else 'Allocated'}) identified in filesystem image.",
-                    "evidence_reference": f"inode:{inode}",
-                    "confidence": 1.0,
-                    "raw_output_reference": line_str,
-                    "is_deleted": is_deleted
-                })
-        return findings
+        return tool_registry.execute_tool(req)

@@ -18,9 +18,12 @@ target/
 src-tauri/target/
 
 # Evidence & Data (Never commit real forensic evidence)
-data/evidence/*
-data/cases/*
-data/*.log
+data/
+evidence/intake/*
+.adfir_prod_test_data/
+build/
+tools/
+.vscode/
 *.E01
 *.raw
 *.dd
@@ -33,3 +36,4 @@ data/*.log
 .env
 *.pem
 *.key
+

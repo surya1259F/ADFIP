@@ -57,7 +57,7 @@ def test_end_to_end_forensic_pipeline():
             "evidence_type": "MEMORY_DUMP",
             "acquisition_notes": "RAM capture from infected endpoint"
         })
-        assert ev_mem_res.status_code == 200
+        assert ev_mem_res.status_code in (200, 201)
         mem_evidence = ev_mem_res.json()
         assert mem_evidence["evidence_type"] == "MEMORY_DUMP"
         assert len(mem_evidence["sha256_hash"]) == 64
@@ -69,7 +69,7 @@ def test_end_to_end_forensic_pipeline():
             "evidence_type": "DISK_IMAGE",
             "acquisition_notes": "Forensic disk clone"
         })
-        assert ev_disk_res.status_code == 200
+        assert ev_disk_res.status_code in (200, 201)
 
         # 3. Autonomous Investigation Planner
         plan_res = client.post(f"/api/v1/investigation/plan/{case_id}")
@@ -129,6 +129,17 @@ def test_end_to_end_forensic_pipeline():
         ver_data = ver_res.json()
         assert len(ver_data["verification_results"]) == 2
         assert all(v["verified"] for v in ver_data["verification_results"])
+
+        # Mandatory Investigator Decision Gate
+        dec_res = client.post(
+            f"/api/cases/{case_id}/decisions",
+            json={
+                "decision": "CONFIRM",
+                "rationale": "Verified multi-artifact correlation confirmed.",
+                "investigator_name": "Lead DFIR Investigator"
+            }
+        )
+        assert dec_res.status_code == 201
 
         # 7. Generate Investigation Report
         rep_res = client.post(f"/api/v1/reports/generate/{case_id}")

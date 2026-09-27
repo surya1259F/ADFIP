@@ -102,7 +102,18 @@ def test_complete_evidence_investigation_pipeline():
     assert len(ver_data) == 2
     assert all(v["verification_status"] == "SUPPORTED" for v in ver_data)
 
-    # 8. Generate 19-Section Court-Ready Investigation Report
+    # 8. Mandatory Investigator Decision Gate
+    dec_res = client.post(
+        f"/api/investigations/{inv_id}/decisions",
+        json={
+            "decision": "CONFIRM",
+            "rationale": "Forensic findings verified and confirmed for official report synthesis.",
+            "investigator_name": "Lead DFIR Investigator"
+        }
+    )
+    assert dec_res.status_code == 201
+
+    # 9. Generate 19-Section Court-Ready Investigation Report
     report_res = client.post(f"/api/investigations/{inv_id}/report")
     assert report_res.status_code == 200
     report_data = report_res.json()

@@ -8,6 +8,7 @@ router = APIRouter()
 resource_mgr = ResourceManager()
 
 @router.get("/system/status", response_model=SystemStatusResponse)
+@router.get("/system/info")
 def get_system_status():
     tools = tool_registry.list_tools()
     tools_dict = {
