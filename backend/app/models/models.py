@@ -811,11 +811,6 @@ class InvestigationTask(Base):
     __tablename__ = "investigation_tasks"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    plan_id = Column(String, ForeignKey("investigation_plans.id"), nullable=False, index=True)
-    task_key = Column(String, nullable=False, index=True) # e.g. task-disk-a1b2c3d4
-    sequence = Column(Integer, nullable=False)
-    capability_id = Column(String, nullable=False, index=True)
-    agent_name = Column(String, nullable=False)
     plan_id = Column(String, ForeignKey("investigation_plans.id"), nullable=True, index=True)
     task_key = Column(String, default=lambda: f"task-{uuid.uuid4().hex[:8]}", nullable=False, index=True) # e.g. task-disk-a1b2c3d4
     sequence = Column(Integer, default=1, nullable=False)
@@ -959,14 +954,10 @@ class AnalysisRequest(Base):
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     case_id = Column(String, ForeignKey("cases.id"), nullable=False, index=True)
-    plan_id = Column(String, ForeignKey("investigation_plans.id"), nullable=False, index=True)
     plan_id = Column(String, ForeignKey("investigation_plans.id"), nullable=True, index=True)
     task_id = Column(String, ForeignKey("investigation_tasks.id"), nullable=True, index=True)
-    task_key = Column(String, nullable=False, index=True)
     task_key = Column(String, default=lambda: f"task-{uuid.uuid4().hex[:8]}", nullable=False, index=True)
     evidence_id = Column(String, ForeignKey("evidence_items.id"), nullable=True, index=True)
-    capability_id = Column(String, nullable=False, index=True)
-    selected_tool_id = Column(String, nullable=False, index=True)
     capability_id = Column(String, default="FORENSIC_ANALYSIS", nullable=False, index=True)
     selected_tool_id = Column(String, default="volatility3", nullable=False, index=True)
     resource_requirements = Column(JSON, default=dict) # {"cpu_cores": 1, "ram_mb": 512, "disk_mb": 100}
@@ -1017,15 +1008,15 @@ class ForensicExecution(Base):
     case_id = Column(String, ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True)
     plan_id = Column(String, ForeignKey("investigation_plans.id", ondelete="CASCADE"), nullable=True, index=True)
     task_id = Column(String, ForeignKey("investigation_tasks.id", ondelete="CASCADE"), nullable=True, index=True)
-    task_key = Column(String, nullable=False, index=True)
+    task_key = Column(String, default=lambda: f"task-{uuid.uuid4().hex[:8]}", nullable=False, index=True)
     evidence_id = Column(String, ForeignKey("evidence_items.id", ondelete="SET NULL"), nullable=True, index=True)
     tool_id = Column(String, nullable=False, index=True)
     tool_version = Column(String, nullable=True)
-    executable_path = Column(String, nullable=False)
+    executable_path = Column(String, default="/usr/bin/tool", nullable=False)
     validated_argv = Column(JSON, default=list, nullable=False)
-    host_platform = Column(String, nullable=False)
-    host_architecture = Column(String, nullable=False)
-    workspace_path = Column(String, nullable=False)
+    host_platform = Column(String, default="linux", nullable=False)
+    host_architecture = Column(String, default="x86_64", nullable=False)
+    workspace_path = Column(String, default="/tmp/adfir-workspace", nullable=False)
     resource_allocation = Column(JSON, default=dict)
     timeout_seconds = Column(Integer, default=300, nullable=False)
     execution_status = Column(String, default="STARTING", nullable=False, index=True) # STARTING, RUNNING, COMPLETED, FAILED, TIMEOUT, CANCELLED, RESOURCE_LIMIT, BLOCKED

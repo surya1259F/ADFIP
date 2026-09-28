@@ -2,8 +2,9 @@ import uuid
 import os
 import json
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
-from agents.base.agent import Agent
+from agents.base.agent import Agent, AgentAnalysisResult, CapabilityRequest
 from forensic_tools.sleuthkit.adapter import SleuthKitAdapter
 from forensic_tools.exiftool.adapter import ExifToolAdapter
 from agents.disk.parsers.fls_parser import FlsParser, FlsParserResult
@@ -23,7 +24,13 @@ class DiskAgent(Agent):
         super().__init__(
             name="DiskAgent",
             description="Analyzes filesystem structures, directory trees, deleted files, and file metadata.",
-            capabilities=["filesystem_analysis", "deleted_file_carving", "inode_lookup", "metadata_extraction"]
+            capabilities=["filesystem_analysis", "deleted_file_carving", "inode_lookup", "metadata_extraction"],
+            agent_id="agent-disk-forensics",
+            version="1.0.0",
+            supported_domains=["DISK", "FILESYSTEM", "STORAGE"],
+            supported_artifact_types=[
+                "FILE", "FILESYSTEM", "METADATA", "DIRECTORY", "DELETED_FILE", "DISK_IMAGE"
+            ]
         )
         self.adapter = SleuthKitAdapter()
         self.exiftool_adapter = ExifToolAdapter()
@@ -34,7 +41,6 @@ class DiskAgent(Agent):
         et = evidence_type.lower()
         return et in [
             "disk_image", "file", "filesystem_image", "document", "archive",
-            "text", "generic_binary", "malware_sample", "browser_db", "event_log", "unknown"
             "text", "generic_binary", "malware_sample", "browser_db", "browser_artifact",
             "sqlite_database", "event_log", "windows_event_log", "pe_executable",
             "elf_executable", "macho_executable", "unknown"
@@ -64,6 +70,98 @@ class DiskAgent(Agent):
                 "description": f"Extract directory tree and identify deleted entries for {ev_name}."
             }
         ]
+
+    def analyze_structured_data(
+        self,
+        structured_data: Dict[str, Any],
+        context: Optional[Dict[str, Any]] = None
+    ) -> AgentAnalysisResult:
+        normalized_artifacts = structured_data.get("normalized_artifacts") or []
+        evidence_items = structured_data.get("evidence_items") or []
+
+        observations = []
+        cap_requests = []
+        supporting_art_ids = []
+        supporting_ev_ids = []
+
+        for art in normalized_artifacts:
+            entity_type = str(art.get("entity_type", "")).upper()
+            fields = art.get("normalized_fields") or {}
+            art_id = art.get("id")
+            ev_id = art.get("evidence_id")
+            if ev_id and ev_id not in supporting_ev_ids:
+                supporting_ev_ids.append(ev_id)
+
+            file_path = str(fields.get("path") or fields.get("file_path") or fields.get("filename") or "")
+            path_lower = file_path.lower()
+            is_del = fields.get("is_deleted") or fields.get("deleted") or "deleted" in str(fields.get("status", "")).lower()
+
+            if any(k in entity_type for k in ["FILE", "FILESYSTEM", "DIRECTORY", "DELETED", "METADATA"]) or file_path:
+                supporting_art_ids.append(art_id)
+
+                # 1. Deleted file
+                if is_del:
+                    observations.append({
+                        "fact_type": "DELETED_FILE_OBSERVED",
+                        "description": f"Deleted filesystem artifact detected: '{file_path}'.",
+                        "supporting_evidence_ids": [ev_id] if ev_id else [],
+                        "supporting_artifact_ids": [art_id],
+                        "details": {"file_path": file_path, "inode": fields.get("inode"), "status": "deleted"},
+                        "confidence": 0.95
+                    })
+
+                # 2. Suspicious path
+                if any(p in path_lower for p in SUSPICIOUS_PATHS):
+                    observations.append({
+                        "fact_type": "SUSPICIOUS_FILE_LOCATION",
+                        "description": f"Filesystem entry located in suspicious/temporary directory: '{file_path}'.",
+                        "supporting_evidence_ids": [ev_id] if ev_id else [],
+                        "supporting_artifact_ids": [art_id],
+                        "details": {"file_path": file_path, "suspicious_paths_matched": [p for p in SUSPICIOUS_PATHS if p in path_lower]},
+                        "confidence": 0.85
+                    })
+
+                # 3. Suspicious extension
+                ext = Path(file_path).suffix.lower() if file_path else ""
+                if ext in SUSPICIOUS_EXTENSIONS:
+                    observations.append({
+                        "fact_type": "SUSPICIOUS_FILE_EXTENSION",
+                        "description": f"Filesystem entry possesses executable/script extension '{ext}': '{file_path}'.",
+                        "supporting_evidence_ids": [ev_id] if ev_id else [],
+                        "supporting_artifact_ids": [art_id],
+                        "details": {"file_path": file_path, "extension": ext},
+                        "confidence": 0.85
+                    })
+
+        # Generate capability requests for disk/file evidence items
+        for ev in evidence_items:
+            ev_type = str(ev.get("evidence_type", "")).lower()
+            ev_id = ev.get("id")
+            if any(t in ev_type for t in ["disk", "file", "image", "raw", "dd", "e01", "filesystem"]):
+                cap_requests.append({
+                    "capability_id": "SLEUTHKIT_FLS_LISTING",
+                    "evidence_id": ev_id,
+                    "parameters": {"extract_deleted": True},
+                    "rationale": f"Filesystem directory tree and deleted file carving requested by {self.name}",
+                    "priority": 1,
+                    "requested_by_agent": self.name
+                })
+
+        return AgentAnalysisResult(
+            agent_id=self.id,
+            agent_version=self.version,
+            analysis_type="DISK_FORENSICS_ANALYSIS",
+            observations=observations,
+            capability_requests=cap_requests,
+            supporting_evidence_ids=supporting_ev_ids,
+            supporting_artifact_ids=list(set(supporting_art_ids)),
+            supporting_correlation_ids=[],
+            supporting_finding_ids=[],
+            confidence_inputs={"matching_artifact_count": len(supporting_art_ids)},
+            confidence_score=1.0 if observations else 0.8,
+            summary=f"Disk forensics analyzed {len(supporting_art_ids)} filesystem artifacts; identified {len(observations)} observations.",
+            provenance={"agent": self.name, "version": self.version, "timestamp": datetime.now(timezone.utc).isoformat()}
+        )
 
     def _save_raw_output(
         self,
@@ -485,3 +583,6 @@ class DiskAgent(Agent):
                 "parse_errors": parse_result.parse_errors
             }
         }
+
+
+DiskForensicsAgent = DiskAgent

@@ -11,14 +11,14 @@ class ReportAgent(Agent):
     """
     Specialist Report / Summary Agent (Phase 2 / Step 16).
     Converts verified investigation state, deterministic findings, and timeline events
-    into traceable, court-ready report content with complete provenance.
+    into traceable, forensically sound formal report content with complete provenance.
     Does NOT directly execute arbitrary shell commands or invent evidence.
     """
 
     def __init__(self):
         super().__init__(
             name="ReportSummaryAgent",
-            description="Synthesizes verified findings, timeline events, and evidence provenance into traceable court-ready forensic reports.",
+            description="Synthesizes verified findings, timeline events, and evidence provenance into traceable audit-grade forensic reports.",
             capabilities=[
                 "report_synthesis",
                 "mitre_mapping",

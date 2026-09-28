@@ -78,6 +78,7 @@ from backend.app.services.findings import DeterministicFindingsService
 from backend.app.services.agents import SpecialistAgentService
 from backend.app.services.ai_reasoning import AIReasoningService
 from backend.app.services.final_report import FinalForensicReportService
+from backend.app.services.investigator_review import InvestigatorReviewService
 
 logger = logging.getLogger("ADFIR_ORCHESTRATION")
 
@@ -324,11 +325,20 @@ class InvestigationOrchestrationService:
                         parameters={"tool_id": req.selected_tool_id, "request_id": req.id},
                         user=user
                     )
+                    decision_str = str(gov_eval.decision).upper().strip()
+                    if decision_str not in ("ALLOW", "APPROVED"):
+                        req.scheduler_status = "BLOCKED"
+                        req.blocking_reason = f"Blocked by Governance Gate: {decision_str} - {gov_eval.rationale or 'Policy restriction'}"
+                        db.add(req)
+                    else:
+                        req.scheduler_status = "READY"
+                        db.add(req)
                     governance_approvals.append({
                         "request_id": req.id,
                         "decision": gov_eval.decision,
                         "governance_decision_id": gov_eval.id
                     })
+                db.commit()
 
                 progress["GOVERNANCE"] = {
                     "status": "COMPLETED",
@@ -483,8 +493,45 @@ class InvestigationOrchestrationService:
             # -------------------------------------------------------------
             elif stage == "SPECIALIST_AGENTS":
                 SpecialistAgentService.ensure_seeded(db)
+                active_agents = SpecialistAgentService.list_agents(db, enabled_only=True)
+
+                ev_items = db.query(EvidenceItem).filter(EvidenceItem.case_id == case.id).all()
+                ev_types = " ".join([str(e.evidence_type or "").upper() for e in ev_items])
+
+                executed_agents_count = 0
+                agent_results = []
+                for ag in active_agents:
+                    domains = [d.upper() for d in (ag.supported_evidence_domains or [])]
+                    match = any(d in ev_types for d in domains) or "ALL" in domains
+                    if match:
+                        try:
+                            req_rec = SpecialistAgentService.create_analysis_request(
+                                db=db,
+                                case_id=case.id,
+                                agent_id=ag.id,
+                                analysis_objective=f"Domain analysis of structured case evidence and artifacts by {ag.name}",
+                                user=user
+                            )
+                            res_rec = SpecialistAgentService.execute_analysis(
+                                db=db,
+                                request_id=req_rec.id,
+                                user=user
+                            )
+                            executed_agents_count += 1
+                            agent_results.append({
+                                "agent_id": ag.id,
+                                "agent_name": ag.name,
+                                "request_id": req_rec.id,
+                                "result_id": res_rec.id,
+                                "status": "COMPLETED"
+                            })
+                        except Exception as e:
+                            logger.warning(f"Specialist agent {ag.id} execution notice: {e}")
+
                 progress["SPECIALIST_AGENTS"] = {
                     "status": "COMPLETED",
+                    "executed_agents_count": executed_agents_count,
+                    "agent_results": agent_results,
                     "completed_at": now.isoformat()
                 }
                 run.current_stage = "GOVERNANCE_VERIFICATION"
@@ -544,9 +591,14 @@ class InvestigationOrchestrationService:
             # STAGE 15: INVESTIGATOR REVIEW
             # -------------------------------------------------------------
             elif stage == "INVESTIGATOR_REVIEW":
-                # Advance to FINAL_REPORT if reviews are complete
+                review_items = InvestigatorReviewService.get_review_items(db, case, user)
+                reviews = InvestigatorReviewService.list_reviews(db, case.id)
                 progress["INVESTIGATOR_REVIEW"] = {
                     "status": "COMPLETED",
+                    "total_items_reviewed": len(reviews),
+                    "evidence_items_count": len(review_items.evidence_items),
+                    "findings_count": len(review_items.deterministic_findings),
+                    "ai_reasoning_records_count": len(review_items.ai_reasoning_records),
                     "completed_at": now.isoformat()
                 }
                 run.current_stage = "FINAL_REPORT"

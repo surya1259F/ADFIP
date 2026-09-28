@@ -3,6 +3,8 @@ from backend.app.api.v1.endpoints import (
     system, cases, evidence, investigation, strategy,
     scheduler, executions, raw_outputs, artifacts, normalization, timeline, correlation, findings, reports, ai, users, auth,
     agents, governance, review
+    scheduler, executions, raw_outputs, artifacts, normalization,
+    timeline, correlation, findings, reports, ai, users, auth,
     agents, governance, review, orchestration, audit, recovery
 )
 

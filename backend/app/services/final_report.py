@@ -627,7 +627,7 @@ class FinalForensicReportService:
         report_meta: Dict[str, Any]
     ) -> str:
         """
-        Renders a court-ready, professional Markdown document containing all 12 sections.
+        Renders a forensically sound, audit-grade Markdown document containing all 12 sections.
         """
         case_info = sections["case_information"]
         ev_inv = sections["evidence_inventory"]

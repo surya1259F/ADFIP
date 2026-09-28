@@ -1,7 +1,7 @@
 # ADFIR — Phase 2 / Step 20: Final Forensic Report Subsystem
 
 ## Overview
-The **Final Forensic Report** subsystem synthesizes an evidence-grounded, versioned, tamper-detectable, and court-ready forensic report from the completed investigation. It unifies all 12 phases of the forensic analysis pipeline into a legally defensible forensic artifact without autonomous conclusions, ungrounded speculation, or direct mutation of historical records.
+The **Final Forensic Report** subsystem synthesizes an evidence-grounded, versioned, tamper-detectable, and audit-grade forensic report from the completed investigation. It unifies all 12 phases of the forensic analysis pipeline into a legally defensible forensic artifact without autonomous conclusions, ungrounded speculation, or direct mutation of historical records.
 
 ---
 
@@ -99,7 +99,7 @@ Every synthesized report strictly incorporates and structures the following 12 s
    - Historical snapshots are permanently preserved and individually retrievable.
 
 5. **Multi-Format Court-Ready Exports**:
-   - Supports download as formatted, court-ready Markdown (`.md`) with official verification headers or as machine-readable structured JSON (`.json`).
+   - Supports download as formatted, audit-grade Markdown (`.md`) with official verification headers or as machine-readable structured JSON (`.json`).
 
 6. **Case Isolation & RBAC Protection**:
    - Cross-case access is strictly blocked with `403 Forbidden` IDOR protection via `get_authorized_case`.

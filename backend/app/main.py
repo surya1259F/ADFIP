@@ -75,7 +75,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Internal Exception on {request.method} {request.url.path}: {str(exc)}", exc_info=True)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"detail": f"An internal error occurred during forensic processing: {str(exc)}"}
+        content={"detail": "An internal error occurred during forensic processing. Please contact your system administrator."}
     )
 
 @app.on_event("startup")

@@ -333,19 +333,13 @@ def close_case(
     current_user: User = Depends(get_current_active_user)
 ):
     case = get_authorized_case(id, db, current_user)
-
-    case.status = "CLOSED"
-    case.updated_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(case)
-
-    log_audit_event(
+    from backend.app.services.case_closure import CaseClosureService
+    from backend.app.schemas.schemas import CaseClosureRequest
+    CaseClosureService.validate_and_close_case(
         db=db,
         case_id=case.id,
-        actor_id=current_user.id,
-        actor_name=current_user.name or current_user.email,
-        event_type="CASE_CLOSED",
-        details=f"Case '{case.name}' officially closed by investigator."
+        user=current_user,
+        request_data=CaseClosureRequest(rationale=f"Case closed by {current_user.email} via case management API")
     )
     return _populate_counts(case, db)
 

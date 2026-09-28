@@ -66,9 +66,15 @@ class CaseClosureService:
         Executes formal case closure with full pre-closure verification gates.
         """
         now = datetime.now(timezone.utc)
-        case = db.query(Case).filter(Case.id == case_id).first()
-        if not case:
-            raise HTTPException(status_code=404, detail=f"Case '{case_id}' not found.")
+        from backend.app.services.authorization import get_authorized_case
+        case = get_authorized_case(case_id, db, user)
+
+        user_role = (user.role or "").upper().strip()
+        if user_role not in ("ADMIN", "ADMINISTRATOR", "ORG_ADMIN", "INVESTIGATOR", "LEAD_INVESTIGATOR"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied: User role '{user.role}' lacks permission to close cases."
+            )
 
         # Check not already closed
         if case.status in ("CLOSED", "ARCHIVED"):

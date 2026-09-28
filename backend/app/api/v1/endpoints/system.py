@@ -37,6 +37,7 @@ def system_info():
         "llm_providers_available": ["gemini", "local_llm", "openrouter"]
     }
 
+@router.post("/shutdown")
 @router.post("/system/shutdown")
 async def shutdown_backend(
     request: Request,

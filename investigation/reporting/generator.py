@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 class ReportGenerator:
     """
-    Comprehensive 19-Section Court-Ready DFIR Report Generator.
+    Comprehensive 19-Section Forensically Sound DFIR Report Generator.
     Strictly distinguishes [FACT], [INFERENCE], and [UNVERIFIED].
     Reports 'INSUFFICIENT EVIDENCE' when findings lack concrete data backing.
     """

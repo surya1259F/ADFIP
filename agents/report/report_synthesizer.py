@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 class ReportSynthesizer:
     """
     Synthesizes verified forensic facts, correlation graphs, and attack timelines
-    into a court-ready, professional DFIR Investigation Report.
+    into a forensically sound, audit-grade DFIR Investigation Report.
     """
 
     def generate_report(self, case_info: Dict[str, Any], evidence_list: List[Dict[str, Any]], findings: List[Dict[str, Any]], correlated_groups: List[Dict[str, Any]]) -> Dict[str, Any]:
