@@ -77,15 +77,6 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": "An internal error occurred during forensic processing. Please contact your system administrator."}
     )
 
-@app.on_event("startup")
-def startup_reconciliation():
-    from backend.app.core.database import SessionLocal
-    from backend.app.services.recovery import InvestigationRecoveryService
-    try:
-        with SessionLocal() as db:
-            InvestigationRecoveryService.reconcile_all_stale_executions(db)
-    except Exception as e:
-        logger.warning(f"Startup reconciliation warning: {e}")
 
 # Legacy Compatibility Routers for /api prefix (pure compatibility shims for legacy clients and root test suites)
 app.include_router(health.router, prefix="/api", tags=["Health"], include_in_schema=False)
