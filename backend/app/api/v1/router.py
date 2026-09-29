@@ -1,38 +1,160 @@
 from fastapi import APIRouter
+
 from backend.app.api.v1.endpoints import (
-    system, cases, evidence, investigation, strategy,
-    scheduler, executions, raw_outputs, artifacts, normalization, timeline, correlation, findings, reports, ai, users, auth,
-    agents, governance, review
-    scheduler, executions, raw_outputs, artifacts, normalization,
-    timeline, correlation, findings, reports, ai, users, auth,
-    agents, governance, review, orchestration, audit, recovery
+    ai,
+    agents,
+    artifacts,
+    audit,
+    auth,
+    cases,
+    correlation,
+    evidence,
+    executions,
+    findings,
+    governance,
+    investigation,
+    normalization,
+    orchestration,
+    raw_outputs,
+    recovery,
+    reports,
+    review,
+    scheduler,
+    strategy,
+    system,
+    timeline,
+    users,
 )
 
 api_router = APIRouter()
-api_router.include_router(auth.router, prefix="/auth", tags=["Auth"])
-api_router.include_router(users.router, prefix="/users", tags=["Users"])
-api_router.include_router(system.router, prefix="/system", tags=["System"])
-api_router.include_router(cases.router, prefix="/cases", tags=["Cases"])
-api_router.include_router(evidence.router, prefix="/evidence", tags=["Evidence"])
-api_router.include_router(investigation.router, prefix="/investigation", tags=["Investigation"])
-api_router.include_router(strategy.router, prefix="", tags=["Strategy"])
-api_router.include_router(scheduler.router, prefix="", tags=["Scheduler"])
-api_router.include_router(executions.router, prefix="", tags=["Executions"])
-api_router.include_router(raw_outputs.router, prefix="", tags=["Raw Outputs"])
-api_router.include_router(artifacts.router, prefix="", tags=["Artifacts"])
-api_router.include_router(normalization.router, prefix="", tags=["Normalization"])
-api_router.include_router(timeline.router, prefix="", tags=["Timeline"])
-api_router.include_router(correlation.router, prefix="", tags=["Correlation"])
-api_router.include_router(findings.router, prefix="", tags=["Findings"])
-api_router.include_router(agents.router, prefix="", tags=["Agents"])
-api_router.include_router(governance.router, prefix="", tags=["Governance"])
-api_router.include_router(review.router, prefix="", tags=["Investigator Review"])
-api_router.include_router(orchestration.router, prefix="", tags=["Investigation Orchestration"])
-api_router.include_router(audit.router, prefix="", tags=["Audit"])
-api_router.include_router(recovery.router, prefix="", tags=["Recovery & Case Closure"])
-api_router.include_router(reports.case_reports_router, prefix="", tags=["Reports"])
-api_router.include_router(reports.router, prefix="/reports", tags=["Reports"])
-api_router.include_router(ai.router, prefix="/ai", tags=["AI"])
-api_router.include_router(ai.router, prefix="", tags=["AI"])
 
+# System
+api_router.include_router(
+    system.router,
+    prefix="/system",
+    tags=["System"],
+)
 
+# Authentication / users
+api_router.include_router(
+    auth.router,
+    prefix="/auth",
+    tags=["Authentication"],
+)
+api_router.include_router(
+    users.router,
+    prefix="/users",
+    tags=["Users"],
+)
+
+# Case / evidence lifecycle
+api_router.include_router(
+    cases.router,
+    prefix="/cases",
+    tags=["Cases"],
+)
+api_router.include_router(
+    evidence.router,
+    prefix="/evidence",
+    tags=["Evidence"],
+)
+
+# Investigation planning / execution
+api_router.include_router(
+    investigation.router,
+    prefix="/investigation",
+    tags=["Investigation"],
+)
+api_router.include_router(
+    strategy.router,
+    prefix="/strategy",
+    tags=["Strategy"],
+)
+api_router.include_router(
+    scheduler.router,
+    prefix="/scheduler",
+    tags=["Scheduler"],
+)
+api_router.include_router(
+    executions.router,
+    prefix="/executions",
+    tags=["Executions"],
+)
+
+# Forensic processing
+api_router.include_router(
+    raw_outputs.router,
+    prefix="/raw-outputs",
+    tags=["Raw Outputs"],
+)
+api_router.include_router(
+    artifacts.router,
+    prefix="/artifacts",
+    tags=["Artifacts"],
+)
+api_router.include_router(
+    normalization.router,
+    prefix="/normalization",
+    tags=["Normalization"],
+)
+api_router.include_router(
+    timeline.router,
+    prefix="/timeline",
+    tags=["Timeline"],
+)
+api_router.include_router(
+    correlation.router,
+    prefix="/correlation",
+    tags=["Correlation"],
+)
+api_router.include_router(
+    findings.router,
+    prefix="/findings",
+    tags=["Findings"],
+)
+
+# Specialist agents / governance / AI
+api_router.include_router(
+    agents.router,
+    prefix="/agents",
+    tags=["Agents"],
+)
+api_router.include_router(
+    governance.router,
+    prefix="/governance",
+    tags=["Governance"],
+)
+api_router.include_router(
+    ai.router,
+    prefix="/ai",
+    tags=["AI"],
+)
+
+# Investigator review / reporting
+api_router.include_router(
+    review.router,
+    prefix="/review",
+    tags=["Investigator Review"],
+)
+api_router.include_router(
+    reports.router,
+    prefix="/reports",
+    tags=["Reports"],
+)
+
+# Runtime / audit / recovery
+api_router.include_router(
+    orchestration.router,
+    prefix="/orchestration",
+    tags=["Orchestration"],
+)
+api_router.include_router(
+    audit.router,
+    prefix="/audit",
+    tags=["Audit"],
+)
+api_router.include_router(
+    recovery.router,
+    prefix="/recovery",
+    tags=["Recovery"],
+)
