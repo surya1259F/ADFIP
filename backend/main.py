@@ -5,7 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.core.config import settings
 from backend.app.core.database import engine
-from backend.app.api.endpoints import investigations, audit, tools
+from backend.app.api.endpoints import audit, tools
+from backend.app.services.recovery import InvestigationRecoveryService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -77,17 +78,10 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": "An internal error occurred during forensic processing. Please contact your system administrator."}
     )
 
-@app.on_event("startup")
-def startup_reconciliation():
-    from backend.app.core.database import SessionLocal
-    try:
-        with SessionLocal() as db:
-            investigations.orchestrator_service.reconcile_stale_executions(db)
-    except Exception as e:
-        logger.warning(f"Startup reconciliation warning: {e}")
+
 
 # Legacy compatibility router for older investigation endpoints.
-app.include_router(investigations.router, prefix="/api/investigations", tags=["Investigations"])
+
 app.include_router(audit.router, prefix="/api", tags=["Audit"])
 app.include_router(tools.router, prefix="/api", tags=["Tools"])
 
