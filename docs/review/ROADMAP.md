@@ -106,7 +106,7 @@ This roadmap defines the ordered implementation sequence for subsequent developm
 ---
 
 ### Phase 13: Report Generation Refinements
-* **Objective:** Enhance court-ready reporting and multi-format exports.
+* **Objective:** Enhance integrity-verified reporting and multi-format exports.
 * **Scope:**
   - Add PDF generation with cryptographic report hashing.
   - Executive summary customization and investigator sign-off fields.

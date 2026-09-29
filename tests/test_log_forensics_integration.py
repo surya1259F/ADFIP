@@ -16,7 +16,7 @@ def test_log_forensics_vertical_slice_pipeline():
     """
     LOG FORENSICS VERTICAL SLICE INTEGRATION TEST:
     Executes full pipeline: Investigation -> Intake -> LogAgent Analysis ->
-    Structured Artifacts -> Candidate Findings -> Correlation -> Verification -> Court-Ready Report.
+    Structured Artifacts -> Candidate Findings -> Correlation -> Verification -> Integrity-Verified Report.
     """
     # 1. Create Investigation
     inv_res = client.post("/api/investigations/", json={

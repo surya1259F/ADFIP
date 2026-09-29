@@ -8,7 +8,7 @@ Forensic agents in ADFIR operate under fundamental safety constraints:
 1. **Zero Direct Execution**: Agents never execute subprocesses directly or construct arbitrary shell commands.
 2. **Capability Request Gate**: All forensic collection or specialized tool execution must be requested through the Step 7 Forensic Capability Registry, passing through Step 8 Resource-Aware Scheduling, Step 9 Secure Execution, and Step 10+ artifact extraction pipelines.
 3. **Strict Evidence Grounding**: Agents never speculate, fabricate evidence, or declare adversary intent. Every claim or observation must cite verifiable normalized artifact IDs or evidence IDs.
-4. **End-to-End Auditability & Integrity**: Cryptographic SHA-256 hashing, hash-chained lifecycle audits, 7-tier provenance tracing, and POSIX-isolated storage ensure court-ready defensibility.
+4. **End-to-End Auditability & Integrity**: Cryptographic SHA-256 hashing, hash-chained lifecycle audits, 7-tier provenance tracing, and POSIX-isolated storage ensure integrity-verified defensibility.
 
 ---
 

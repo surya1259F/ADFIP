@@ -61,7 +61,7 @@ flowchart TD
         CE["Deterministic Correlation Engine\n(Multi-Source Indicator Graph)"]
         VE["Verification Matrix Engine\n(SUPPORTED / UNSUPPORTED / CONFLICTING)"]
         LLM["Isolated LLM Reasoning Layer\n(Untrusted Data Sanitization)"]
-        RG["19-Section Court-Ready Report Generator\n([FACT] vs [INFERENCE] Distinction)"]
+        RG["19-Section Integrity-Verified Report Generator\n([FACT] vs [INFERENCE] Distinction)"]
 
         T1 & T2 & T3 & T4 --> SF
         SF --> CE

@@ -1,7 +1,7 @@
 # ADFIR — Phase 2 / Step 19: Investigator Review Subsystem
 
 ## Overview
-The **Investigator Review** layer introduces the mandatory human-in-the-loop authority downstream of deterministic forensic findings (Step 15) and governed AI reasoning (Step 18). Forensic conclusions and court-admissible decisions are never made autonomously by machines or AI; an authorized human investigator maintains full sovereignty over all accepted facts, inferences, and evidence requests.
+The **Investigator Review** layer introduces the mandatory human-in-the-loop authority downstream of deterministic forensic findings (Step 15) and governed AI reasoning (Step 18). Forensic conclusions and technically-verifiable decisions are never made autonomously by machines or AI; an authorized human investigator maintains full sovereignty over all accepted facts, inferences, and evidence requests.
 
 ---
 

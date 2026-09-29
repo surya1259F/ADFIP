@@ -4,9 +4,8 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.core.config import settings
-from backend.app.core.database import engine, Base, ensure_correlation_schema, ensure_planner_schema, ensure_execution_schema, ensure_user_auth_schema, ensure_case_auth_schema, ensure_evidence_schema
-from backend.app.api.endpoints import health, system, investigations, audit, tools
-from backend.app.api.v1.endpoints import cases, investigation, reports, evidence, auth, system as system_v1
+from backend.app.core.database import engine
+from backend.app.api.endpoints import investigations, audit, tools
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -24,9 +23,9 @@ app = FastAPI(
     docs_url="/api/docs"
 )
 
-import os
 import hmac
-from backend.app.core.config import settings, get_backend_port
+import os
+from backend.app.core.config import get_backend_port
 
 def get_allowed_origins() -> list:
     custom_origins = os.getenv("ADFIR_ALLOWED_ORIGINS")
@@ -87,20 +86,10 @@ def startup_reconciliation():
     except Exception as e:
         logger.warning(f"Startup reconciliation warning: {e}")
 
-# Include Routers for /api prefix
-app.include_router(health.router, prefix="/api", tags=["Health"])
-app.include_router(system.router, prefix="/api", tags=["System"])
-app.include_router(investigations.router, prefix="/api/cases", tags=["Cases"])
+# Legacy compatibility router for older investigation endpoints.
 app.include_router(investigations.router, prefix="/api/investigations", tags=["Investigations"])
 app.include_router(audit.router, prefix="/api", tags=["Audit"])
 app.include_router(tools.router, prefix="/api", tags=["Tools"])
-from backend.app.api.v1.endpoints import (
-    cases, investigation, reports, evidence, auth, system as system_v1,
-    ai, users, strategy as strategy_v1, scheduler as scheduler_v1,
-    executions as executions_v1, raw_outputs as raw_outputs_v1, artifacts as artifacts_v1,
-    normalization as normalization_v1, timeline as timeline_v1, correlation as correlation_v1,
-    findings as findings_v1
-)
 
 from backend.app.api.v1.router import api_router
 

@@ -1,11 +1,28 @@
 from fastapi import APIRouter
 from backend.app.api.v1.endpoints import (
-    system, cases, evidence, investigation, strategy,
-    scheduler, executions, raw_outputs, artifacts, normalization, timeline, correlation, findings, reports, ai, users, auth,
-    agents, governance, review
-    scheduler, executions, raw_outputs, artifacts, normalization,
-    timeline, correlation, findings, reports, ai, users, auth,
-    agents, governance, review, orchestration, audit, recovery
+    system,
+    cases,
+    evidence,
+    investigation,
+    strategy,
+    scheduler,
+    executions,
+    raw_outputs,
+    artifacts,
+    normalization,
+    timeline,
+    correlation,
+    findings,
+    reports,
+    ai,
+    users,
+    auth,
+    agents,
+    governance,
+    review,
+    orchestration,
+    audit,
+    recovery,
 )
 
 api_router = APIRouter()
@@ -33,6 +50,4 @@ api_router.include_router(recovery.router, prefix="", tags=["Recovery & Case Clo
 api_router.include_router(reports.case_reports_router, prefix="", tags=["Reports"])
 api_router.include_router(reports.router, prefix="/reports", tags=["Reports"])
 api_router.include_router(ai.router, prefix="/ai", tags=["AI"])
-api_router.include_router(ai.router, prefix="", tags=["AI"])
-
 

@@ -132,7 +132,7 @@ def run_demo():
         print(f"    - Finding {v.get('finding_id', 'N/A')[:8]}... -> {v['verification_status']} (Score: {v['confidence_score']}) | Reason: {v['reason']}")
 
     # 10. Report Generation
-    print("\n[10] Generating 19-Section Court-Ready Forensic Report...")
+    print("\n[10] Generating 19-Section Integrity-Verified Forensic Report...")
     rep_res = client.post(f"/api/investigations/{inv_id}/report").json()
     print(f"    Report Title: {rep_res['title']}")
     print(f"    Executive Summary: {rep_res['executive_summary'][:120]}...")

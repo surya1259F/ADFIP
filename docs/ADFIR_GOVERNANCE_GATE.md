@@ -9,7 +9,7 @@ The **Governance Gate** constitutes Step 17 of the ADFIR platform. It serves as 
 2. **Untrusted Data Isolation**: All forensic evidence, extracted strings, tool outputs, and user-provided inputs are treated strictly as passive **DATA**. Any instruction-like payload (prompt injection, jailbreak pattern, or override directive) is quarantined with a `REVIEW_REQUIRED` decision.
 3. **Multi-Point Verification**: Before forensic data is relied upon for correlation or reporting, its cryptographic SHA-256 storage hash, 5-tier lineage chain, tool metadata, and cross-domain consistency (contradiction detection) are deterministically validated.
 4. **Explicit Human-in-the-Loop for High-Risk Actions**: Potentially destructive, outward-facing, or sensitive actions require explicit investigator approval (`PENDING` -> `APPROVED` / `REJECTED`).
-5. **Court-Ready Auditability**: Every governance evaluation and approval is persisted with SHA-256 integrity hashing and chained into an immutable cryptographic audit log (`GovernanceAuditEvent`).
+5. **Integrity-Verified Auditability**: Every governance evaluation and approval is persisted with SHA-256 integrity hashing and chained into an immutable cryptographic audit log (`GovernanceAuditEvent`).
 
 ---
 

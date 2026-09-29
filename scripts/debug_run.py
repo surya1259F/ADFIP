@@ -133,8 +133,8 @@ def main():
         print(f"    - Status: [{vr['verification_status']}] Score: {vr['confidence_score']*100:.0f}% | Reason: {vr['reason']}")
     assert all(vr["verification_status"] == "SUPPORTED" for vr in ver_results)
 
-    # 10. Generate 19-Section Court-Ready Report
-    print_header("11. Generating 19-Section Court-Ready Investigation Report")
+    # 10. Generate 19-Section Integrity-Verified Report
+    print_header("11. Generating 19-Section Integrity-Verified Investigation Report")
     report_res = client.post(f"/api/investigations/{inv_id}/report")
     report_data = report_res.json()
     print(f"[+] Report Generated [{report_res.status_code}]: Title='{report_data['title']}'")
@@ -150,7 +150,7 @@ def main():
     print("[✓] Integrity Layer (SHA-256): VERIFIED")
     print("[✓] Multi-Agent Pipeline & Planning: OPERATIONAL")
     print("[✓] Correlation & Verification Engines: OPERATIONAL")
-    print("[✓] 19-Section Court-Ready Reporting: OPERATIONAL")
+    print("[✓] 19-Section Integrity-Verified Reporting: OPERATIONAL")
 
 if __name__ == "__main__":
     main()

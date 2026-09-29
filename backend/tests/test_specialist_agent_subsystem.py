@@ -560,7 +560,7 @@ def test_cryptographic_integrity_and_tamper_detection(db_session):
         db=db_session,
         case_id=case.id,
         agent_id="agent-report-summary",
-        analysis_objective="Generate court-ready executive report",
+        analysis_objective="Generate integrity-verified executive report",
         user=user
     )
 
