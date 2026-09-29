@@ -155,6 +155,6 @@ api_router.include_router(
 )
 api_router.include_router(
     recovery.router,
-    prefix="/recovery",
+    prefix="/cases",
     tags=["Recovery"],
 )
