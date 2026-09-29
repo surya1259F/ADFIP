@@ -109,6 +109,7 @@ class InvestigationRecoveryService:
                 InvestigationTask.run_id == run.id
             ).all()
 
+            run_has_active_procs = False
             for task in tasks:
                 if task.status == "RUNNING" or (force and task.status != "COMPLETED"):
                     recovered_tasks_count += 1
@@ -125,6 +126,7 @@ class InvestigationRecoveryService:
                         if exec_record and cls.is_process_running(exec_record):
                             # The process is still actively running in the OS.
                             # NEVER reset task to READY while its previous forensic OS process is still running.
+                            run_has_active_procs = True
                             still_running_processes_count += 1
                             recovery_details["still_running_executions"].append({
                                 "task_id": task.id,
@@ -182,24 +184,16 @@ class InvestigationRecoveryService:
                             interrupted_tasks_resumed += 1
                             recovery_details["rescheduled_requests"].append(req.id)
 
-            # Transition run to RECOVERED only if no processes are still running
-            run_has_active_proc = any(
-                item["task_id"] in [t.id for t in tasks]
-                for item in recovery_details["still_running_executions"]
-            )
-            if run_has_active_proc:
-                run.status = "RUNNING"
-                run.error_message = f"Process still running in operating system at {now.isoformat()}."
-            else:
+            # Transition run to RECOVERED only when all active OS processes have terminated
+            if not run_has_active_procs and run.status != "RECOVERED":
                 run.status = "RECOVERED"
                 run.error_message = f"Recovered from operational interruption at {now.isoformat()}."
+                progress = dict(run.stage_progress or {})
+                progress["recovered_at"] = now.isoformat()
+                run.stage_progress = progress
+                db.add(run)
                 recovered_runs_count += 1
                 recovery_details["recovered_runs"].append(run.id)
-
-            progress = dict(run.stage_progress or {})
-            progress["recovered_at"] = now.isoformat()
-            run.stage_progress = progress
-            db.add(run)
 
         # 2. Inspect orphaned AnalysisRequests with RUNNING scheduler_status
         orphan_requests = db.query(AnalysisRequest).filter(
@@ -226,6 +220,11 @@ class InvestigationRecoveryService:
             if safe_reset_stale_tasks:
                 o_req.scheduler_status = "READY"
                 o_req.failure_reason = f"Recovered from interrupted state at {now.isoformat()}"
+                if o_req.task_id:
+                    o_task = db.query(InvestigationTask).filter(InvestigationTask.id == o_req.task_id).first()
+                    if o_task and o_task.status != "COMPLETED":
+                        o_task.status = "READY"
+                        o_task.error_message = f"Recovered from interrupted state at {now.isoformat()}"
                 interrupted_tasks_resumed += 1
                 recovery_details["rescheduled_requests"].append(o_req.id)
 
@@ -283,3 +282,245 @@ class InvestigationRecoveryService:
             recovery_details=recovery_details,
             timestamp=now
         )
+
+    @classmethod
+    def reconcile_all_stale_executions(cls, db: Session) -> dict:
+        """
+        Scans persistent database across all cases to reconcile interrupted/stale runs,
+        tasks, requests, and executions after system restart or operational interruption.
+
+        Guarantees:
+        - Checks OS process activity (PID + start time) to never reset while process is alive.
+        - Verifies on-disk output SHA-256 digests before reuse; marks valid outputs COMPLETED.
+        - Safely transitions interrupted tasks/requests without valid outputs to READY for scheduler retry.
+        - Sets interrupted runs to RECOVERED once all active OS processes terminate.
+        - Idempotent and transactionally safe across multiple cases.
+        """
+        now = datetime.now(timezone.utc)
+        stats = {
+            "cases_scanned": 0,
+            "runs_recovered": 0,
+            "tasks_recovered": 0,
+            "tasks_reset": 0,
+            "outputs_preserved": 0,
+            "processes_still_running": 0,
+            "requests_recovered": 0,
+            "errors": []
+        }
+
+        try:
+            cases = db.query(Case).all()
+        except Exception as e:
+            logger.error(f"[RECOVERY] Failed to query cases for reconciliation: {e}", exc_info=True)
+            stats["errors"].append({"case_id": None, "error": str(e)})
+            return stats
+
+        stats["cases_scanned"] = len(cases)
+
+        for case in cases:
+            case_runs_recovered = 0
+            case_tasks_recovered = 0
+            case_tasks_reset = 0
+            case_outputs_preserved = 0
+            case_requests_recovered = 0
+            case_procs_running = 0
+
+            try:
+                # 1. Inspect Interrupted Investigation Runs for this case
+                stale_runs = db.query(InvestigationRun).filter(
+                    InvestigationRun.case_id == case.id,
+                    InvestigationRun.status.in_(["RUNNING", "INTERRUPTED"])
+                ).all()
+
+                for run in stale_runs:
+                    tasks = db.query(InvestigationTask).filter(
+                        InvestigationTask.run_id == run.id
+                    ).all()
+
+                    run_has_active_procs = False
+                    for task in tasks:
+                        if task.status in ("RUNNING", "INTERRUPTED"):
+                            case_tasks_recovered += 1
+                            req = db.query(AnalysisRequest).filter(
+                                AnalysisRequest.task_id == task.id
+                            ).order_by(AnalysisRequest.created_at.desc()).first()
+
+                            exec_record = None
+                            if req:
+                                exec_record = db.query(ForensicExecution).filter(
+                                    ForensicExecution.request_id == req.id
+                                ).order_by(ForensicExecution.created_at.desc()).first()
+
+                            # Process safety check: is OS process still running?
+                            if exec_record and cls.is_process_running(exec_record):
+                                run_has_active_procs = True
+                                case_procs_running += 1
+                                continue
+
+                            # Process stopped/terminated: verify outputs on disk
+                            has_valid_outputs = False
+                            if exec_record:
+                                outputs = db.query(ExecutionOutput).filter(
+                                    ExecutionOutput.execution_id == exec_record.id
+                                ).all()
+                                if outputs:
+                                    all_intact = True
+                                    for out in outputs:
+                                        if out.storage_path and os.path.exists(out.storage_path):
+                                            try:
+                                                actual_hash, _ = calculate_sha256(out.storage_path)
+                                                if actual_hash.lower() != (out.sha256_hash or "").lower():
+                                                    all_intact = False
+                                                    break
+                                            except Exception:
+                                                all_intact = False
+                                                break
+                                        else:
+                                            all_intact = False
+                                            break
+
+                                    if all_intact:
+                                        has_valid_outputs = True
+                                        case_outputs_preserved += len(outputs)
+                                        exec_record.execution_status = "COMPLETED"
+                                        if req:
+                                            req.scheduler_status = "COMPLETED"
+                                        task.status = "COMPLETED"
+
+                            if not has_valid_outputs:
+                                task.status = "READY"
+                                task.error_message = f"Recovered from interrupted state at {now.isoformat()}"
+                                if req:
+                                    req.scheduler_status = "READY"
+                                    req.failure_reason = "Interrupted by system restart/crash. Safely reset to READY."
+                                    case_requests_recovered += 1
+                                if exec_record and exec_record.execution_status == "RUNNING":
+                                    exec_record.execution_status = "CANCELLED"
+                                    exec_record.cancellation_reason = "System restart recovery."
+                                case_tasks_reset += 1
+
+                    # Transition run to RECOVERED once all active OS processes have terminated
+                    if not run_has_active_procs and run.status != "RECOVERED":
+                        run.status = "RECOVERED"
+                        run.error_message = f"Recovered from operational interruption at {now.isoformat()}."
+                        progress = dict(run.stage_progress or {})
+                        progress["recovered_at"] = now.isoformat()
+                        run.stage_progress = progress
+                        db.add(run)
+                        case_runs_recovered += 1
+
+                # 2. Inspect orphaned AnalysisRequests with RUNNING scheduler_status
+                orphan_requests = db.query(AnalysisRequest).filter(
+                    AnalysisRequest.case_id == case.id,
+                    AnalysisRequest.scheduler_status == "RUNNING"
+                ).all()
+
+                for o_req in orphan_requests:
+                    exec_rec = db.query(ForensicExecution).filter(
+                        ForensicExecution.request_id == o_req.id
+                    ).order_by(ForensicExecution.created_at.desc()).first()
+
+                    if exec_rec and cls.is_process_running(exec_rec):
+                        case_procs_running += 1
+                        continue
+
+                    has_valid_outputs = False
+                    if exec_rec:
+                        outputs = db.query(ExecutionOutput).filter(
+                            ExecutionOutput.execution_id == exec_rec.id
+                        ).all()
+                        if outputs:
+                            all_intact = True
+                            for out in outputs:
+                                if out.storage_path and os.path.exists(out.storage_path):
+                                    try:
+                                        h, _ = calculate_sha256(out.storage_path)
+                                        if h.lower() != (out.sha256_hash or "").lower():
+                                            all_intact = False
+                                            break
+                                    except Exception:
+                                        all_intact = False
+                                        break
+                                else:
+                                    all_intact = False
+                                    break
+                            if all_intact:
+                                has_valid_outputs = True
+                                case_outputs_preserved += len(outputs)
+                                exec_rec.execution_status = "COMPLETED"
+                                o_req.scheduler_status = "COMPLETED"
+                                if o_req.task_id:
+                                    o_task = db.query(InvestigationTask).filter(InvestigationTask.id == o_req.task_id).first()
+                                    if o_task and o_task.status != "COMPLETED":
+                                        o_task.status = "COMPLETED"
+
+                    if not has_valid_outputs:
+                        o_req.scheduler_status = "READY"
+                        o_req.failure_reason = f"Recovered from interrupted state at {now.isoformat()}"
+                        if exec_rec and exec_rec.execution_status == "RUNNING":
+                            exec_rec.execution_status = "CANCELLED"
+                            exec_rec.cancellation_reason = "System restart recovery."
+                        if o_req.task_id:
+                            o_task = db.query(InvestigationTask).filter(InvestigationTask.id == o_req.task_id).first()
+                            if o_task and o_task.status != "COMPLETED":
+                                o_task.status = "READY"
+                                o_task.error_message = f"Recovered from interrupted state at {now.isoformat()}"
+                                case_tasks_reset += 1
+                        case_requests_recovered += 1
+
+                # If state was modified, commit and record audit event
+                if case_runs_recovered > 0 or case_tasks_reset > 0 or case_outputs_preserved > 0 or case_requests_recovered > 0:
+                    db.commit()
+                    log_audit_event(
+                        db=db,
+                        event_type="INVESTIGATION_RECOVERED",
+                        details=(
+                            f"Global startup recovery reconciliation executed for case {case.id}. "
+                            f"Recovered {case_runs_recovered} runs, preserved {case_outputs_preserved} outputs, "
+                            f"reset {case_tasks_reset} tasks, still running procs: {case_procs_running}."
+                        ),
+                        case_id=case.id,
+                        actor_id="system",
+                        actor_name="system",
+                        metadata_json={
+                            "case_id": case.id,
+                            "runs_recovered": case_runs_recovered,
+                            "tasks_recovered": case_tasks_recovered,
+                            "tasks_reset": case_tasks_reset,
+                            "outputs_preserved": case_outputs_preserved,
+                            "processes_still_running": case_procs_running,
+                            "requests_recovered": case_requests_recovered
+                        },
+                        provenance_context={
+                            "case_id": case.id,
+                            "reconciliation_timestamp": now.isoformat()
+                        }
+                    )
+                else:
+                    db.commit()
+
+                stats["runs_recovered"] += case_runs_recovered
+                stats["tasks_recovered"] += case_tasks_recovered
+                stats["tasks_reset"] += case_tasks_reset
+                stats["outputs_preserved"] += case_outputs_preserved
+                stats["requests_recovered"] += case_requests_recovered
+                stats["processes_still_running"] += case_procs_running
+
+            except Exception as case_err:
+                logger.error(f"[RECOVERY] Error during reconciliation for case {case.id}: {case_err}", exc_info=True)
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                stats["errors"].append({
+                    "case_id": case.id,
+                    "error": str(case_err)
+                })
+
+        logger.info(
+            f"[RECOVERY] Global reconciliation finished: {stats['cases_scanned']} cases scanned, "
+            f"{stats['runs_recovered']} runs recovered, {stats['tasks_reset']} tasks reset, "
+            f"{stats['outputs_preserved']} outputs preserved, {stats['processes_still_running']} still running procs, "
+            f"{len(stats['errors'])} errors."
+        )
+        return stats
