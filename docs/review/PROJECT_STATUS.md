@@ -11,7 +11,7 @@
 
 ADFIR (**AI-Assisted Digital Forensic Investigation Platform**) is an engineering prototype designed as a cross-platform desktop application. The platform's foundational promise is strictly evidence-driven: **digital evidence and deterministic forensic tools produce facts; specialist agents organize and verify facts; the LLM operates as an isolated reasoning and reporting assistant.**
 
-As of this audit, ADFIR has achieved an **approximate planning completion metric of ~68.8%**. The core evidence ingestion, streaming 8 MiB SHA-256 integrity pipeline, immutable chain-of-custody tracking, platform-aware tool registry, autonomous triage planner, deterministic correlation engine, verification matrix, 19-section court-ready report generator, and React/TypeScript desktop frontend are **fully implemented and verified with 100% passing automated test suites**.
+As of this audit, ADFIR has achieved an **approximate planning completion metric of ~68.8%**. The core evidence ingestion, streaming 8 MiB SHA-256 integrity pipeline, immutable chain-of-custody tracking, platform-aware tool registry, autonomous triage planner, deterministic correlation engine, verification matrix, 19-section integrity-verified report generator, and React/TypeScript desktop frontend are **fully implemented and verified with 100% passing automated test suites**.
 
 Specialist agent parser loops (Memory, Malware, Log, Browser, Network) and host forensic binary deployments remain in foundation/stub state for subsequent implementation phases.
 
@@ -81,7 +81,7 @@ Specialist agent parser loops (Memory, Malware, Log, Browser, Network) and host 
 8. **Verification Engine (`investigation/verification/engine.py`):**
    - Provenance validation against tool outputs.
    - Status classification: `SUPPORTED`, `UNSUPPORTED`, `CONFLICTING`, `UNVERIFIED`.
-9. **19-Section Court-Ready Report Generator (`investigation/reporting/generator.py`):**
+9. **19-Section Integrity-Verified Report Generator (`investigation/reporting/generator.py`):**
    - Generates full Markdown forensic reports covering all 19 standardized sections.
    - Demarcates `[FACT]`, `[INFERENCE]`, and `[UNVERIFIED]`.
    - Emits `INSUFFICIENT EVIDENCE` when data is missing.

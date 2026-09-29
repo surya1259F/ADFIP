@@ -190,7 +190,7 @@ export const ReportsPage: React.FC = () => {
   return (
     <PageContainer
       title="Final Forensic Report Studio"
-      subtitle={`Case: ${activeInvestigation.name} | Evidence-grounded, versioned 12-section court-ready forensic report synthesis.`}
+      subtitle={`Case: ${activeInvestigation.name} | Evidence-grounded, versioned 12-section integrity-verified forensic report synthesis.`}
       actions={
         <div className="flex items-center gap-2">
           {selectedReport && (
@@ -389,7 +389,7 @@ export const ReportsPage: React.FC = () => {
                 { id: 'findings', label: '9-10. Findings & Verification' },
                 { id: 'decisions', label: '11. Investigator Decisions' },
                 { id: 'provenance', label: '12. Explainability & Provenance' },
-                { id: 'markdown', label: 'Court-Ready Document' }
+                { id: 'markdown', label: 'Integrity-Verified Document' }
               ].map((t) => (
                 <button
                   key={t.id}

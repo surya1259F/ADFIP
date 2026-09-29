@@ -113,7 +113,7 @@ def test_complete_evidence_investigation_pipeline():
     )
     assert dec_res.status_code == 201
 
-    # 9. Generate 19-Section Court-Ready Investigation Report
+    # 9. Generate 19-Section Integrity-Verified Investigation Report
     report_res = client.post(f"/api/investigations/{inv_id}/report")
     assert report_res.status_code == 200
     report_data = report_res.json()

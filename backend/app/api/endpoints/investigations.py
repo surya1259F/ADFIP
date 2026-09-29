@@ -309,7 +309,16 @@ def update_case(
     if case_in.description is not None:
         case.description = case_in.description
     if case_in.status is not None:
-        case.status = case_in.status
+        new_status = case_in.status.upper().strip()
+        if new_status == "CLOSED":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "Case closure is only allowed via the formal closure endpoint. "
+                    f"Use POST /api/investigations/{case.id}/close with closure rationale."
+                ),
+            )
+        case.status = new_status
 
     case.updated_at = datetime.now(timezone.utc)
     db.commit()

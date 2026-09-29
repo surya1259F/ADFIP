@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 from datetime import datetime, timezone
+from typing import Optional, Tuple
 from sqlalchemy.orm import Session
 from backend.app.models.models import ChainOfCustodyEvent
 
@@ -105,4 +106,3 @@ def verify_custody_chain(db: Session, evidence_id: str) -> Tuple[bool, Optional[
         expected_prev = event.event_hash
 
     return True, None, f"Chain of custody verified intact across {len(events)} events.", len(events)
-

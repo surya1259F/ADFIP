@@ -10,7 +10,7 @@
 * **Presenters:** ADFIR Engineering Team
 
 > **Presenter Notes:**  
-> Welcome evaluators. Today we are presenting ADFIR, a native desktop application engineered to streamline digital forensics investigations. ADFIR combines deterministic forensic tools with an isolated multi-agent reasoning layer. We emphasize that ADFIR is not an AI chatbot; it is a court-ready forensic workstation.
+> Welcome evaluators. Today we are presenting ADFIR, a native desktop application engineered to streamline digital forensics investigations. ADFIR combines deterministic forensic tools with an isolated multi-agent reasoning layer. We emphasize that ADFIR is not an AI chatbot; it is a integrity-verified forensic workstation.
 
 ---
 
@@ -30,7 +30,7 @@
 * **Streaming Integrity Pipeline:** Constant-memory (8 MiB chunks) SHA-256 calculation and immutable chain-of-custody tracking.
 * **Autonomous Multi-Agent Triage:** Autonomous planning engine selects specialist agents and tools based on evidence categories.
 * **Calibrated Verification:** Mathematical and reference-based verification checks every finding against underlying bytes/inodes.
-* **Court-Ready 19-Section Reporting:** Distinguishes verified `[FACT]`, analytical `[INFERENCE]`, and flagged `[UNVERIFIED]` data.
+* **Integrity-Verified 19-Section Reporting:** Distinguishes verified `[FACT]`, analytical `[INFERENCE]`, and flagged `[UNVERIFIED]` data.
 
 > **Presenter Notes:**  
 > ADFIR solves this by establishing a clear separation of concerns. Evidence and tools produce facts. Agents correlate facts. The verification engine validates provenance. The LLM only assists with narrative explanation and report synthesis.
@@ -101,7 +101,7 @@
   - SleuthKit Filesystem Artifact Extraction (`DiskAgent`)
   - Deterministic Multi-Source Correlation Engine
   - Provenance-Based Verification Matrix
-  - 19-Section Court-Ready Markdown Report Generator
+  - 19-Section Integrity-Verified Markdown Report Generator
   - React Desktop UI with 5 Primary Views
 
 > **Presenter Notes:**  
@@ -225,7 +225,7 @@ Evidence File ──▶ Path Validation ──▶ 8MB Chunks ──▶ SHA-256 �
 ---
 
 ## Slide 17: Conclusion & Next Milestone
-* **Conclusion:** ADFIR establishes a reliable, evidence-driven desktop forensic platform combining rigorous cryptographic integrity with automated triage and court-ready reporting.
+* **Conclusion:** ADFIR establishes a reliable, evidence-driven desktop forensic platform combining rigorous cryptographic integrity with automated triage and integrity-verified reporting.
 * **Next Immediate Deliverable:** Deepening Volatility 3 and YARA specialist agent execution.
 * **Thank You!** Questions and Feedback Welcome.
 

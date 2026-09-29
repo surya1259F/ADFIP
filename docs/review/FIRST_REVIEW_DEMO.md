@@ -113,7 +113,7 @@
   1. Navigate to **Reports** in the sidebar.
   2. Click **Synthesize 19-Section Report**.
   3. Review the rendered report in the Markdown studio.
-  4. Click **Export Markdown** to download the completed court-ready report file.
+  4. Click **Export Markdown** to download the completed integrity-verified report file.
 * **Explanation to Evaluators:**  
   *"ADFIR generates all 19 court-standardized sections (Executive Summary, Chain of Custody, Timeline, Findings, MITRE ATT&CK Mapping, IOCs, Remediation), strictly labelling `[FACT]` vs `[INFERENCE]` and declaring `INSUFFICIENT EVIDENCE` where data is absent."*
 
@@ -129,4 +129,4 @@
 | **Planning** | Autonomous multi-agent strategy | :white_check_mark: YES |
 | **Correlation** | Deterministic cross-source linking | :white_check_mark: YES |
 | **Verification** | Ground-truth reference calibration | :white_check_mark: YES |
-| **Reporting** | 19-Section court-ready synthesis | :white_check_mark: YES |
+| **Reporting** | 19-Section integrity-verified synthesis | :white_check_mark: YES |

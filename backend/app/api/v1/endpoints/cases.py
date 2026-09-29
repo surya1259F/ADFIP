@@ -205,19 +205,17 @@ def update_case(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid case status '{case_in.status}'. Valid statuses: {sorted(list(valid_statuses))}"
             )
+        if new_status == "CLOSED":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "Case closure is only allowed via the formal closure endpoint. "
+                    f"Use POST /api/v1/cases/{case.id}/close with closure rationale."
+                ),
+            )
         old_status = case.status
         case.status = new_status
         changes.append(f"status({old_status}->{new_status})")
-        if new_status == "CLOSED" and old_status != "CLOSED":
-            case.closed_at = datetime.now(timezone.utc)
-            log_audit_event(
-                db=db,
-                event_type="CASE_CLOSED",
-                details=f"Case '{case.case_number}' closed by {current_user.email}",
-                case_id=case.id,
-                actor_id=current_user.id,
-                actor_name=current_user.email
-            )
 
     case.updated_at = datetime.now(timezone.utc)
     db.add(case)

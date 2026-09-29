@@ -3,7 +3,7 @@
 ADFIR is a startup-grade cross-platform desktop application designed for digital forensic investigators, incident responders, security teams, and researchers.
 
 ## Core Architectural Promise
-> **Raw Evidence &rarr; Cryptographic SHA-256 & Chain of Custody &rarr; Autonomous Investigation Planner &rarr; Deterministic Forensic Tools & Specialist Agents &rarr; Correlation & Verification &rarr; LLM Reasoning &rarr; 19-Section Court-Ready Investigation Report.**
+> **Raw Evidence &rarr; Cryptographic SHA-256 & Chain of Custody &rarr; Autonomous Investigation Planner &rarr; Deterministic Forensic Tools & Specialist Agents &rarr; Correlation & Verification &rarr; LLM Reasoning &rarr; 19-Section Integrity-Verified Investigation Report.**
 
 The LLM is **not the source of forensic truth**. Ground truth originates exclusively from forensic tools (`SleuthKit`, `Volatility 3`, `YARA`, `ExifTool`). The LLM acts as the reasoning and reporting layer over structured, verified facts.
 

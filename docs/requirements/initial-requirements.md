@@ -10,5 +10,5 @@
 - [x] Autonomous Investigation Planner
 - [x] Deterministic Evidence Correlation Engine
 - [x] Evidence Verification Engine with confidence calibration
-- [x] 19-Section Court-Ready Investigation Report Generator
+- [x] 19-Section Integrity-Verified Investigation Report Generator
 - [x] 100% automated test coverage for unit, security, and integration workflows

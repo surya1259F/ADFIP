@@ -49,7 +49,7 @@ Forensic investigation requires distinct domain specializations. A disk analyst,
 
 ### 8. Why use an LLM at all if forensic tools provide the findings?
 **Answer:**  
-Forensic tools output thousands of raw, low-level technical strings (hex offsets, inode listings, packet dumps). Investigators need high-level synthesis: attack path reconstruction, executive summaries, MITRE ATT&CK technique mapping, and court-ready explanations. The LLM acts as an analytical reasoning assistant that translates verified facts into narrative reports.
+Forensic tools output thousands of raw, low-level technical strings (hex offsets, inode listings, packet dumps). Investigators need high-level synthesis: attack path reconstruction, executive summaries, MITRE ATT&CK technique mapping, and integrity-verified explanations. The LLM acts as an analytical reasoning assistant that translates verified facts into narrative reports.
 
 ---
 
