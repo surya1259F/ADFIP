@@ -30,6 +30,7 @@ from backend.app.schemas.schemas import (
     NormalizationBatchResponse
 )
 from backend.app.services.authorization import get_authorized_case
+from backend.app.services.case_closure import check_case_not_closed
 from backend.app.services.normalization import (
     ArtifactNormalizationService,
     NormalizedStorageManager
@@ -53,7 +54,8 @@ def normalize_execution_artifacts(
     Normalizes all structured artifacts produced by an execution into standard NormalizedArtifacts.
     Performs deterministic deduplication while retaining references to all contributing source artifacts.
     """
-    get_authorized_case(case_id, db, current_user)
+    case = get_authorized_case(case_id, db, current_user)
+    check_case_not_closed(case)
 
     execution = db.query(ForensicExecution).filter(ForensicExecution.id == execution_id).first()
     if not execution:
@@ -86,7 +88,8 @@ def normalize_single_artifact(
     """
     Normalizes a single structured artifact into a NormalizedArtifact.
     """
-    get_authorized_case(case_id, db, current_user)
+    case = get_authorized_case(case_id, db, current_user)
+    check_case_not_closed(case)
 
     sa = db.query(StructuredArtifact).filter(StructuredArtifact.id == artifact_id).first()
     if not sa:

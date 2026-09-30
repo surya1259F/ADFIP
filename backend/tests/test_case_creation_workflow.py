@@ -164,12 +164,10 @@ def test_case_legal_status_transitions(tmp_path, monkeypatch):
     case_data = client.post("/api/v1/cases/", json={"title": "Status Transition Case"}, headers=headers).json()
     case_id = case_data["id"]
 
-    # Close case
+    # Direct PATCH to CLOSED without passing closure checks must be rejected
     patch_close = client.patch(f"/api/v1/cases/{case_id}", json={"status": "CLOSED"}, headers=headers)
-    assert patch_close.status_code == 200
-    closed_data = patch_close.json()
-    assert closed_data["status"] == "CLOSED"
-    assert closed_data["closed_at"] is not None
+    assert patch_close.status_code == 422
+    assert "official final forensic report has not been generated" in patch_close.json()["detail"].lower()
 
     # Invalid status transition
     patch_invalid = client.patch(f"/api/v1/cases/{case_id}", json={"status": "INVALID_STATE"}, headers=headers)

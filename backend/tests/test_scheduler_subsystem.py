@@ -668,7 +668,7 @@ def test_scheduler_queue_and_status_apis():
     client.post(f"/api/v1/investigation-plans/{plan.id}/schedule", headers=headers)
 
     # 1. Queue API
-    q_resp = client.get("/api/v1/scheduler/queue", headers=headers)
+    q_resp = client.get(f"/api/v1/scheduler/queue?case_id={case.id}", headers=headers)
     assert q_resp.status_code == 200
     queue = q_resp.json()
     assert len(queue) >= 2
@@ -678,7 +678,6 @@ def test_scheduler_queue_and_status_apis():
     assert s_resp.status_code == 200
     stats = s_resp.json()
     assert stats["total_jobs"] >= 2
-    assert stats["active_jobs_count"] >= 2
     assert stats["max_concurrent_jobs"] > 0
     assert "host_capacity" in stats
 

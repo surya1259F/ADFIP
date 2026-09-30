@@ -1,5 +1,5 @@
 import uuid
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -14,8 +14,11 @@ from backend.app.schemas.schemas import (
     CaseMemberCreateRequest,
     CaseMemberUpdateRequest,
     CaseMemberResponse,
+    CaseClosureResponse,
     CasePermissionUpdateRequest,
     WorkspaceInitResponse,
+    InvestigatorDecisionCreate,
+    InvestigatorDecisionResponse,
 )
 from backend.app.services.authorization import (
     get_authorized_case,
@@ -74,8 +77,8 @@ def _build_case_response(c: Case, db: Session) -> CaseResponse:
     )
 
 
-@router.post("/", response_model=CaseResponse, status_code=status.HTTP_200_OK)
-@router.post("", response_model=CaseResponse, status_code=status.HTTP_200_OK)
+@router.post("/", response_model=CaseResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=CaseResponse, status_code=status.HTTP_201_CREATED)
 def create_case(
     case_in: CaseCreate,
     db: Session = Depends(get_db),
@@ -123,7 +126,7 @@ def create_case(
                 ensure_case_member(case_id=new_case.id, user_id=m_user.id, db=db, role=m_req.role)
 
     # Initialize workspace automatically
-    initialize_case_workspace(new_case, db=db, actor_id=current_user.id, actor_name=current_user.email)
+    initialize_case_workspace(new_case, db=db, actor_id=current_user.id, actor_name=current_user.name or current_user.email)
 
     # Audit log
     log_audit_event(
@@ -132,7 +135,7 @@ def create_case(
         details=f"Case '{new_case.case_number}' ({new_case.name}) created by {current_user.email}",
         case_id=new_case.id,
         actor_id=current_user.id,
-        actor_name=current_user.email,
+        actor_name=current_user.name or current_user.email,
         metadata_json={
             "case_number": new_case.case_number,
             "case_type": new_case.case_type,
@@ -173,6 +176,9 @@ def update_case(
 ):
     case = get_authorized_case(case_id, db, current_user)
     require_case_admin(case, db, current_user)
+    from backend.app.services.case_closure import check_case_not_closed, CaseClosureService
+    from backend.app.schemas.schemas import CaseClosureRequest
+    check_case_not_closed(case)
 
     changes = []
     if case_in.name is not None or case_in.title is not None:
@@ -205,19 +211,24 @@ def update_case(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid case status '{case_in.status}'. Valid statuses: {sorted(list(valid_statuses))}"
             )
-        old_status = case.status
-        case.status = new_status
-        changes.append(f"status({old_status}->{new_status})")
-        if new_status == "CLOSED" and old_status != "CLOSED":
-            case.closed_at = datetime.now(timezone.utc)
-            log_audit_event(
+        if new_status == "CLOSED":
+            # Delegate directly to authoritative CaseClosureService
+            CaseClosureService.validate_and_close_case(
                 db=db,
-                event_type="CASE_CLOSED",
-                details=f"Case '{case.case_number}' closed by {current_user.email}",
                 case_id=case.id,
-                actor_id=current_user.id,
-                actor_name=current_user.email
+                user=current_user,
+                request_data=CaseClosureRequest(rationale=f"Case closed by {current_user.email} via case management API")
             )
+            return _build_case_response(case, db)
+        elif new_status == "ARCHIVED":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Active cases cannot be directly archived. The case must first be formally closed."
+            )
+        else:
+            old_status = case.status
+            case.status = new_status
+            changes.append(f"status({old_status}->{new_status})")
 
     case.updated_at = datetime.now(timezone.utc)
     db.add(case)
@@ -246,6 +257,8 @@ def initialize_workspace_endpoint(
 ):
     case = get_authorized_case(case_id, db, current_user)
     require_case_admin(case, db, current_user)
+    from backend.app.services.case_closure import check_case_not_closed
+    check_case_not_closed(case)
     res = initialize_case_workspace(case, db, actor_id=current_user.id, actor_name=current_user.email)
     return WorkspaceInitResponse(
         case_id=res["case_id"],
@@ -298,6 +311,8 @@ def add_case_member(
 ):
     case = get_authorized_case(case_id, db, current_user)
     require_case_admin(case, db, current_user)
+    from backend.app.services.case_closure import check_case_not_closed
+    check_case_not_closed(case)
 
     target_user = None
     if member_in.user_id:
@@ -308,7 +323,7 @@ def add_case_member(
     if not target_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found."
+            detail="User not found"
         )
 
     # Check for existing membership
@@ -356,6 +371,8 @@ def update_case_member(
 ):
     case = get_authorized_case(case_id, db, current_user)
     require_case_admin(case, db, current_user)
+    from backend.app.services.case_closure import check_case_not_closed
+    check_case_not_closed(case)
 
     member = db.query(CaseMember).filter(
         CaseMember.case_id == case.id,
@@ -400,6 +417,8 @@ def remove_case_member(
 ):
     case = get_authorized_case(case_id, db, current_user)
     require_case_admin(case, db, current_user)
+    from backend.app.services.case_closure import check_case_not_closed
+    check_case_not_closed(case)
 
     if case.owner_id == user_id:
         raise HTTPException(
@@ -452,6 +471,8 @@ def update_case_permissions(
 ):
     case = get_authorized_case(case_id, db, current_user)
     require_case_admin(case, db, current_user)
+    from backend.app.services.case_closure import check_case_not_closed
+    check_case_not_closed(case)
 
     current_perms = dict(case.case_permissions or DEFAULT_CASE_PERMISSIONS)
     current_perms.update(perms_in.permissions)
@@ -490,3 +511,155 @@ def intake_case_evidence(
         evidence_type=payload.get("evidence_type")
     )
     return intake_evidence(payload=intake_req, db=db, current_user=current_user)
+
+
+@router.post("/{case_id}/close", response_model=CaseClosureResponse)
+def close_case_endpoint(
+    case_id: str,
+    payload: Optional[Dict[str, Any]] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    case = get_authorized_case(case_id, db, current_user)
+    require_case_admin(case, db, current_user)
+    from backend.app.services.case_closure import CaseClosureService
+    from backend.app.schemas.schemas import CaseClosureRequest
+    rationale = (payload or {}).get("rationale") or f"Case closed by {current_user.email} via case management API"
+    return CaseClosureService.validate_and_close_case(
+        db=db,
+        case_id=case.id,
+        user=current_user,
+        request_data=CaseClosureRequest(rationale=rationale)
+    )
+
+
+@router.post("/{case_id}/archive", response_model=CaseResponse)
+def archive_case_endpoint(
+    case_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    case = get_authorized_case(case_id, db, current_user)
+    require_case_admin(case, db, current_user)
+    if case.status != "CLOSED":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Active cases cannot be directly archived. The case must first be formally closed."
+        )
+    case.status = "ARCHIVED"
+    case.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(case)
+
+    log_audit_event(
+        db=db,
+        case_id=case.id,
+        actor_id=current_user.id,
+        actor_name=current_user.email,
+        event_type="CASE_ARCHIVED",
+        details=f"Case '{case.name}' moved to immutable long-term archive."
+    )
+    return _build_case_response(case, db)
+
+
+# -----------------------------------------------------------------------------
+# Case Decisions & Execution Compatibility Routes
+# -----------------------------------------------------------------------------
+
+@router.post("/{case_id}/decisions", response_model=InvestigatorDecisionResponse, status_code=status.HTTP_201_CREATED)
+def record_case_decision_compat(
+    case_id: str,
+    dec_in: InvestigatorDecisionCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    from backend.app.models.models import InvestigatorDecision
+    from backend.app.services.case_closure import check_case_not_closed
+
+    case = get_authorized_case(case_id, db, current_user)
+    check_case_not_closed(case)
+
+    investigator_name = current_user.name or current_user.email
+
+    decision = InvestigatorDecision(
+        case_id=case.id,
+        investigator_id=current_user.id,
+        investigator_name=investigator_name,
+        decision=dec_in.decision,
+        rationale=dec_in.rationale,
+        finding_ids=dec_in.finding_ids,
+        evidence_ids=dec_in.evidence_ids
+    )
+    db.add(decision)
+    db.commit()
+    db.refresh(decision)
+
+    log_audit_event(
+        db=db,
+        case_id=case.id,
+        actor_id=current_user.id,
+        actor_name=investigator_name,
+        event_type="DECISION_RECORDED",
+        details=f"Official decision '{decision.decision}' signed by investigator '{investigator_name}'. Rationale: {decision.rationale}"
+    )
+    return decision
+
+
+@router.get("/{case_id}/decisions", response_model=List[InvestigatorDecisionResponse])
+def get_case_decisions_compat(
+    case_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    from backend.app.models.models import InvestigatorDecision
+    case = get_authorized_case(case_id, db, current_user)
+    return db.query(InvestigatorDecision).filter(InvestigatorDecision.case_id == case.id).all()
+
+
+@router.get("/{case_id}/executions")
+def list_case_executions_compat(
+    case_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    from backend.app.models.models import ToolExecution
+    case = get_authorized_case(case_id, db, current_user)
+    return db.query(ToolExecution).filter(ToolExecution.case_id == case.id).all()
+
+
+@router.get("/{case_id}/executions/{execution_id}")
+def get_case_execution_compat(
+    case_id: str,
+    execution_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    from backend.app.models.models import ToolExecution
+    case = get_authorized_case(case_id, db, current_user)
+    exec_rec = (
+        db.query(ToolExecution)
+        .filter(ToolExecution.id == execution_id, ToolExecution.case_id == case.id)
+        .first()
+    )
+    if not exec_rec:
+        raise HTTPException(status_code=404, detail="Tool execution record not found.")
+    return exec_rec
+
+
+@router.post("/{case_id}/plan/execute")
+def execute_case_plan_compat(
+    case_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    case = get_authorized_case(case_id, db, current_user)
+    from backend.app.services.case_closure import check_case_not_closed
+    check_case_not_closed(case)
+
+    from backend.app.api.endpoints.investigations import orchestrator_service
+    try:
+        return orchestrator_service.execute_plan(case_id=case.id, db=db)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except RuntimeError as re:
+        raise HTTPException(status_code=500, detail=str(re))

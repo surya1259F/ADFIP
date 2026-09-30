@@ -59,10 +59,20 @@ def create_user_and_token(email_prefix: str, name: str = "Test Investigator"):
     return user_id, email, headers
 
 
-def create_case_with_data(headers: dict, db: SessionLocal):
-    case_res = client.post("/api/v1/cases/", json={"name": f"Investigation {uuid.uuid4().hex[:6]}"}, headers=headers)
-    assert case_res.status_code == 200, f"Case creation failed: {case_res.text}"
-    case_id = case_res.json()["id"]
+def create_case_with_data(owner_user_id: str, owner_email: str, db: SessionLocal):
+    case_id = str(uuid.uuid4())
+    case = Case(
+        id=case_id,
+        name=f"Investigation {case_id[:8]}",
+        case_number=f"CAS-{case_id[:6]}",
+        owner_id=owner_user_id,
+        created_by=owner_email,
+        status="OPEN"
+    )
+    db.add(case)
+    db.commit()
+
+    ensure_case_member(case_id=case_id, user_id=owner_user_id, db=db, role="PRIMARY_INVESTIGATOR")
 
     evidence = EvidenceItem(
         id=str(uuid.uuid4()),
@@ -114,7 +124,7 @@ def test_2_unauthorized_case_returns_403(db_session):
     user_a_id, user_a_email, headers_a = create_user_and_token("usera")
     user_b_id, user_b_email, headers_b = create_user_and_token("userb")
 
-    case_b_id, _, _ = create_case_with_data(headers_b, db_session)
+    case_b_id, _, _ = create_case_with_data(user_b_id, user_b_email, db_session)
 
     res = client.post("/api/v1/ai/copilot", headers=headers_a, json={
         "case_id": case_b_id,
@@ -128,7 +138,7 @@ def test_2_unauthorized_case_returns_403(db_session):
 # -----------------------------------------------------------------------------
 def test_3_authorized_case_copilot_success(db_session):
     user_id, email, headers = create_user_and_token("user1")
-    case_id, _, _ = create_case_with_data(headers, db_session)
+    case_id, _, _ = create_case_with_data(user_id, email, db_session)
 
     res = client.post("/api/v1/ai/copilot", headers=headers, json={
         "case_id": case_id,
@@ -149,7 +159,7 @@ def test_4_client_cannot_override_identity(db_session):
     user_a_id, user_a_email, headers_a = create_user_and_token("usera4")
     user_b_id, user_b_email, _ = create_user_and_token("userb4")
 
-    case_a_id, _, _ = create_case_with_data(headers_a, db_session)
+    case_a_id, _, _ = create_case_with_data(user_a_id, user_a_email, db_session)
 
     res = client.post(
         "/api/v1/ai/copilot",
@@ -160,9 +170,8 @@ def test_4_client_cannot_override_identity(db_session):
         }
     )
     assert res.status_code == 200
-    db_session.expire_all()
     # Audit log actor must equal User A
-    event = db_session.query(AuditEvent).filter(AuditEvent.case_id == case_a_id).order_by(AuditEvent.timestamp.desc()).first()
+    event = db_session.query(AuditEvent).filter(AuditEvent.case_id == case_a_id).order_by(AuditEvent.created_at.desc()).first()
     assert event is not None
     assert event.actor_id == user_a_id
 
@@ -172,9 +181,9 @@ def test_4_client_cannot_override_identity(db_session):
 # -----------------------------------------------------------------------------
 def test_5_cross_case_copilot_denied(db_session):
     user_a_id, user_a_email, headers_a = create_user_and_token("user_a5")
-    user_b_id, user_b_email, headers_b = create_user_and_token("user_b5")
+    user_b_id, user_b_email, _ = create_user_and_token("user_b5")
 
-    case_b_id, _, _ = create_case_with_data(headers_b, db_session)
+    case_b_id, _, _ = create_case_with_data(user_b_id, user_b_email, db_session)
 
     res = client.post("/api/v1/ai/copilot", headers=headers_a, json={
         "case_id": case_b_id,
@@ -202,9 +211,9 @@ def test_6_nonexistent_case_returns_404():
 # -----------------------------------------------------------------------------
 def test_7_cross_case_finding_explanation_denied(db_session):
     user_a_id, user_a_email, headers_a = create_user_and_token("usera7")
-    user_b_id, user_b_email, headers_b = create_user_and_token("userb7")
+    user_b_id, user_b_email, _ = create_user_and_token("userb7")
 
-    case_b_id, finding_b_id, _ = create_case_with_data(headers_b, db_session)
+    case_b_id, finding_b_id, _ = create_case_with_data(user_b_id, user_b_email, db_session)
 
     res = client.post("/api/v1/ai/explain-finding", headers=headers_a, json={
         "case_id": case_b_id,
@@ -218,7 +227,7 @@ def test_7_cross_case_finding_explanation_denied(db_session):
 # -----------------------------------------------------------------------------
 def test_8_nonexistent_finding_returns_404(db_session):
     user_id, email, headers = create_user_and_token("user8")
-    case_id, _, _ = create_case_with_data(headers, db_session)
+    case_id, _, _ = create_case_with_data(user_id, email, db_session)
     fake_finding_id = str(uuid.uuid4())
 
     res = client.post("/api/v1/ai/explain-finding", headers=headers, json={
@@ -233,7 +242,7 @@ def test_8_nonexistent_finding_returns_404(db_session):
 # -----------------------------------------------------------------------------
 def test_9_authorized_finding_explanation(db_session):
     user_id, email, headers = create_user_and_token("user9")
-    case_id, finding_id, _ = create_case_with_data(headers, db_session)
+    case_id, finding_id, _ = create_case_with_data(user_id, email, db_session)
 
     res = client.post("/api/v1/ai/explain-finding", headers=headers, json={
         "case_id": case_id,
@@ -272,9 +281,8 @@ def test_11_12_13_provider_test_credential_handling(db_session):
     assert MOCK_SECRET_KEY not in json.dumps(data)
     assert "api_key" not in data
 
-    db_session.expire_all()
     # 13. API key absent from audit payload
-    audit_event = db_session.query(AuditEvent).filter(AuditEvent.actor_id == user_id).order_by(AuditEvent.timestamp.desc()).first()
+    audit_event = db_session.query(AuditEvent).filter(AuditEvent.actor_id == user_id).order_by(AuditEvent.created_at.desc()).first()
     assert audit_event is not None
     assert MOCK_SECRET_KEY not in audit_event.details
     assert MOCK_SECRET_KEY not in json.dumps(audit_event.metadata_json)
@@ -285,7 +293,7 @@ def test_11_12_13_provider_test_credential_handling(db_session):
 # -----------------------------------------------------------------------------
 def test_14_external_provider_blocked_by_local_only(db_session):
     user_id, email, headers = create_user_and_token("user14")
-    case_id, _, _ = create_case_with_data(headers, db_session)
+    case_id, _, _ = create_case_with_data(user_id, email, db_session)
 
     res = client.post("/api/v1/ai/copilot", headers=headers, json={
         "case_id": case_id,
@@ -305,7 +313,7 @@ def test_14_external_provider_blocked_by_local_only(db_session):
 # -----------------------------------------------------------------------------
 def test_15_external_provider_blocked_by_external_provider_blocked(db_session):
     user_id, email, headers = create_user_and_token("user15")
-    case_id, _, _ = create_case_with_data(headers, db_session)
+    case_id, _, _ = create_case_with_data(user_id, email, db_session)
 
     res = client.post("/api/v1/ai/copilot", headers=headers, json={
         "case_id": case_id,
@@ -324,7 +332,7 @@ def test_15_external_provider_blocked_by_external_provider_blocked(db_session):
 # -----------------------------------------------------------------------------
 def test_16_17_external_provider_allowed_and_no_raw_evidence(monkeypatch, db_session):
     user_id, email, headers = create_user_and_token("user16")
-    case_id, finding_id, _ = create_case_with_data(headers, db_session)
+    case_id, finding_id, _ = create_case_with_data(user_id, email, db_session)
 
     captured_prompt = []
 
@@ -367,7 +375,7 @@ def test_16_17_external_provider_allowed_and_no_raw_evidence(monkeypatch, db_ses
 # -----------------------------------------------------------------------------
 def test_18_empty_query_rejected(db_session):
     user_id, email, headers = create_user_and_token("user18")
-    case_id, _, _ = create_case_with_data(headers, db_session)
+    case_id, _, _ = create_case_with_data(user_id, email, db_session)
 
     res = client.post("/api/v1/ai/copilot", headers=headers, json={
         "case_id": case_id,
@@ -381,7 +389,7 @@ def test_18_empty_query_rejected(db_session):
 # -----------------------------------------------------------------------------
 def test_19_oversized_query_rejected(db_session):
     user_id, email, headers = create_user_and_token("user19")
-    case_id, _, _ = create_case_with_data(headers, db_session)
+    case_id, _, _ = create_case_with_data(user_id, email, db_session)
 
     res = client.post("/api/v1/ai/copilot", headers=headers, json={
         "case_id": case_id,
@@ -407,7 +415,7 @@ def test_20_malformed_provider_config_rejected(db_session):
 # -----------------------------------------------------------------------------
 def test_21_provider_failure_preserves_fallback_metadata(monkeypatch, db_session):
     user_id, email, headers = create_user_and_token("user21")
-    case_id, _, _ = create_case_with_data(headers, db_session)
+    case_id, _, _ = create_case_with_data(user_id, email, db_session)
 
     def mock_handler(request: httpx.Request):
         return httpx.Response(500, json={"error": "Provider internal error"})
@@ -434,7 +442,7 @@ def test_21_provider_failure_preserves_fallback_metadata(monkeypatch, db_session
 # -----------------------------------------------------------------------------
 def test_22_provider_success_preserves_metadata(monkeypatch, db_session):
     user_id, email, headers = create_user_and_token("user22")
-    case_id, _, _ = create_case_with_data(headers, db_session)
+    case_id, _, _ = create_case_with_data(user_id, email, db_session)
 
     def mock_handler(request: httpx.Request):
         return httpx.Response(200, json={
@@ -469,7 +477,7 @@ def test_22_provider_success_preserves_metadata(monkeypatch, db_session):
 # -----------------------------------------------------------------------------
 def test_23_malformed_ai_output_preserves_fallback_metadata(monkeypatch, db_session):
     user_id, email, headers = create_user_and_token("user23")
-    case_id, _, _ = create_case_with_data(headers, db_session)
+    case_id, _, _ = create_case_with_data(user_id, email, db_session)
 
     def mock_handler(request: httpx.Request):
         return httpx.Response(200, json={
@@ -498,7 +506,7 @@ def test_23_malformed_ai_output_preserves_fallback_metadata(monkeypatch, db_sess
 # -----------------------------------------------------------------------------
 def test_24_audit_event_created_for_success(db_session):
     user_id, email, headers = create_user_and_token("user24")
-    case_id, _, _ = create_case_with_data(headers, db_session)
+    case_id, _, _ = create_case_with_data(user_id, email, db_session)
 
     res = client.post("/api/v1/ai/copilot", headers=headers, json={
         "case_id": case_id,
@@ -506,7 +514,6 @@ def test_24_audit_event_created_for_success(db_session):
     })
     assert res.status_code == 200
 
-    db_session.expire_all()
     audit_event = db_session.query(AuditEvent).filter(
         AuditEvent.case_id == case_id,
         AuditEvent.event_type == "AI_COPILOT_QUERY"
@@ -534,7 +541,6 @@ def test_25_audit_event_created_for_failed_provider_test(monkeypatch, db_session
     assert res.status_code == 200
     assert res.json()["status"] == "FAILED"
 
-    db_session.expire_all()
     audit_event = db_session.query(AuditEvent).filter(
         AuditEvent.actor_id == user_id,
         AuditEvent.event_type == "AI_PROVIDER_TEST"
@@ -569,7 +575,7 @@ def test_26_no_credential_leakage_in_exceptions(monkeypatch, db_session):
 # -----------------------------------------------------------------------------
 def test_27_28_no_prompt_or_response_leakage_in_audit(db_session):
     user_id, email, headers = create_user_and_token("user27")
-    case_id, _, _ = create_case_with_data(headers, db_session)
+    case_id, _, _ = create_case_with_data(user_id, email, db_session)
     sensitive_query = "SUPER_SECRET_INVESTIGATION_PROMPT_STRING_123"
 
     res = client.post("/api/v1/ai/copilot", headers=headers, json={
@@ -578,7 +584,6 @@ def test_27_28_no_prompt_or_response_leakage_in_audit(db_session):
     })
     assert res.status_code == 200
 
-    db_session.expire_all()
     audit_event = db_session.query(AuditEvent).filter(
         AuditEvent.case_id == case_id,
         AuditEvent.event_type == "AI_COPILOT_QUERY"
@@ -593,7 +598,7 @@ def test_27_28_no_prompt_or_response_leakage_in_audit(db_session):
 # -----------------------------------------------------------------------------
 def test_29_explain_finding_resolves_server_side(db_session):
     user_id, email, headers = create_user_and_token("user29")
-    case_id, finding_id, _ = create_case_with_data(headers, db_session)
+    case_id, finding_id, _ = create_case_with_data(user_id, email, db_session)
 
     res = client.post("/api/v1/ai/explain-finding", headers=headers, json={
         "case_id": case_id,
@@ -611,7 +616,7 @@ def test_29_explain_finding_resolves_server_side(db_session):
 # -----------------------------------------------------------------------------
 def test_30_33_ai_cannot_mutate_forensic_state(db_session):
     user_id, email, headers = create_user_and_token("user30")
-    case_id, finding_id, evidence_id = create_case_with_data(headers, db_session)
+    case_id, finding_id, evidence_id = create_case_with_data(user_id, email, db_session)
 
     # Initial counts
     findings_before = db_session.query(Finding).filter(Finding.case_id == case_id).all()

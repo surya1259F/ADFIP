@@ -30,6 +30,7 @@ from backend.app.schemas.schemas import (
     TimelineBatchResponse
 )
 from backend.app.services.authorization import get_authorized_case
+from backend.app.services.case_closure import check_case_not_closed
 from backend.app.services.timeline import (
     UnifiedTimelineService,
     TimelineStorageManager
@@ -52,7 +53,8 @@ def generate_timeline_for_case(
     Generates unified UTC timeline events for all normalized artifacts in the case.
     Preserves exact original timestamps and timezones without inventing missing timestamps.
     """
-    get_authorized_case(case_id, db, current_user)
+    case = get_authorized_case(case_id, db, current_user)
+    check_case_not_closed(case)
 
     result = UnifiedTimelineService.generate_timeline_for_case(
         db=db,
@@ -77,7 +79,8 @@ def generate_timeline_for_execution(
     """
     Generates unified UTC timeline events for all normalized artifacts produced by a specific execution.
     """
-    get_authorized_case(case_id, db, current_user)
+    case = get_authorized_case(case_id, db, current_user)
+    check_case_not_closed(case)
 
     execution = db.query(ForensicExecution).filter(ForensicExecution.id == execution_id).first()
     if not execution:
@@ -110,7 +113,8 @@ def generate_timeline_for_artifact(
     """
     Generates timeline events for a specific normalized artifact.
     """
-    get_authorized_case(case_id, db, current_user)
+    case = get_authorized_case(case_id, db, current_user)
+    check_case_not_closed(case)
 
     na = db.query(NormalizedArtifact).filter(NormalizedArtifact.id == artifact_id).first()
     if not na:

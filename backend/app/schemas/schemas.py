@@ -600,17 +600,16 @@ class YaraRuleResponse(BaseModel):
 
 # Planner, Correlation, Verification Schemas
 class PlanTaskStep(BaseModel):
-    step_id: Optional[str] = None
+    step_id: str
     task_id: Optional[str] = None
-    task_key: Optional[str] = None
-    agent: Optional[str] = None
+    agent: str
     agent_name: Optional[str] = None
-    tool: Optional[str] = None
+    tool: str
     tool_name: Optional[str] = None
     tool_available: bool = True
     evidence_id: Optional[str] = None
     evidence_name: Optional[str] = None
-    action: Optional[str] = None
+    action: str
     reason: Optional[str] = None
     dependencies: List[str] = Field(default_factory=list)
     priority: int = 1
@@ -623,21 +622,6 @@ class PlanTaskStep(BaseModel):
     error_message: Optional[str] = None
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def sync_pre_aliases(cls, data: Any) -> Any:
-        if isinstance(data, dict):
-            data = dict(data)
-            if not data.get("step_id"):
-                data["step_id"] = data.get("task_key") or data.get("task_id") or "step-1"
-            if not data.get("agent"):
-                data["agent"] = data.get("agent_name") or "ForensicAgent"
-            if not data.get("tool"):
-                data["tool"] = data.get("selected_tool_id") or data.get("tool_name") or "volatility3"
-            if not data.get("action"):
-                data["action"] = data.get("capability_id") or "FORENSIC_ANALYSIS"
-        return data
 
     @model_validator(mode="after")
     def sync_task_step_aliases(self):
@@ -655,15 +639,6 @@ class PlanTaskStep(BaseModel):
             self.tool_name = self.tool
         elif not self.tool and self.tool_name:
             self.tool = self.tool_name
-
-        if not self.step_id:
-            self.step_id = self.task_key or self.task_id or "step-1"
-        if not self.agent:
-            self.agent = self.agent_name or "ForensicAgent"
-        if not self.tool:
-            self.tool = self.tool_name or "volatility3"
-        if not self.action:
-            self.action = "FORENSIC_ANALYSIS"
         return self
 
 class StoppingConditionResponse(BaseModel):
@@ -717,11 +692,6 @@ class InvestigationPlanResponse(BaseModel):
             self.investigation_id = self.case_id
         elif not self.case_id and self.investigation_id:
             self.case_id = self.investigation_id
-
-        if not self.planned_tasks and self.tasks:
-            self.planned_tasks = self.tasks
-        elif not self.tasks and self.planned_tasks:
-            self.tasks = self.planned_tasks
 
         # Sync stopping conditions from ORM if needed
         if self.stopping_conditions:

@@ -82,7 +82,7 @@ class InvestigationOrchestrator:
         """
         Executes a single scheduled task through pre/post integrity gates and forensic specialist agents.
         """
-        step_id = task.get("step_id") or task.get("task_key") or task.get("task_id")
+        step_id = task["step_id"]
 
         # Tool availability check
         if not task.get("tool_available", True):
@@ -95,11 +95,6 @@ class InvestigationOrchestrator:
             }
 
         evidence_id = task.get("evidence_id")
-        if not evidence_id and task.get("evidence_ids"):
-            ev_list = task.get("evidence_ids")
-            if isinstance(ev_list, list) and len(ev_list) > 0:
-                evidence_id = ev_list[0]
-
         if not evidence_id:
             return {
                 "status": "FAILED",
@@ -205,8 +200,8 @@ class InvestigationOrchestrator:
         )
 
         # Create ToolExecution with truthful tool_id and command_args
-        tool_name_raw = str(task.get("tool") or task.get("selected_tool_id") or task.get("tool_name") or "").strip()
-        action_str = str(task.get("action") or task.get("capability_id") or "").strip()
+        tool_name_raw = str(task.get("tool", "")).strip()
+        action_str = str(task.get("action", "")).strip()
         params = dict(task.get("parameters", {}))
         timeout_val = params.get("timeout_seconds", 300)
 
@@ -262,21 +257,7 @@ class InvestigationOrchestrator:
             "evidence_type": evidence.evidence_type,
             "sha256": evidence.sha256,
         }
-        tool_lower = tool_name_raw.lower()
-        agent_raw = str(task.get("agent") or task.get("agent_name") or "").lower()
-
-        if tool_lower in ["sleuthkit", "tsk", "exiftool"] or "disk" in agent_raw or "filesystem" in agent_raw:
-            agent_type = "DiskAgent"
-        elif tool_lower in ["volatility3", "volatility"] or "memory" in agent_raw:
-            agent_type = "MemoryAgent"
-        elif tool_lower in ["yara"] or "malware" in agent_raw:
-            agent_type = "MalwareAgent"
-        elif tool_lower in ["python-evtx", "python_evtx"] or "log" in agent_raw or "evtx" in agent_raw:
-            agent_type = "LogAgent"
-        elif "correlation" in agent_raw or "timeline" in agent_raw or tool_lower in ["timelinebuilder", "evidencecorrelation"]:
-            agent_type = "CorrelationAgent"
-        else:
-            agent_type = task.get("agent") or task.get("agent_name")
+        agent_type = task.get("agent")
 
         tool_exc = None
         res = None
@@ -331,37 +312,16 @@ class InvestigationOrchestrator:
                     evidence_item=ev_dict,
                     parameters=log_params,
                 )
-            elif agent_type == "CorrelationAgent":
-                res = {
-                    "status": "SUCCESS",
-                    "execution_id": execution.id,
-                    "artifacts": [],
-                    "findings": [],
-                    "provenance": {
-                        "tool": tool_name_raw or "CorrelationEngine",
-                        "execution_id": execution.id,
-                        "success": True,
-                    }
-                }
             else:
                 raise ValueError(f"Unknown agent type: {agent_type}")
 
             # Ensure planned tool and actual executed tool did not silently diverge
             if isinstance(res, dict) and res.get("status") == "SUCCESS":
                 executed_tool = (res.get("provenance") or {}).get("tool")
-                if executed_tool and tool_name_raw and executed_tool.lower() != tool_name_raw.lower():
-                    equiv_pairs = [
-                        {"sleuthkit", "sleuthkit_fls", "fls", "tsk"},
-                        {"volatility", "volatility3", "vol"},
-                        {"yara", "yara_scan"},
-                        {"python-evtx", "python_evtx"},
-                        {"exiftool", "exif"},
-                    ]
-                    pair_match = any(executed_tool.lower() in p and tool_name_raw.lower() in p for p in equiv_pairs)
-                    if not pair_match:
-                        raise RuntimeError(
-                            f"Forensic tool divergence detected: Task planned tool '{tool_name_raw}' but executed '{executed_tool}'."
-                        )
+                if executed_tool and executed_tool.lower() != tool_name_raw.lower():
+                    raise RuntimeError(
+                        f"Forensic tool divergence detected: Task planned tool '{tool_name_raw}' but executed '{executed_tool}'."
+                    )
         except Exception as e:
             tool_exc = e
 
@@ -616,38 +576,7 @@ class InvestigationOrchestrator:
             db.commit()
             db.refresh(plan)
 
-        plan_id_to_use = plan.id
-        raw_tasks: List[Dict[str, Any]] = [dict(t) for t in (plan.tasks or [])]
-        tasks: List[Dict[str, Any]] = []
-        for t in raw_tasks:
-            task_norm = dict(t)
-            s_id = str(task_norm.get("step_id") or task_norm.get("task_key") or task_norm.get("task_id") or "")
-            task_norm["step_id"] = s_id
-            task_norm["task_id"] = s_id
-            task_norm["task_key"] = s_id
-
-            if not task_norm.get("evidence_id"):
-                ev_ids = task_norm.get("evidence_ids")
-                if isinstance(ev_ids, list) and len(ev_ids) > 0:
-                    task_norm["evidence_id"] = ev_ids[0]
-
-            if not task_norm.get("tool"):
-                task_norm["tool"] = task_norm.get("selected_tool_id") or task_norm.get("tool_name") or ""
-
-            if not task_norm.get("action"):
-                task_norm["action"] = task_norm.get("capability_id") or ""
-
-            if not task_norm.get("agent"):
-                task_norm["agent"] = task_norm.get("agent_name") or ""
-
-            if "parameters" not in task_norm or not isinstance(task_norm["parameters"], dict):
-                task_norm["parameters"] = {}
-
-            if "tool_available" not in task_norm:
-                task_norm["tool_available"] = True
-
-            tasks.append(task_norm)
-
+        tasks: List[Dict[str, Any]] = [dict(t) for t in (plan.tasks or [])]
         if not tasks:
             plan.status = "COMPLETED"
             plan.completed_at = datetime.now(timezone.utc)
@@ -796,11 +725,9 @@ class InvestigationOrchestrator:
                             matching_task["error_message"] = r.get("error")
                             matching_task["completed_at"] = datetime.now(timezone.utc).isoformat()
 
-                active_plan = db.query(InvestigationPlan).filter(InvestigationPlan.id == plan_id_to_use).first()
-                if active_plan:
-                    active_plan.tasks = list(tasks)
-                    flag_modified(active_plan, "tasks")
-                    db.commit()
+                plan.tasks = list(tasks)
+                flag_modified(plan, "tasks")
+                db.commit()
 
         # Update remaining tasks cancelled if dependencies failed
         for t_item in self.task_scheduler.tasks.values():
@@ -827,13 +754,11 @@ class InvestigationOrchestrator:
         else:
             final_status = "FAILED"
 
-        active_plan = db.query(InvestigationPlan).filter(InvestigationPlan.id == plan_id_to_use).first()
-        if active_plan:
-            active_plan.status = final_status
-            active_plan.completed_at = datetime.now(timezone.utc)
-            active_plan.tasks = list(tasks)
-            flag_modified(active_plan, "tasks")
-            db.commit()
+        plan.status = final_status
+        plan.completed_at = datetime.now(timezone.utc)
+        plan.tasks = list(tasks)
+        flag_modified(plan, "tasks")
+        db.commit()
 
         log_audit_event(
             db=db,
@@ -902,14 +827,8 @@ class InvestigationOrchestrator:
 
         proc_cancelled = False
         if execution and execution.status == "RUNNING":
-            if execution.pid is None:
-                proc_cancelled = True
-            else:
-                from forensic_tools.registry import tool_registry
-                proc_cancelled = tool_registry.cancel_execution_process(execution.id)
-
-        is_terminated = True
-        if execution and execution.status == "RUNNING":
+            from forensic_tools.registry import tool_registry
+            proc_cancelled = tool_registry.cancel_execution_process(execution.id)
             if proc_cancelled:
                 execution.status = "CANCELLED"
                 execution.cancelled_at = datetime.now(timezone.utc)
@@ -917,19 +836,15 @@ class InvestigationOrchestrator:
                 execution.completed_at = datetime.now(timezone.utc)
                 execution.error_message = f"Cancelled by {cancelled_by} request."
                 db.commit()
-            elif execution.pid is not None:
-                try:
-                    import os
-                    os.kill(execution.pid, 0)
-                    is_terminated = False
-                except (OSError, ProcessLookupError):
-                    is_terminated = True
-                    execution.status = "CANCELLED"
-                    execution.cancelled_at = datetime.now(timezone.utc)
-                    execution.cancelled_by = cancelled_by
-                    execution.completed_at = datetime.now(timezone.utc)
-                    execution.error_message = f"Cancelled by {cancelled_by} request (process no longer active)."
-                    db.commit()
+
+        is_terminated = True
+        if execution and execution.pid is not None and not proc_cancelled:
+            try:
+                import os
+                os.kill(execution.pid, 0)
+                is_terminated = False
+            except (OSError, ProcessLookupError):
+                is_terminated = True
 
         reason_text = (
             f"Cancelled by {cancelled_by} request."

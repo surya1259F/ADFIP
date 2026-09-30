@@ -71,10 +71,22 @@ def upgrade() -> None:
             if 'provenance_context' not in existing_cols:
                 batch_op.add_column(sa.Column('provenance_context', sa.JSON(), nullable=True))
 
-    # 4. Add case closure columns to cases table
+    # 4. Add case closure and workspace columns to cases table
     if 'cases' in tables:
         existing_cols = {c['name'] for c in insp.get_columns('cases')}
         with op.batch_alter_table('cases') as batch_op:
+            if 'objective' not in existing_cols:
+                batch_op.add_column(sa.Column('objective', sa.Text(), nullable=True))
+            if 'case_type' not in existing_cols:
+                batch_op.add_column(sa.Column('case_type', sa.String(64), nullable=False, server_default='GENERIC_INCIDENT'))
+            if 'priority' not in existing_cols:
+                batch_op.add_column(sa.Column('priority', sa.String(32), nullable=False, server_default='MEDIUM'))
+            if 'workspace_state' not in existing_cols:
+                batch_op.add_column(sa.Column('workspace_state', sa.String(64), nullable=False, server_default='NOT_INITIALIZED'))
+            if 'workspace_path' not in existing_cols:
+                batch_op.add_column(sa.Column('workspace_path', sa.String(512), nullable=True))
+            if 'case_permissions' not in existing_cols:
+                batch_op.add_column(sa.Column('case_permissions', sa.JSON(), nullable=True))
             if 'closed_by' not in existing_cols:
                 batch_op.add_column(sa.Column('closed_by', sa.String(128), nullable=True))
             if 'closure_rationale' not in existing_cols:

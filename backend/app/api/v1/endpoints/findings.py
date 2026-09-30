@@ -43,7 +43,9 @@ def generate_findings_for_case(
     Generates evidence-grounded findings from Steps 12-14 before any AI reasoning.
     Enforces case authorization and RBAC boundaries.
     """
-    get_authorized_case(case_id, db, current_user)
+    case = get_authorized_case(case_id, db, current_user)
+    from backend.app.services.case_closure import check_case_not_closed
+    check_case_not_closed(case)
 
     if request is None:
         request = FindingGenerateRequest()

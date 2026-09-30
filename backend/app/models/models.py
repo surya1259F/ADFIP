@@ -67,7 +67,6 @@ class Case(Base):
     priority = Column(String, default="MEDIUM", nullable=False)
     status = Column(String, default="OPEN", nullable=False, index=True) # DRAFT, OPEN, CLOSED, ARCHIVED
     owner_id = Column(String, ForeignKey("users.id"), nullable=True, index=True)
-    status = Column(String, default="OPEN", nullable=False, index=True) # OPEN, CLOSED, ARCHIVED
     created_by = Column(String, default="local-investigator", nullable=False)
     workspace_state = Column(String, default="NOT_INITIALIZED", nullable=False) # NOT_INITIALIZED, INITIALIZING, READY, FAILED
     workspace_path = Column(String, nullable=True)
@@ -191,7 +190,6 @@ class EvidenceItem(Base):
     detected_format = Column(String, nullable=True)
     filesystem_type = Column(String, nullable=True)
     platform_hint = Column(String, nullable=True)
-    evidence_type = Column(String, nullable=False) # disk_image, memory_dump, file, directory, archive, document, log, network_capture, unknown
     size_bytes = Column(Float, nullable=False)
     sha256 = Column(String, nullable=False, index=True)
     md5 = Column(String, nullable=True)
@@ -199,7 +197,6 @@ class EvidenceItem(Base):
     status = Column(String, default="REGISTERED", nullable=False, index=True) # REGISTERED, PRESERVING, PRESERVED, VERIFYING, VERIFIED, INTEGRITY_WARNING, INVALID, ANALYSIS_READY, ARCHIVED
     intake_status = Column(String, default="INTAKE_COMPLETE", nullable=False) # INTAKE_COMPLETE, QUARANTINED, ARCHIVED
     integrity_status = Column(String, default="VERIFIED", nullable=False) # VERIFIED, FAILED, UNCHECKED, MISSING, INTEGRITY_MISMATCH
-    integrity_status = Column(String, default="VERIFIED", nullable=False) # VERIFIED, FAILED, UNCHECKED
     read_only_verified = Column(Boolean, default=True, nullable=False)
     notes = Column(Text, nullable=True)
     metadata_json = Column(JSON, default=dict)
@@ -631,7 +628,6 @@ class CorrelationGroup(Base):
     case_id = Column(String, ForeignKey("cases.id"), nullable=False, index=True)
     dimension = Column(String, nullable=False) # process_name, ip_address, file_hash, user_account, threat_indicator, forensic_reference
     rule = Column(String, nullable=True) # SHARED_IP, SHARED_PROCESS, SHARED_ACCOUNT, SHARED_HASH, SHARED_INDICATOR, SHARED_FORENSIC_OBJECT
-    dimension = Column(String, nullable=False) # process_name, ip_address, file_hash, user_sid
     correlated_entity = Column(String, nullable=False)
     title = Column(String, nullable=False)
     description = Column(Text, nullable=False)

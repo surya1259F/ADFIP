@@ -34,6 +34,7 @@ from backend.app.schemas.schemas import (
     AgentProvenanceTraceResponse,
 )
 from backend.app.services.authorization import get_authorized_case
+from backend.app.services.case_closure import check_case_not_closed
 from backend.app.services.agents import SpecialistAgentService
 
 router = APIRouter()
@@ -124,7 +125,8 @@ def create_analysis_request(
     """
     Creates an auditable agent analysis request within a case.
     """
-    get_authorized_case(case_id, db, current_user)
+    case = get_authorized_case(case_id, db, current_user)
+    check_case_not_closed(case)
     try:
         record = SpecialistAgentService.create_analysis_request(
             db=db,
@@ -207,7 +209,8 @@ def execute_analysis_request(
     """
     Triggers deterministic structured execution of an analysis request.
     """
-    get_authorized_case(case_id, db, current_user)
+    case = get_authorized_case(case_id, db, current_user)
+    check_case_not_closed(case)
     # Ensure request belongs to case
     req = db.query(AgentAnalysisRequestRecord).filter(
         AgentAnalysisRequestRecord.id == request_id,
@@ -273,7 +276,8 @@ def submit_capability_request(
     Submits a gated capability request on behalf of an agent.
     Validates against the Step 7 capability registry and rejects arbitrary commands.
     """
-    get_authorized_case(case_id, db, current_user)
+    case = get_authorized_case(case_id, db, current_user)
+    check_case_not_closed(case)
     try:
         cap_record = SpecialistAgentService.submit_capability_request(
             db=db,

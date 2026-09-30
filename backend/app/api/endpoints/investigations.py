@@ -64,6 +64,7 @@ from backend.app.services.integrity import calculate_sha256
 from backend.app.services.audit import log_audit_event
 from backend.app.services.custody import record_custody_event
 from backend.app.services.vault import stage_evidence_to_vault, validate_vault_storage_path
+from backend.app.services.case_closure import check_case_not_closed, CaseClosureService
 from agents.disk.disk_agent import DiskAgent
 from agents.memory.memory_agent import MemoryAgent
 from agents.malware.malware_agent import MalwareAgent
@@ -118,6 +119,8 @@ def _validate_case_and_evidence(case_id: str, evidence_id: str, db: Session, cur
         case = db.query(Case).filter(Case.id == case_id).first()
         if not case:
             raise HTTPException(status_code=404, detail="Investigation not found.")
+
+    check_case_not_closed(case)
 
     evidence = db.query(EvidenceItem).filter(EvidenceItem.id == evidence_id).first()
     if not evidence:
@@ -303,13 +306,31 @@ def update_case(
     current_user: User = Depends(get_current_active_user)
 ):
     case = get_authorized_case(id, db, current_user)
+    from backend.app.services.case_closure import check_case_not_closed, CaseClosureService
+    from backend.app.schemas.schemas import CaseClosureRequest
+    check_case_not_closed(case)
 
     if case_in.name is not None:
         case.name = case_in.name
     if case_in.description is not None:
         case.description = case_in.description
     if case_in.status is not None:
-        case.status = case_in.status
+        new_status = case_in.status.upper().strip()
+        if new_status == "CLOSED":
+            CaseClosureService.validate_and_close_case(
+                db=db,
+                case_id=case.id,
+                user=current_user,
+                request_data=CaseClosureRequest(rationale=f"Case closed by {current_user.email} via legacy case management API")
+            )
+            return _populate_counts(case, db)
+        elif new_status == "ARCHIVED":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Active cases cannot be directly archived. The case must first be formally closed."
+            )
+        else:
+            case.status = new_status
 
     case.updated_at = datetime.now(timezone.utc)
     db.commit()
@@ -339,7 +360,7 @@ def close_case(
         db=db,
         case_id=case.id,
         user=current_user,
-        request_data=CaseClosureRequest(rationale=f"Case closed by {current_user.email} via case management API")
+        request_data=CaseClosureRequest(rationale=f"Case closed by {current_user.email} via legacy case management API")
     )
     return _populate_counts(case, db)
 
@@ -350,6 +371,11 @@ def archive_case(
     current_user: User = Depends(get_current_active_user)
 ):
     case = get_authorized_case(id, db, current_user)
+    if case.status != "CLOSED":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Active cases cannot be directly archived. The case must first be formally closed."
+        )
 
     case.status = "ARCHIVED"
     case.updated_at = datetime.now(timezone.utc)
@@ -383,6 +409,7 @@ def add_case_member(
     current_user: User = Depends(get_current_active_user)
 ):
     case = get_authorized_case(id, db, current_user)
+    check_case_not_closed(case)
     require_case_admin(case, db, current_user)
 
     target_user = db.query(User).filter(User.id == member_in.user_id).first()
@@ -409,6 +436,7 @@ def remove_case_member(
     current_user: User = Depends(get_current_active_user)
 ):
     case = get_authorized_case(id, db, current_user)
+    check_case_not_closed(case)
     require_case_admin(case, db, current_user)
 
     member = db.query(CaseMember).filter(CaseMember.case_id == case.id, CaseMember.user_id == user_id).first()
@@ -441,6 +469,7 @@ def intake_evidence(
     current_user: User = Depends(get_current_active_user)
 ):
     case = get_authorized_case(id, db, current_user)
+    check_case_not_closed(case)
 
     try:
         norm_path = SecurityValidator.validate_file_path(intake_in.path, allow_nonexistent=False)
@@ -1414,6 +1443,7 @@ def plan_investigation(
     current_user: User = Depends(get_current_active_user)
 ):
     case = get_authorized_case(id, db, current_user)
+    check_case_not_closed(case)
 
     evidence_items = db.query(EvidenceItem).filter(EvidenceItem.case_id == case.id).all()
     ev_dicts = [
@@ -1501,6 +1531,7 @@ def execute_investigation_plan(
     current_user: User = Depends(get_current_active_user)
 ):
     case = get_authorized_case(id, db, current_user)
+    check_case_not_closed(case)
 
     try:
         exec_summary = orchestrator_service.execute_plan(case_id=case.id, db=db)
@@ -1540,6 +1571,7 @@ def create_finding(
     current_user: User = Depends(get_current_active_user)
 ):
     case = get_authorized_case(id, db, current_user)
+    check_case_not_closed(case)
 
     finding = Finding(
         case_id=case.id,
@@ -1590,6 +1622,7 @@ def correlate_findings(
     current_user: User = Depends(get_current_active_user)
 ):
     case = get_authorized_case(id, db, current_user)
+    check_case_not_closed(case)
 
     findings = db.query(Finding).filter(Finding.case_id == case.id).all()
     artifacts = db.query(ExecutionArtifact).filter(ExecutionArtifact.case_id == case.id).all()
@@ -1697,6 +1730,7 @@ def verify_findings(
     current_user: User = Depends(get_current_active_user)
 ):
     case = get_authorized_case(id, db, current_user)
+    check_case_not_closed(case)
 
     findings = db.query(Finding).filter(Finding.case_id == case.id).all()
     finding_dicts = [
@@ -1754,6 +1788,7 @@ def record_decision(
     current_user: User = Depends(get_current_active_user)
 ):
     case = get_authorized_case(id, db, current_user)
+    check_case_not_closed(case)
 
     investigator_name = current_user.name or current_user.email
 
@@ -1968,6 +2003,7 @@ def cancel_investigation_task(
     current_user: User = Depends(get_current_active_user)
 ):
     case = get_authorized_case(id, db, current_user)
+    check_case_not_closed(case)
     try:
         res = orchestrator_service.cancel_task(case_id=case.id, task_id=task_id, db=db)
         return TaskCancelResponse(**res)

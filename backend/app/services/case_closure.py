@@ -25,7 +25,9 @@ from backend.app.models.models import (
     EvidenceItem,
     Report,
     AuditEvent,
+    InvestigationPlan,
     InvestigationRun,
+    InvestigationTask,
     AnalysisRequest,
     ForensicExecution,
     User
@@ -66,6 +68,9 @@ class CaseClosureService:
         Executes formal case closure with full pre-closure verification gates.
         """
         now = datetime.now(timezone.utc)
+        case = db.query(Case).filter(Case.id == case_id).first()
+        if not case:
+            raise HTTPException(status_code=404, detail=f"Case '{case_id}' not found.")
         from backend.app.services.authorization import get_authorized_case
         case = get_authorized_case(case_id, db, user)
 
@@ -93,6 +98,18 @@ class CaseClosureService:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Cannot close case: {len(active_runs)} active investigation run(s) are in progress ({', '.join(run_ids)})."
+            )
+
+        # Gate 1b: Check no active investigation tasks
+        active_tasks = db.query(InvestigationTask).join(InvestigationPlan).filter(
+            InvestigationPlan.case_id == case.id,
+            InvestigationTask.status.in_(["RUNNING", "READY"])
+        ).all()
+        if active_tasks:
+            task_ids = [t.id for t in active_tasks]
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Cannot close case: {len(active_tasks)} active investigation task(s) remain open ({', '.join(task_ids)})."
             )
 
         # Gate 2: Check no active analysis requests or executions

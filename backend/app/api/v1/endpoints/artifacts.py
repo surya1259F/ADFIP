@@ -30,6 +30,7 @@ from backend.app.schemas.schemas import (
     ArtifactExtractionBatchResponse
 )
 from backend.app.services.authorization import get_authorized_case
+from backend.app.services.case_closure import check_case_not_closed
 from backend.app.services.artifact_extraction import (
     ArtifactExtractionService,
     ArtifactStorageManager
@@ -53,7 +54,8 @@ def extract_artifacts_for_execution(
     Triggers extraction of structured forensic artifacts from all raw outputs produced by an execution.
     Unsupported outputs are recorded as UNSUPPORTED, never silently dropped.
     """
-    get_authorized_case(case_id, db, current_user)
+    case = get_authorized_case(case_id, db, current_user)
+    check_case_not_closed(case)
 
     execution = db.query(ForensicExecution).filter(ForensicExecution.id == execution_id).first()
     if not execution:
@@ -102,7 +104,8 @@ def extract_artifacts_from_raw_output(
     """
     Extracts structured artifacts from a specific raw output artifact.
     """
-    get_authorized_case(case_id, db, current_user)
+    case = get_authorized_case(case_id, db, current_user)
+    check_case_not_closed(case)
 
     raw_output = db.query(ExecutionOutput).filter(ExecutionOutput.id == output_id).first()
     if not raw_output:

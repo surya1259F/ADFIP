@@ -349,6 +349,7 @@ def create_evidence_acquisition(
     current_user: User = Depends(get_current_active_user)
 ):
     case = get_authorized_case(case_id, db, current_user)
+    check_case_not_closed(case)
     
     try:
         if payload.acquisition_type.upper() == "DIRECTORY":

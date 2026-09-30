@@ -33,6 +33,7 @@ from backend.app.schemas.schemas import (
     RelationshipResponse,
 )
 from backend.app.services.authorization import get_authorized_case
+from backend.app.services.case_closure import check_case_not_closed
 from backend.app.services.correlation import (
     CrossDomainCorrelationService,
     CorrelationStorageManager,
@@ -57,7 +58,8 @@ def generate_correlations_for_case(
     and produces auditable correlation groups and relationships.
     Strictly evidence-based; does not declare attacks, threats, or findings.
     """
-    get_authorized_case(case_id, db, current_user)
+    case = get_authorized_case(case_id, db, current_user)
+    check_case_not_closed(case)
 
     if request is None:
         request = CorrelationGenerateRequest()

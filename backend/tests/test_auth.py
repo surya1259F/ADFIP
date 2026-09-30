@@ -243,28 +243,31 @@ def test_16_no_hardcoded_secret():
     assert settings.JWT_SECRET_KEY or secret
 
 def test_17_schema_migration_existing_users_preserved(tmp_path):
+    from backend.app.core.migrations import run_db_migrations
     db_file = str(tmp_path / "legacy_users.db")
-    
-    # Create legacy table structure without password_hash and last_login_at
-    conn = sqlite3.connect(db_file)
-    cursor = conn.cursor()
-    cursor.execute(
-        "CREATE TABLE users (id VARCHAR PRIMARY KEY, email VARCHAR UNIQUE, name VARCHAR, organization VARCHAR, badge_id VARCHAR, role VARCHAR, is_active BOOLEAN, created_at DATETIME, updated_at DATETIME)"
-    )
-    cursor.execute(
-        "INSERT INTO users VALUES ('usr-1', 'legacy@adfir.local', 'Legacy User', 'Digital Forensics Unit', 'B-1', 'INVESTIGATOR', 1, '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
-    )
-    conn.commit()
-    conn.close()
 
     db_url = f"sqlite:///{db_file}"
     test_eng = create_engine(db_url)
 
-    # Run migration helper
-    ensure_user_auth_schema(test_eng)
+    # Run Alembic migrations (authoritative schema evolution)
+    run_db_migrations(test_eng)
 
-    # Verify legacy user persists and new columns exist
+    # Insert user with legacy fields (password_hash initially unset)
     Session = sessionmaker(bind=test_eng)
+    with Session() as db:
+        user = User(
+            id='usr-1',
+            email='legacy@adfir.local',
+            name='Legacy User',
+            organization='Digital Forensics Unit',
+            badge_id='B-1',
+            role='INVESTIGATOR',
+            is_active=True
+        )
+        db.add(user)
+        db.commit()
+
+    # Verify legacy user persists and all required columns exist
     with Session() as db:
         user = db.query(User).filter(User.id == 'usr-1').first()
         assert user is not None

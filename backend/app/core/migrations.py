@@ -128,9 +128,7 @@ def run_db_migrations(target_engine=None):
             command.upgrade(alembic_cfg, "head")
             connection.commit()
             logger.info("Alembic schema migration completed successfully.")
-        except Exception as e:
-            logger.warning(f"Alembic migration notice: {e}")
-            try:
-                command.stamp(alembic_cfg, "head")
-            except Exception:
-                pass
+        except Exception:
+            connection.rollback()
+            logger.exception("Alembic schema migration failed.")
+            raise

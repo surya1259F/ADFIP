@@ -233,8 +233,8 @@ SPECIALIST_AGENT_SPECS: List[Dict[str, Any]] = [
         "name": "Report / Summary Agent",
         "version": "1.0.0",
         "agent_type": "REPORT",
-        "description": "Converts verified investigation state, findings, and timeline events into forensically sound formal report content.",
-        "supported_evidence_domains": ["REPORT", "SUMMARY", "EXECUTIVE", "COURT_READY", "FORMAL_REPORT"],
+        "description": "Converts verified investigation state, findings, and timeline events into court-ready report content.",
+        "supported_evidence_domains": ["REPORT", "SUMMARY", "EXECUTIVE", "COURT_READY"],
         "supported_artifact_types": [
             "FINDING", "EVIDENCE_ITEM", "TIMELINE_EVENT", "CORRELATION_GROUP", "REPORT_SECTION"
         ],

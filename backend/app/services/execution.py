@@ -750,35 +750,57 @@ class ForensicExecutionService:
 
             except Exception as ex:
                 logger.error(f"Execution error for {execution_id}: {ex}", exc_info=True)
-                execution.execution_status = "FAILED"
-                execution.failure_reason = str(ex)
-                execution.exit_code = -3
-                if req:
-                    req.scheduler_status = "FAILED"
-                    req.failure_reason = str(ex)
-                    req.allocated_resources = {}
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
 
-                log_audit_event(
-                    db=db,
-                    event_type="EXECUTION_FAILED",
-                    case_id=execution.case_id,
-                    details=f"Execution {execution_id} encountered exception: {ex}"
-                )
+                try:
+                    execution.execution_status = "FAILED"
+                    execution.failure_reason = str(ex)
+                    execution.exit_code = -3
+                    if req:
+                        req.scheduler_status = "FAILED"
+                        req.failure_reason = str(ex)
+                        req.allocated_resources = {}
+
+                    log_audit_event(
+                        db=db,
+                        event_type="EXECUTION_FAILED",
+                        case_id=execution.case_id,
+                        details=f"Execution {execution_id} encountered exception: {ex}"
+                    )
+                    db.commit()
+                except Exception as inner_ex:
+                    logger.warning(f"Error logging execution failure for {execution_id}: {inner_ex}")
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
 
             finally:
                 active_process_registry.unregister(execution_id)
 
-                end_t = time.time()
-                execution.completed_at = utc_now()
-                execution.duration_seconds = round(end_t - start_t, 3)
+                try:
+                    end_t = time.time()
+                    execution.completed_at = utc_now()
+                    execution.duration_seconds = round(end_t - start_t, 3)
 
-                # Collect workspace outputs
-                cls.collect_workspace_outputs(db, execution, workspace)
-
-                db.commit()
+                    # Collect workspace outputs
+                    cls.collect_workspace_outputs(db, execution, workspace)
+                    db.commit()
+                except Exception as final_err:
+                    logger.warning(f"Error finalizing execution {execution_id}: {final_err}")
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
 
         finally:
-            db.close()
+            try:
+                db.close()
+            except Exception:
+                pass
 
     @classmethod
     def _terminate_safely(cls, proc: subprocess.Popen, pid: int, start_time: float):

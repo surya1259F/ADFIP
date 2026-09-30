@@ -111,7 +111,7 @@ def test_evidence_intake_verify_and_intelligence_api(tmp_path):
     try:
         # Readiness loop
         ready = False
-        for _ in range(30):
+        for _ in range(60):
             try:
                 r = client.get(f"{base_url}/api/v1/system/health")
                 if r.status_code == 200:

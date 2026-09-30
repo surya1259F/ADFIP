@@ -423,6 +423,47 @@ def test_case_closure_success_and_immutability(db_session, tmp_path):
     assert intake_res.status_code == 400
     assert "immutable" in intake_res.json()["detail"].lower()
 
+    # Verify PATCH /v1/cases/{id} fails on closed case
+    patch_v1_res = client.patch(
+        f"/api/v1/cases/{case.id}",
+        headers=headers,
+        json={"description": "Attempting to modify closed case"}
+    )
+    assert patch_v1_res.status_code == 400
+    assert "immutable" in patch_v1_res.json()["detail"].lower()
+
+    # Verify legacy PATCH /cases/{id} fails on closed case
+    patch_legacy_res = client.patch(
+        f"/api/cases/{case.id}",
+        headers=headers,
+        json={"description": "Attempting to modify closed case via legacy route"}
+    )
+    assert patch_legacy_res.status_code == 400
+    assert "immutable" in patch_legacy_res.json()["detail"].lower()
+
+
+def test_patch_status_closed_enforces_closure_gates(db_session):
+    """Test: PATCH with status=CLOSED strictly delegates to CaseClosureService and enforces gates."""
+    user, case, headers = create_user_and_case(db_session, "patch_gate")
+
+    # 1. Attempting to set status=CLOSED via PATCH /v1/cases/{id} on a case without final report fails
+    patch_v1_res = client.patch(
+        f"/api/v1/cases/{case.id}",
+        headers=headers,
+        json={"status": "CLOSED"}
+    )
+    assert patch_v1_res.status_code == 422
+    assert "official final forensic report has not been generated" in patch_v1_res.json()["detail"].lower()
+
+    # 2. Attempting to set status=CLOSED via legacy PATCH /cases/{id} also delegates and fails
+    patch_legacy_res = client.patch(
+        f"/api/cases/{case.id}",
+        headers=headers,
+        json={"status": "CLOSED"}
+    )
+    assert patch_legacy_res.status_code == 422
+    assert "official final forensic report has not been generated" in patch_legacy_res.json()["detail"].lower()
+
 
 def test_recovery_and_closure_case_isolation_and_idor(db_session):
     """Test 8: Cross-case IDOR protection: User A cannot close or recover Case B."""
