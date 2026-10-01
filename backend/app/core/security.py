@@ -239,15 +239,27 @@ def verify_access_token(token: str) -> Optional[Dict[str, Any]]:
             try:
                 from backend.app.models.models import RevokedToken
                 from backend.app.core.database import SessionLocal
+
                 with SessionLocal() as _db:
-                    db_revoked = _db.query(RevokedToken).filter(RevokedToken.jti == jti).first()
+                    db_revoked = (
+                        _db.query(RevokedToken)
+                        .filter(RevokedToken.jti == jti)
+                        .first()
+                    )
+
                     if db_revoked:
-                        # Warm the in-memory cache to avoid repeat DB hits
+                        # Warm the in-memory cache to avoid repeat DB hits.
                         REVOKED_TOKENS.add(jti)
                         return None
-            except Exception:
-                # DB unavailable — fall through and accept the token
-                pass
+
+            except Exception as exc:
+                logger.error(
+                    "Persistent token revocation check failed; "
+                    "rejecting token because authentication cannot be "
+                    "safely verified: %s",
+                    exc,
+                )
+                return None
 
         return payload
     except Exception:
