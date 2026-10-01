@@ -115,10 +115,9 @@ def verify_evidence_file_integrity(ev: EvidenceItem) -> Tuple[str, Optional[str]
             logger.error(f"Error reading evidence file {file_path}: {e}")
             return "INTEGRITY_WARNING", None
 
-    # If physical file is absent or test mock, verify registered hash format
-    if ev.sha256 and len(ev.sha256) == 64:
-        return "VERIFIED", ev.sha256.lower()
-
+    # A registered hash alone does not prove that the physical evidence
+    # is currently present and matches that hash.
+    # Missing physical evidence must never be reported as VERIFIED.
     return "UNCHECKED", None
 
 
@@ -794,8 +793,10 @@ class FinalForensicReportService:
             "",
             "---",
             "",
-            "### FORENSIC SIGN-OFF & NON-REPUDIATION",
-            f"I, **{gen_by}**, hereby certify that this Final Forensic Report v{ver} was synthesized deterministically from cryptographically verified forensic artifacts and investigator reviews.",
+            "### FORENSIC REPORT LIFECYCLE & SIGN-OFF",
+            f"**Report Lifecycle State:** GENERATED",
+            f"Synthesized by: **{gen_by}** via deterministic forensic pipeline.",
+            "*(Formal investigator certification requires explicit review and approval action.)*",
             f"**Report Digest:** `{report_hash}`  ",
             f"**Report Generated At:** {gen_at}  "
         ])

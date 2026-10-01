@@ -1912,9 +1912,21 @@ class InvestigatorReviewRecord(Base):
     def integrity_hash(self):
         return self.sha256_hash
 
+
+
     @integrity_hash.setter
     def integrity_hash(self, value):
         self.sha256_hash = value
 
 
+class RevokedToken(Base):
+    """
+    Persists revoked JWT JTIs so that token revocation survives server restarts.
+    The in-memory REVOKED_TOKENS set in security.py is the fast path; this table
+    is the authoritative source consulted on cache miss (e.g., after a restart).
+    """
+    __tablename__ = "revoked_tokens"
 
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    jti = Column(String, unique=True, nullable=False, index=True)
+    revoked_at = Column(DateTime, default=utc_now, nullable=False)

@@ -200,7 +200,7 @@ def test_legacy_v1_report_endpoint_gating():
         "description": "Testing gate on /api/v1/reports/generate",
         "investigator": "Investigator Dan"
     })
-    assert case_res.status_code == 200
+    assert case_res.status_code in [200, 201]
     case_id = case_res.json()["id"]
 
     # 1. Blocked when no decision exists

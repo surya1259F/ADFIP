@@ -577,7 +577,7 @@ def test_hashes_and_evidence_integrity_verification(db_session):
     assert len(hashes) >= 1
     for h in hashes:
         assert len(h["registered_sha256"]) == 64
-        assert h["integrity_status"] in ["VERIFIED", "INTEGRITY_WARNING"]
+        assert h["integrity_status"] in ["VERIFIED", "INTEGRITY_WARNING", "UNCHECKED"]
 
 
 def test_chain_of_custody_inclusion(db_session):

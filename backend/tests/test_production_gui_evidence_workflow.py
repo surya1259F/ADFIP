@@ -14,6 +14,7 @@ import httpx
 EXECUTABLE = Path(__file__).resolve().parent.parent.parent / "dist" / "adfir-backend" / "adfir-backend"
 
 
+@pytest.mark.skipif(not EXECUTABLE.exists(), reason="Packaged binary dist/adfir-backend does not exist")
 def test_production_gui_evidence_workflow_complete(tmp_path):
     """
     Complete real production workflow test for Gap 2 acceptance:

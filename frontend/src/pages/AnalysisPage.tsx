@@ -29,7 +29,7 @@ export const AnalysisPage: React.FC = () => {
 
   const [selectedEvId, setSelectedEvId] = useState<string>('');
   const [volPlugin, setVolPlugin] = useState<string>('windows.pslist');
-  const [yaraRule, setYaraRule] = useState<string>('adfir_test_rules');
+  const [yaraRule, setYaraRule] = useState<string>('adfir_webshell_indicators');
   const [maxRecords, setMaxRecords] = useState<number>(5000);
   const [successMsg, setSuccessMsg] = useState<string>('');
 
@@ -167,7 +167,7 @@ export const AnalysisPage: React.FC = () => {
                   <HardDrive className="w-4 h-4" />
                   <span>The Sleuth Kit (DiskAgent)</span>
                 </div>
-                <span className="text-[10px] font-mono text-slate-500">TSK fls 4.12</span>
+                <span className="text-[10px] font-mono text-slate-500">TSK (fls)</span>
               </div>
               <p className="text-xs text-slate-400 leading-relaxed">
                 Extracts complete directory hierarchies, metadata timestamps, and deleted FAT/NTFS inode pointers.
@@ -191,7 +191,7 @@ export const AnalysisPage: React.FC = () => {
                   <Cpu className="w-4 h-4" />
                   <span>Volatility 3 (MemoryAgent)</span>
                 </div>
-                <span className="text-[10px] font-mono text-slate-500">Vol 2.28</span>
+                <span className="text-[10px] font-mono text-slate-500">Volatility 3</span>
               </div>
               <p className="text-xs text-slate-400 leading-relaxed">
                 Dumps active process trees, injected code memory regions, and volatile network sockets from raw RAM.
@@ -228,7 +228,7 @@ export const AnalysisPage: React.FC = () => {
                   <Bug className="w-4 h-4" />
                   <span>YARA Pattern Matcher (MalwareAgent)</span>
                 </div>
-                <span className="text-[10px] font-mono text-slate-500">YARA 4.5.5</span>
+                <span className="text-[10px] font-mono text-slate-500">YARA</span>
               </div>
               <p className="text-xs text-slate-400 leading-relaxed">
                 Scans evidence against compiled local signature repositories with exact string byte-offset extraction.
@@ -240,7 +240,6 @@ export const AnalysisPage: React.FC = () => {
                   onChange={(e) => setYaraRule(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-xs text-slate-300 font-mono focus:outline-none focus:border-rose-500"
                 >
-                  <option value="adfir_test_rules">adfir_test_rules.yar (Synthetic Marker)</option>
                   <option value="adfir_webshell_indicators">adfir_webshell_indicators.yar (Webshells)</option>
                   <option value="adfir_suspicious_commands">adfir_suspicious_commands.yar (Command Injections)</option>
                 </select>
@@ -264,7 +263,7 @@ export const AnalysisPage: React.FC = () => {
                   <FileText className="w-4 h-4" />
                   <span>EVTX Parser (LogAgent)</span>
                 </div>
-                <span className="text-[10px] font-mono text-slate-500">python-evtx 0.8.1</span>
+                <span className="text-[10px] font-mono text-slate-500">python-evtx</span>
               </div>
               <p className="text-xs text-slate-400 leading-relaxed">
                 Streams binary Windows EVTX records and extracts authentication (4624/4625), process (4688), and service (7045) events.

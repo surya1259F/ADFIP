@@ -26,3 +26,20 @@ def test_verify_sha256_valid_and_invalid():
 def test_nonexistent_file_rejection():
     with pytest.raises(FileNotFoundError):
         calculate_sha256("/path/to/nonexistent/evidence_file.E01")
+
+
+def test_missing_evidence_file_with_registered_hash_is_not_verified():
+    from types import SimpleNamespace
+    from backend.app.services.final_report import verify_evidence_file_integrity
+
+    evidence = SimpleNamespace(
+        id="missing-evidence-test",
+        storage_path="/definitely/missing/evidence.bin",
+        original_path="/also/missing/original.bin",
+        sha256="a" * 64,
+    )
+
+    status, current_hash = verify_evidence_file_integrity(evidence)
+
+    assert status == "UNCHECKED"
+    assert current_hash is None

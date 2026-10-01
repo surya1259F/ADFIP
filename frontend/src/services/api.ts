@@ -73,6 +73,7 @@ export const validateDiscoveredBackendUrl = (urlStr: string, expectedPort?: numb
 };
 
 let currentToken: string | null = null;
+let currentBootstrapSecret: string | null = null;
 let unauthorizedHandler: (() => void) | null = null;
 let backendNetworkErrorHandler: ((error: any) => void) | null = null;
 
@@ -82,6 +83,14 @@ export const setAccessToken = (token: string | null) => {
 
 export const getAccessToken = (): string | null => {
   return currentToken;
+};
+
+export const setBootstrapSecret = (secret: string | null) => {
+  currentBootstrapSecret = secret;
+};
+
+export const getBootstrapSecret = (): string | null => {
+  return currentBootstrapSecret;
 };
 
 export const setUnauthorizedHandler = (handler: (() => void) | null) => {
@@ -108,10 +117,13 @@ export const getApiBaseUrl = (): string => {
   return currentApiBase;
 };
 
-// Request Interceptor: Attach Authorization Bearer header if token exists
+// Request Interceptor: Attach Authorization Bearer header if token exists and Bootstrap Secret if available
 client.interceptors.request.use((config) => {
   if (currentToken && !config.headers.Authorization) {
     config.headers.Authorization = `Bearer ${currentToken}`;
+  }
+  if (currentBootstrapSecret && !config.headers['X-ADFIR-Bootstrap-Secret']) {
+    config.headers['X-ADFIR-Bootstrap-Secret'] = currentBootstrapSecret;
   }
   return config;
 }, (error) => {
@@ -347,7 +359,7 @@ export const api = {
   executeMalwareAnalysis: async (
     investigationId: string,
     evidenceId: string,
-    ruleId: string = 'adfir_test_rules'
+    ruleId: string = 'adfir_webshell_indicators'
   ): Promise<MalwareAnalysisResult> => {
     const res = await client.post<MalwareAnalysisResult>(`/cases/${investigationId}/analysis/malware`, {
       evidence_id: evidenceId,

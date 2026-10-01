@@ -9,7 +9,7 @@ class ReportSynthesizer:
 
     def generate_report(self, case_info: Dict[str, Any], evidence_list: List[Dict[str, Any]], findings: List[Dict[str, Any]], correlated_groups: List[Dict[str, Any]]) -> Dict[str, Any]:
         case_title = case_info.get("title", "Digital Forensics Investigation")
-        case_number = case_info.get("case_number", "CASE-001")
+        case_number = case_info.get("case_number") or case_info.get("id") or "UNSPECIFIED"
         investigator = case_info.get("investigator", "Lead Investigator")
         now_str = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
         
@@ -20,7 +20,7 @@ class ReportSynthesizer:
                 timeline.append({
                     "timestamp": str(f.get("timestamp")),
                     "event": f.get("title"),
-                    "source": f.get("source_tool"),
+                    "source": f.get("source_tool") or f.get("tool"),
                     "details": f.get("details")
                 })
 
@@ -51,20 +51,32 @@ class ReportSynthesizer:
             "| :--- | :--- | :--- | :--- |",
         ]
         for e in evidence_list:
-            md_lines.append(f"| {e.get('file_name')} | {e.get('evidence_type')} | `{e.get('sha256_hash', 'N/A')}` | VERIFIED |")
+            ev_integrity = e.get("integrity_status") or "UNCHECKED"
+            md_lines.append(f"| {e.get('file_name') or e.get('name')} | {e.get('evidence_type')} | `{e.get('sha256_hash') or e.get('sha256', 'N/A')}` | {ev_integrity} |")
+
+        # Discover tools actually present in findings/evidence
+        tools_used = sorted(set(
+            (f.get("source_tool") or f.get("tool")) for f in findings if (f.get("source_tool") or f.get("tool"))
+        ))
 
         md_lines.extend([
             "",
             "## 3. Investigation Methodology & Specialist Tools Used",
-            "- **The Sleuth Kit (TSK):** Filesystem structure, deleted file carving, and inode extraction.",
-            "- **Volatility 3 Framework:** Kernel memory introspection, process listing, and injected code detection.",
-            "- **YARA Pattern Matching:** Binary signature and threat artifact identification.",
-            "- **Integrity & Verification Engine:** Cryptographic hashing and deterministic validation.",
+        ])
+        if tools_used:
+            for t in tools_used:
+                md_lines.append(f"- **{t}**: Specialist analysis and artifact extraction.")
+        else:
+            md_lines.append("- Deterministic forensic verification and cryptographic integrity pipeline.")
+
+        md_lines.extend([
             "",
             "## 4. Key Findings & Correlated Attack Vectors",
         ])
         for f in findings:
-            md_lines.append(f"- **[{f.get('source_tool')}] {f.get('title')}** (Confidence: {f.get('confidence_score', 1.0)*100:.0f}%)")
+            conf_raw = f.get('confidence_score')
+            conf_str = f"{conf_raw*100:.0f}%" if conf_raw is not None else "Unknown"
+            md_lines.append(f"- **[{f.get('source_tool')}] {f.get('title')}** (Confidence: {conf_str})")
             md_lines.append(f"  - Category: `{f.get('category')}`")
             if f.get('mitre_techniques'):
                 md_lines.append(f"  - MITRE ATT&CK: {', '.join(f.get('mitre_techniques'))}")
@@ -85,29 +97,40 @@ class ReportSynthesizer:
         else:
             md_lines.append("| N/A | None detected in analyzed samples | - |")
 
+        if findings:
+            reconstruction_text = f"Root cause and activity reconstruction requires investigator review of the {len(findings)} technical finding(s) and {len(correlated_groups)} correlated group(s) documented across analyzed evidence artifacts."
+            recommendations = []
+            for f in findings:
+                rec = f.get("recommendation") or f.get("details", {}).get("recommendation")
+                if rec:
+                    recommendations.append({"priority": "HIGH", "action": str(rec), "phase": "Remediation"})
+        else:
+            reconstruction_text = "No unauthorized activity, malicious artifacts, or compromise indicators were identified across analyzed evidence items."
+            recommendations = []
+
         md_lines.extend([
             "",
             "## 6. Root Cause Analysis & Attack Reconstruction",
-            "Based on the correlated evidence, the incident timeline reflects unauthorized activity spanning process execution and network persistence.",
+            reconstruction_text,
             "",
             "## 7. Recommended Prevention & Remediation Actions",
-            "1. **Isolate Affected Endpoints:** Immediately disconnect compromised hosts from the local network segment.",
-            "2. **Revoke Credentials:** Invalidate all active tokens and credentials observed in memory.",
-            "3. **Block IOCs:** Deploy firewall and EDR blocklists for identified external C2 IP addresses and malicious hashes.",
-            "4. **Patch & Hardening:** Audit system services and apply vendor patches to prevent re-exploitation.",
+        ])
+        if recommendations:
+            for idx, rec in enumerate(recommendations, 1):
+                md_lines.append(f"{idx}. **[{rec['phase']}]**: {rec['action']}")
+        else:
+            if findings:
+                md_lines.append("Recommendations require investigator review based on case-specific evidence findings.")
+            else:
+                md_lines.append("No recommendations — no forensic findings were identified.")
+
+        md_lines.extend([
             "",
             "---",
             "*Report generated autonomously by ADFIR Forensic Engine with verified ground-truth backing.*"
         ])
 
         full_md = "\n".join(md_lines)
-
-        recommendations = [
-            {"priority": "CRITICAL", "action": "Isolate affected endpoints from corporate network", "phase": "Containment"},
-            {"priority": "HIGH", "action": "Revoke active session credentials and invalidate kerberos tokens", "phase": "Eradication"},
-            {"priority": "HIGH", "action": "Block malicious IOCs at network perimeter & perimeter firewalls", "phase": "Containment"},
-            {"priority": "MEDIUM", "action": "Audit software patches and apply baseline system hardening", "phase": "Remediation"}
-        ]
 
         return {
             "title": f"Investigation Report - {case_title}",

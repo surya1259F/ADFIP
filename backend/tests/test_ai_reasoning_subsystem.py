@@ -239,11 +239,13 @@ def populate_forensic_case_data(db, case):
         timestamp_utc=datetime.now(timezone.utc),
         original_timestamp="2026-09-26T18:00:00Z",
         event_type="FILE_DELETED",
-        summary="File /tmp/payload.exe was deleted from disk.",
-        entity_identity=art1.entity_identity,
-        raw_provenance={"agent": "DiskForensicsAgent"},
         event_source="FLS",
-        event_data={"path": "/tmp/payload.exe"},
+        event_data={
+            "path": "/tmp/payload.exe",
+            "summary": "File /tmp/payload.exe was deleted from disk.",
+            "entity_identity": art1.entity_identity,
+            "raw_provenance": {"agent": "DiskForensicsAgent"}
+        },
         sha256_hash="f" * 64,
         source_artifact_hash="c" * 64
     )
@@ -253,8 +255,6 @@ def populate_forensic_case_data(db, case):
     rel = ArtifactRelationship(
         id=str(uuid.uuid4()),
         case_id=case.id,
-        source_artifact_id=art1.id,
-        target_artifact_id=art2.id,
         source_id=art1.id,
         source_type="NORMALIZED_ARTIFACT",
         source_domain="FILESYSTEM",
@@ -262,7 +262,6 @@ def populate_forensic_case_data(db, case):
         target_type="NORMALIZED_ARTIFACT",
         target_domain="MEMORY",
         relationship_type="FILE_EXECUTED_AS_PROCESS",
-        description="Deleted binary /tmp/payload.exe corresponds to active memory process 1044.",
         confidence_score=0.92,
         evidence_ids=[ev.id],
         provenance={"rule": "RULE_CROSS_DOMAIN_PROCESS_FILE"},
@@ -278,13 +277,11 @@ def populate_forensic_case_data(db, case):
         severity="HIGH",
         title="Deleted Executable with Process Execution Correlation",
         description="Identified deleted executable in /tmp correlated with process execution in volatile memory.",
-        rule_name="RULE_DELETED_EXECUTABLE_CORRELATED",
-        confidence_score=0.95,
         severity_rule="RULE_DELETED_EXECUTABLE_CORRELATED",
         confidence=0.95,
         supporting_evidence_ids=[ev.id],
         supporting_artifact_ids=[art1.id, art2.id],
-        supporting_correlation_ids=[rel.id],
+        supporting_relationship_ids=[rel.id],
         provenance={"pipeline": "Steps 10-15"},
         sha256_hash="2" * 64
     )

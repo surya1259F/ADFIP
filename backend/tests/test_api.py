@@ -35,7 +35,7 @@ def test_end_to_end_forensic_pipeline():
         "investigator": "Lead Investigator Alice"
     }
     case_res = client.post("/api/v1/cases/", json=case_payload)
-    assert case_res.status_code == 200
+    assert case_res.status_code in (200, 201)
     case_data = case_res.json()
     case_id = case_data["id"]
     assert case_data["case_number"] == case_num

@@ -12,6 +12,7 @@ from pathlib import Path
 DIST_DIR = Path(__file__).resolve().parent.parent.parent / "dist" / "adfir-backend"
 EXECUTABLE = DIST_DIR / ("adfir-backend.exe" if sys.platform.startswith("win") else "adfir-backend")
 
+@pytest.mark.skipif(not EXECUTABLE.exists(), reason="Packaged binary dist/adfir-backend does not exist")
 def test_pyinstaller_executable_exists():
     assert EXECUTABLE.exists(), f"PyInstaller executable not found at {EXECUTABLE}"
     assert os.access(EXECUTABLE, os.X_OK), f"File at {EXECUTABLE} is not executable"
@@ -61,6 +62,7 @@ def test_path_resolution_dev_vs_frozen_mode(tmp_path, monkeypatch):
 # PACKAGED RUNTIME SCENARIO A: EXPLICIT ADFIR_DATA_DIR
 # =============================================================================
 
+@pytest.mark.skipif(not EXECUTABLE.exists(), reason="Packaged binary dist/adfir-backend does not exist")
 def test_packaged_executable_scenario_a_explicit_data_dir(tmp_path):
     assert EXECUTABLE.exists(), "Build must be completed before runtime test"
 
@@ -122,6 +124,7 @@ def test_packaged_executable_scenario_a_explicit_data_dir(tmp_path):
 # PACKAGED RUNTIME SCENARIO B: NO ADFIR_DATA_DIR (DEFAULT USER DATA DIR)
 # =============================================================================
 
+@pytest.mark.skipif(not EXECUTABLE.exists(), reason="Packaged binary dist/adfir-backend does not exist")
 def test_packaged_executable_scenario_b_no_data_dir(tmp_path):
     assert EXECUTABLE.exists(), "Build must be completed before runtime test"
 

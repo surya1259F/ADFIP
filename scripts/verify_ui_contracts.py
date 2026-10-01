@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 
-FRONTEND_SRC = Path("/home/nandireddy/ADFIR/frontend/src")
+FRONTEND_SRC = Path(__file__).resolve().parent.parent / "frontend" / "src"
 
 def audit_ui():
     print("=== AUDITING FRONTEND SOURCE FILES FOR FAKE / MARKETING COPY ===")

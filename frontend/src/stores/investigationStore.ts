@@ -28,7 +28,7 @@ import type {
   AIProviderTestRequest,
   AIProviderTestResponse
 } from '../types';
-import { api, setAccessToken, getAccessToken, setUnauthorizedHandler, setApiBaseUrl, validateDiscoveredBackendUrl, setBackendNetworkErrorHandler } from '../services/api';
+import { api, setAccessToken, getAccessToken, setUnauthorizedHandler, setApiBaseUrl, validateDiscoveredBackendUrl, setBackendNetworkErrorHandler, setBootstrapSecret } from '../services/api';
 
 let pollIntervalId: any = null;
 
@@ -175,7 +175,7 @@ export const useInvestigationStore = create<InvestigationState>((set, get) => ({
     if (isTauriEnv) {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
-        const config = await invoke<{ port: number; url: string }>('get_backend_config');
+        const config = await invoke<{ port: number; url: string; bootstrap_secret?: string }>('get_backend_config');
 
         if (!config || typeof config.url !== 'string') {
           set({
@@ -196,6 +196,10 @@ export const useInvestigationStore = create<InvestigationState>((set, get) => ({
           return;
         }
 
+        if (config.bootstrap_secret) {
+          setBootstrapSecret(config.bootstrap_secret);
+        }
+
         setApiBaseUrl(config.url);
         set({
           backendState: 'READY',
@@ -213,7 +217,7 @@ export const useInvestigationStore = create<InvestigationState>((set, get) => ({
       }
     } else {
       // Standalone browser / Vite development fallback ONLY
-      const devUrl = 'http://localhost:8000/api';
+      const devUrl = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:8000/api';
       setApiBaseUrl(devUrl);
       set({
         backendState: 'READY',
@@ -806,7 +810,7 @@ export const useInvestigationStore = create<InvestigationState>((set, get) => ({
     }
   },
 
-  executeMalwareAnalysis: async (evidenceId: string, ruleId: string = 'adfir_test_rules') => {
+  executeMalwareAnalysis: async (evidenceId: string, ruleId: string = 'adfir_webshell_indicators') => {
     const active = get().activeInvestigation;
     if (!active) throw new Error("No active case");
     set({

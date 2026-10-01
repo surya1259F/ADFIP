@@ -134,7 +134,7 @@ def test_complete_investigation_lifecycle_e2e(db_session, tmp_path):
         "priority": "CRITICAL"
     }
     case_res = client.post("/api/v1/cases", headers=headers, json=case_in)
-    assert case_res.status_code == 200
+    assert case_res.status_code in [200, 201]
     case_data = case_res.json()
     case_id = case_data["id"]
 

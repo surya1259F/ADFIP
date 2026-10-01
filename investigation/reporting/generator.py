@@ -34,16 +34,25 @@ class ReportGenerator:
                 "evidence_ref": f.get("evidence_reference")
             })
 
-        # Build IOCs
+        # Build IOCs — extracted strictly from verified finding details fields only
+        _IOC_FIELD_TYPE_MAP = {
+            "ip_address":    "IP_ADDRESS",
+            "c2_domain":     "DOMAIN",
+            "domain":        "DOMAIN",
+            "url":           "URL",
+            "sha256":        "HASH_SHA256",
+            "md5":           "HASH_MD5",
+            "file_name":     "FILE_NAME",
+            "process_name":  "PROCESS_NAME",
+        }
         iocs = []
         for f in findings:
-            desc = f.get("description", "")
             title = f.get("title", "")
-            # Extract common tokens
-            if "ip:" in desc.lower() or "198." in desc or "10." in desc:
-                iocs.append({"type": "IP_ADDRESS", "value": "198.51.100.45", "context": title})
-            if "sha256" in desc.lower():
-                iocs.append({"type": "HASH_SHA256", "value": f.get("evidence_reference", "N/A"), "context": title})
+            details = f.get("details") or {}
+            for field, ioc_type in _IOC_FIELD_TYPE_MAP.items():
+                value = details.get(field)
+                if value:
+                    iocs.append({"type": ioc_type, "value": str(value), "context": title})
 
         # 19 Sections Markdown Generator
         md = [
@@ -90,9 +99,18 @@ class ReportGenerator:
             "",
             "## 5. Investigation Methodology",
             "- **Cryptographic Integrity:** SHA-256 streaming hashing in 8 MiB chunks.",
-            "- **Deterministic Tool Adapters:** The Sleuth Kit, YARA, ExifTool, Volatility 3.",
             "- **Rule-Based Correlation:** Multi-source linking without stochastic hallucination.",
             "- **Verification Engine:** Provenance validation against raw tool output references.",
+        ])
+
+        # Build tool list from actual execution records in findings
+        recorded_tools = sorted({f.get("tool") for f in findings if f.get("tool")})
+        if recorded_tools:
+            md.append("- **Deterministic Tool Adapters (recorded):** " + ", ".join(recorded_tools) + ".")
+        else:
+            md.append("- No specialist tool executions are recorded for this investigation.")
+
+        md.extend([
             "",
             "## 6. Incident Timeline",
         ])
@@ -127,12 +145,36 @@ class ReportGenerator:
             "All findings are strictly mapped to underlying byte offsets, inode tables, or file hashes.",
             "",
             "## 9. Attack Classification",
-            f"[INFERENCE] Classification: {'Unauthorized Persistence & Execution' if has_findings else 'INSUFFICIENT EVIDENCE'}",
+            "[INFERENCE] Attack classification requires investigator review of the attached findings. No automated classification is applied." if has_findings else "[FACT] INSUFFICIENT EVIDENCE: No attack classification possible.",
             "",
             "## 10. MITRE ATT&CK Mapping",
             "| Tactic | Technique ID | Technique Name | Supporting Finding |",
             "| :--- | :--- | :--- | :--- |",
-            "| Execution | T1059 | Command and Scripting Interpreter | Verified Shell / Process Execution |" if has_findings else "| N/A | N/A | INSUFFICIENT EVIDENCE | - |",
+        ])
+
+        # Collect MITRE techniques from actual findings only
+        mitre_rows = []
+        for f in findings:
+            techniques = f.get("mitre_techniques") or f.get("mitre_attack") or []
+            if isinstance(techniques, list):
+                for t in techniques:
+                    tactic = t.get("tactic", "N/A")
+                    tid = t.get("technique_id", "N/A")
+                    tname = t.get("technique_name", "N/A")
+                    mitre_rows.append(f"| {tactic} | {tid} | {tname} | {f.get('title', '')} |")
+            elif isinstance(techniques, dict):
+                tactic = techniques.get("tactic", "N/A")
+                tid = techniques.get("technique_id", "N/A")
+                tname = techniques.get("technique_name", "N/A")
+                mitre_rows.append(f"| {tactic} | {tid} | {tname} | {f.get('title', '')} |")
+
+        if mitre_rows:
+            for row in mitre_rows:
+                md.append(row)
+        else:
+            md.append("| N/A | N/A | INSUFFICIENT EVIDENCE: No verified MITRE mapping | - |")
+
+        md.extend([
             "",
             "## 11. Confidence Assessment",
             f"Overall Confidence: {'HIGH (Calibrated against deterministic tool outputs)' if has_findings else 'INSUFFICIENT EVIDENCE'}",
@@ -149,10 +191,10 @@ class ReportGenerator:
         md.extend([
             "",
             "## 13. Root Cause Analysis",
-            "[INFERENCE] Root cause indicates execution of untrusted scripts or abnormal process spawns on the target endpoint." if has_findings else "[INFERENCE] INSUFFICIENT EVIDENCE to determine root cause.",
+            "[INFERENCE] Root cause analysis requires investigator review. See forensic findings for evidence-grounded indicators." if has_findings else "[INFERENCE] INSUFFICIENT EVIDENCE: Root cause could not be established from the available evidence.",
             "",
             "## 14. Impact Assessment",
-            "Potential compromise of host integrity and credential exposure." if has_findings else "Impact unscored due to insufficient evidence.",
+            "Impact assessment requires investigator review of the evidence-grounded findings listed in Section 7." if has_findings else "INSUFFICIENT EVIDENCE: Impact could not be determined from the available evidence.",
             "",
             "## 15. Indicators of Compromise (IOCs)",
             "| Type | Value | Context |",
@@ -163,7 +205,7 @@ class ReportGenerator:
             for ioc in iocs:
                 md.append(f"| {ioc['type']} | `{ioc['value']}` | {ioc['context']} |")
         else:
-            md.append("| N/A | None detected | - |")
+            md.append("| N/A | No verified IOC available | - |")
 
         md.extend([
             "",

@@ -63,7 +63,7 @@ export const EvidencePage: React.FC = () => {
 
   const handleAnalyzeMalware = async (evidenceId: string) => {
     try {
-      await executeMalwareAnalysis(evidenceId, 'adfir_test_rules');
+      await executeMalwareAnalysis(evidenceId, 'adfir_webshell_indicators');
       setSuccessMsg('Malware signature scan complete. YARA matches recorded.');
       setTimeout(() => setSuccessMsg(''), 5000);
     } catch {
@@ -124,7 +124,7 @@ export const EvidencePage: React.FC = () => {
               <input
                 type="text"
                 required
-                placeholder="e.g. /home/nandireddy/ADFIR/tests/fixtures/log/sample_security_events.xml"
+                placeholder="e.g. /data/evidence/security_events.evtx"
                 value={filePath}
                 onChange={(e) => setFilePath(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"

@@ -31,7 +31,7 @@ api_router = APIRouter()
 # System
 api_router.include_router(
     system.router,
-    prefix="/system",
+    prefix="",
     tags=["System"],
 )
 
@@ -67,74 +67,79 @@ api_router.include_router(
 )
 api_router.include_router(
     strategy.router,
-    prefix="/strategy",
+    prefix="",
     tags=["Strategy"],
 )
 api_router.include_router(
     scheduler.router,
-    prefix="/scheduler",
+    prefix="",
     tags=["Scheduler"],
 )
 api_router.include_router(
     executions.router,
-    prefix="/executions",
+    prefix="",
     tags=["Executions"],
 )
 
 # Forensic processing
 api_router.include_router(
     raw_outputs.router,
-    prefix="/raw-outputs",
+    prefix="",
     tags=["Raw Outputs"],
 )
 api_router.include_router(
     artifacts.router,
-    prefix="/artifacts",
+    prefix="",
     tags=["Artifacts"],
 )
 api_router.include_router(
     normalization.router,
-    prefix="/normalization",
+    prefix="",
     tags=["Normalization"],
 )
 api_router.include_router(
     timeline.router,
-    prefix="/timeline",
+    prefix="",
     tags=["Timeline"],
 )
 api_router.include_router(
     correlation.router,
-    prefix="/correlation",
+    prefix="",
     tags=["Correlation"],
 )
 api_router.include_router(
     findings.router,
-    prefix="/findings",
+    prefix="",
     tags=["Findings"],
 )
 
 # Specialist agents / governance / AI
 api_router.include_router(
     agents.router,
-    prefix="/agents",
+    prefix="",
     tags=["Agents"],
 )
 api_router.include_router(
     governance.router,
-    prefix="/governance",
+    prefix="",
     tags=["Governance"],
 )
 api_router.include_router(
     ai.router,
-    prefix="/ai",
+    prefix="",
     tags=["AI"],
 )
 
 # Investigator review / reporting
 api_router.include_router(
     review.router,
-    prefix="/review",
+    prefix="",
     tags=["Investigator Review"],
+)
+api_router.include_router(
+    reports.case_reports_router,
+    prefix="",
+    tags=["Case Reports"],
 )
 api_router.include_router(
     reports.router,
@@ -145,12 +150,12 @@ api_router.include_router(
 # Runtime / audit / recovery
 api_router.include_router(
     orchestration.router,
-    prefix="/orchestration",
+    prefix="",
     tags=["Orchestration"],
 )
 api_router.include_router(
     audit.router,
-    prefix="/audit",
+    prefix="",
     tags=["Audit"],
 )
 api_router.include_router(

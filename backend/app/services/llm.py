@@ -26,8 +26,9 @@ class LocalLLMProvider(LLMProvider):
     Default provider: executes locally without cloud egress or paid keys.
     """
 
-    def __init__(self, endpoint: str = "http://localhost:11434/v1"):
-        self.endpoint = endpoint
+    def __init__(self, endpoint: Optional[str] = None):
+        from backend.app.core.config import settings
+        self.endpoint = endpoint if endpoint is not None else settings.LOCAL_LLM_ENDPOINT
 
     def _sanitize_untrusted_data(self, data_str: str) -> str:
         """

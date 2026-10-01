@@ -1,3 +1,8 @@
+"""
+DEVELOPER TEST HARNESS ONLY — NOT EXECUTABLE IN PRODUCTION RUNTIME.
+For developer integration testing of pipeline stages.
+"""
+
 import sys
 import os
 import json
@@ -94,8 +99,8 @@ def main():
         "agent": "DiskAgent",
         "tool": "SleuthKit",
         "finding_type": "filesystem_artifact",
-        "title": "Suspicious Script Drop in Temp Directory",
-        "description": "Recovered malicious script payload at inode 501 linking to IP 198.51.100.45",
+        "title": "Script File Detected in Target Directory",
+        "description": "Identified script file record at inode 501 during directory structure parsing",
         "confidence": 0.95,
         "evidence_reference": "inode:501"
     }
@@ -106,9 +111,9 @@ def main():
         "evidence_id": evidence_id,
         "agent": "MalwareAgent",
         "tool": "YARA",
-        "finding_type": "malware_signature",
-        "title": "CobaltStrike Stager Signature Match",
-        "description": "Rule CobaltStrike_Beacon matched on inode 501 referencing 198.51.100.45",
+        "finding_type": "pattern_match",
+        "title": "Command Pattern Match",
+        "description": "Rule adfir_suspicious_commands matched on inode 501",
         "confidence": 0.98,
         "evidence_reference": "inode:501"
     }

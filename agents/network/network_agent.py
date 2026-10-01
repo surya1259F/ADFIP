@@ -205,8 +205,9 @@ class NetworkAgent(Agent):
             }
 
         return {
-            "status": "SUCCESS",
+            "status": "NOT_IMPLEMENTED",
             "execution_id": execution_id,
+            "message": "Direct PCAP/network packet parsing is not implemented; use structured artifact analysis pipeline.",
             "artifacts_count": 0,
             "findings_count": 0,
             "artifacts": [],

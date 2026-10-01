@@ -576,7 +576,37 @@ class InvestigationOrchestrator:
             db.commit()
             db.refresh(plan)
 
-        tasks: List[Dict[str, Any]] = [dict(t) for t in (plan.tasks or [])]
+        raw_tasks: List[Dict[str, Any]] = [dict(t) for t in (plan.tasks or [])]
+        tasks: List[Dict[str, Any]] = []
+        for t in raw_tasks:
+            task_norm = dict(t)
+            s_id = str(task_norm.get("step_id") or task_norm.get("task_key") or task_norm.get("task_id") or "")
+            task_norm["step_id"] = s_id
+            task_norm["task_id"] = s_id
+            task_norm["task_key"] = s_id
+
+            if not task_norm.get("evidence_id"):
+                ev_ids = task_norm.get("evidence_ids")
+                if isinstance(ev_ids, list) and len(ev_ids) > 0:
+                    task_norm["evidence_id"] = ev_ids[0]
+
+            if not task_norm.get("tool"):
+                task_norm["tool"] = task_norm.get("selected_tool_id") or task_norm.get("tool_name") or ""
+
+            if not task_norm.get("action"):
+                task_norm["action"] = task_norm.get("capability_id") or ""
+
+            if not task_norm.get("agent"):
+                task_norm["agent"] = task_norm.get("agent_name") or ""
+
+            if "parameters" not in task_norm or not isinstance(task_norm["parameters"], dict):
+                task_norm["parameters"] = {}
+
+            if "tool_available" not in task_norm:
+                task_norm["tool_available"] = True
+
+            tasks.append(task_norm)
+
         if not tasks:
             plan.status = "COMPLETED"
             plan.completed_at = datetime.now(timezone.utc)
@@ -825,10 +855,15 @@ class InvestigationOrchestrator:
                 .first()
             )
 
+        is_terminated = True
         proc_cancelled = False
         if execution and execution.status == "RUNNING":
-            from forensic_tools.registry import tool_registry
-            proc_cancelled = tool_registry.cancel_execution_process(execution.id)
+            if execution.pid is None:
+                proc_cancelled = True
+            else:
+                from forensic_tools.registry import tool_registry
+                proc_cancelled = tool_registry.cancel_execution_process(execution.id)
+
             if proc_cancelled:
                 execution.status = "CANCELLED"
                 execution.cancelled_at = datetime.now(timezone.utc)
@@ -836,15 +871,19 @@ class InvestigationOrchestrator:
                 execution.completed_at = datetime.now(timezone.utc)
                 execution.error_message = f"Cancelled by {cancelled_by} request."
                 db.commit()
-
-        is_terminated = True
-        if execution and execution.pid is not None and not proc_cancelled:
-            try:
-                import os
-                os.kill(execution.pid, 0)
-                is_terminated = False
-            except (OSError, ProcessLookupError):
-                is_terminated = True
+            elif execution.pid is not None:
+                try:
+                    import os
+                    os.kill(execution.pid, 0)
+                    is_terminated = False
+                except (OSError, ProcessLookupError):
+                    is_terminated = True
+                    execution.status = "CANCELLED"
+                    execution.cancelled_at = datetime.now(timezone.utc)
+                    execution.cancelled_by = cancelled_by
+                    execution.completed_at = datetime.now(timezone.utc)
+                    execution.error_message = f"Cancelled by {cancelled_by} request (process no longer active)."
+                    db.commit()
 
         reason_text = (
             f"Cancelled by {cancelled_by} request."

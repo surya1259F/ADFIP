@@ -96,7 +96,7 @@ class Settings(BaseSettings):
     DEFAULT_LLM_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str = ""
     OPENROUTER_API_KEY: str = ""
-    LOCAL_LLM_ENDPOINT: str = "http://localhost:11434/v1"
+    LOCAL_LLM_ENDPOINT: str = ""
     
     # Authentication & Session Security
     JWT_SECRET_KEY: str = ""
@@ -134,16 +134,24 @@ def get_backend_port() -> int:
         return validate_port(settings.ADFIR_PORT)
     return 8000
 
-# Dynamic secret key fallback for local workstation running without env secret
-import secrets
-_runtime_jwt_secret = secrets.token_hex(32)
+# Dynamic secret key fallback: deterministic per-installation, not random across restarts
+import hashlib
+import logging as _cfg_logging
+
+_cfg_logger = _cfg_logging.getLogger("ADFIR_CONFIG")
 
 def get_jwt_secret() -> str:
-    return settings.JWT_SECRET_KEY if settings.JWT_SECRET_KEY else _runtime_jwt_secret
-
-# Ensure required workspace data directories exist
-settings.DATA_DIR.mkdir(parents=True, exist_ok=True)
-settings.EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
-settings.CASES_DIR.mkdir(parents=True, exist_ok=True)
-settings.REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-settings.LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    """
+    Returns the configured JWT secret key, or a deterministic fallback derived from
+    the DATABASE_URL so that restarts with the same database re-use the same key.
+    A random key (the old behaviour) would invalidate all tokens on every restart.
+    """
+    if settings.JWT_SECRET_KEY:
+        return settings.JWT_SECRET_KEY
+    # Deterministic fallback: same DB path → same secret across restarts
+    _cfg_logger.warning(
+        "JWT_SECRET_KEY is not set. Using a deterministic fallback derived from "
+        "DATABASE_URL. Production deployments MUST set JWT_SECRET_KEY to a strong, "
+        "randomly generated value."
+    )
+    return hashlib.sha256(settings.DATABASE_URL.encode()).hexdigest()

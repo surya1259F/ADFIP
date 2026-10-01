@@ -28,6 +28,7 @@ class ToolDefinition(BaseModel):
     path: Optional[str] = None
     version: Optional[str] = None
     is_available: bool = False
+    is_library_adapter: bool = False
     supported_evidence_types: List[str] = []
     capabilities: List[str] = []
     description: str
@@ -203,7 +204,6 @@ class PlatformAwareToolRegistry:
 
         # 4. Dedicated Volatility virtualenv
         if bin_name in ["vol", "vol.exe"]:
-            vol_env = self.root_dir / "volatility-env" / ("Scripts/vol.exe" if self.current_os == "windows" else "bin/vol")
             vol_env = settings.BASE_DIR / "volatility-env" / ("Scripts/vol.exe" if self.current_os == "windows" else "bin/vol")
             if vol_env.exists() and os.access(vol_env, os.X_OK):
                 return str(vol_env)
@@ -287,7 +287,13 @@ class PlatformAwareToolRegistry:
         # 4. Volatility 3
         vol_bin = "vol.exe" if self.current_os == "windows" else "vol"
         vol_path = self._resolve_binary_path(vol_bin)
-        vol_ver = "2.28.0" if vol_path else None
+        vol_ver = None
+        if vol_path:
+            try:
+                out = subprocess.run([vol_path, "--version"], capture_output=True, text=True, timeout=10, shell=False)
+                vol_ver = (out.stdout or out.stderr).strip().splitlines()[0] if (out.stdout or out.stderr).strip() else "detected"
+            except Exception:
+                vol_ver = "detected"
 
         self._tools["volatility3"] = ToolDefinition(
             name="volatility3",
@@ -310,17 +316,26 @@ class PlatformAwareToolRegistry:
         except ImportError:
             pass
 
+        # 5. python-evtx (In-Process Python Library Adapter)
+        evtx_available = False
+        try:
+            import Evtx  # noqa: F401
+            evtx_available = True
+        except ImportError:
+            pass
+
         evtx_tool = ToolDefinition(
             name="python-evtx",
             display_name="python-evtx Log Parser",
             platforms=["linux", "windows", "darwin"],
             binary_name="python-evtx",
-            path=sys.executable,
-            version="0.7.4",
+            path=None,
+            version="0.7.4" if evtx_available else None,
             is_available=evtx_available,
+            is_library_adapter=True,
             supported_evidence_types=["log", "event_log", "evtx", "system_log"],
             capabilities=["security_log_parsing"],
-            description="Pure Python parser for Windows Event Log files (.evtx)."
+            description="Pure Python library parser for Windows Event Log files (.evtx)."
         )
         self._tools["python-evtx"] = evtx_tool
         self._tools["python_evtx"] = evtx_tool
@@ -371,7 +386,7 @@ class PlatformAwareToolRegistry:
             )
 
         tool = self.get_tool(request.tool_name)
-        if not tool or not tool.is_available or not tool.path:
+        if not tool or not tool.is_available:
             return ToolExecutionResult(
                 tool_name=request.tool_name,
                 success=False,
@@ -381,6 +396,30 @@ class PlatformAwareToolRegistry:
                 execution_time_ms=0,
                 evidence_path=request.evidence_path,
                 error_message=f"Tool '{request.tool_name}' is not installed or available on this system."
+            )
+
+        if tool.is_library_adapter:
+            return ToolExecutionResult(
+                tool_name=request.tool_name,
+                success=False,
+                return_code=-1,
+                stdout="",
+                stderr="",
+                execution_time_ms=0,
+                evidence_path=request.evidence_path,
+                error_message=f"Tool '{request.tool_name}' is an in-process library adapter — execute via forensic pipeline adapter, not as a standalone CLI subprocess."
+            )
+
+        if not tool.path:
+            return ToolExecutionResult(
+                tool_name=request.tool_name,
+                success=False,
+                return_code=-1,
+                stdout="",
+                stderr="",
+                execution_time_ms=0,
+                evidence_path=request.evidence_path,
+                error_message=f"Tool '{request.tool_name}' binary executable path is not resolved."
             )
 
         # Enforce safe timeout cap

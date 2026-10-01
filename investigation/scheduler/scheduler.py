@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 import os
 import sys
 import threading
@@ -5,19 +6,22 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 
 
-class HostResourceProvider:
+class HostResourceProvider(ABC):
     """
-    Abstract/base host hardware resource provider interface.
+    Explicit abstract base host hardware resource provider interface.
     """
 
+    @abstractmethod
     def get_cpu_count(self) -> Optional[int]:
-        raise NotImplementedError
+        pass
 
+    @abstractmethod
     def get_total_memory_mb(self) -> Optional[int]:
-        raise NotImplementedError
+        pass
 
+    @abstractmethod
     def get_available_memory_mb(self) -> Optional[int]:
-        raise NotImplementedError
+        pass
 
 
 class DefaultResourceProvider(HostResourceProvider):

@@ -239,8 +239,9 @@ class LinuxAgent(Agent):
             }
 
         return {
-            "status": "SUCCESS",
+            "status": "NOT_IMPLEMENTED",
             "execution_id": execution_id,
+            "message": "Direct Linux evidence parsing is not implemented; use structured artifact analysis pipeline or SleuthKit tool adapter.",
             "artifacts_count": 0,
             "findings_count": 0,
             "artifacts": [],

@@ -376,13 +376,6 @@ class EvidenceIntelligenceEngine:
                 if len(header_bytes) >= pe_offset + 6 and header_bytes[pe_offset:pe_offset+4] == b"PE\x00\x00":
                     machine = int.from_bytes(header_bytes[pe_offset+4:pe_offset+6], "little")
                     arch_hint = "x86_64" if machine == 0x8664 else ("ARM64" if machine == 0xaa64 else "x86")
-
-        # Limitations
-        limitations = []
-        if ev_type == "UNKNOWN" or conf < 0.5:
-            limitations.append("Low confidence classification: evidence format could not be verified deterministically from headers.")
-        if not any(t.is_available for t in recommended_tools):
-            limitations.append("No registered forensic tools are currently available on this host system for this evidence classification.")
         elif classification in ["ELF_EXECUTABLE"]:
             platform_hint = "LINUX"
             platform_basis = "ELF binary header detected"
@@ -390,12 +383,18 @@ class EvidenceIntelligenceEngine:
             if len(header_bytes) >= 20:
                 machine_code = int.from_bytes(header_bytes[18:20], "little")
                 arch_hint = "x86_64" if machine_code == 0x3E else ("ARM64" if machine_code == 0xB7 else ("ARM" if machine_code == 0x28 else "x86"))
-
-        if classification in ["MACHO_EXECUTABLE"]:
+        elif classification in ["MACHO_EXECUTABLE"]:
             platform_hint = "MACOS"
             platform_basis = "Mach-O binary header detected"
             platform_confidence = "DETERMINISTIC"
             arch_hint = "x86_64" if header_bytes[:4] in [b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe"] else "ARM64"
+
+        # Limitations
+        limitations = []
+        if ev_type == "UNKNOWN" or conf < 0.5:
+            limitations.append("Low confidence classification: evidence format could not be verified deterministically from headers.")
+        if not any(t.is_available for t in recommended_tools):
+            limitations.append("No registered forensic tools are currently available on this host system for this evidence classification.")
 
         # MIME resolution
         detected_mime, _ = mimetypes.guess_type(name)

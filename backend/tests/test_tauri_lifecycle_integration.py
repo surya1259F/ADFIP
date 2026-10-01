@@ -29,6 +29,7 @@ def test_dynamic_port_allocation():
     sock.close()
     assert 1024 <= port <= 65535
 
+@pytest.mark.skipif(not EXECUTABLE.exists(), reason="Packaged binary dist/adfir-backend does not exist")
 def test_tauri_lifecycle_sidecar_spawn_readiness_and_shutdown(tmp_path):
     assert EXECUTABLE.exists(), "Build dist must exist before running sidecar test"
 
@@ -119,6 +120,7 @@ def test_process_identity_verification_linux():
         starttime = int(after_comm[19])
         assert starttime > 0
 
+@pytest.mark.skipif(not EXECUTABLE.exists(), reason="Packaged binary dist/adfir-backend does not exist")
 def test_occupied_port_bind_failure(tmp_path):
     # Occupy a port with a socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -159,6 +161,7 @@ class DummyUnrelatedServiceHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
+@pytest.mark.skipif(not EXECUTABLE.exists(), reason="Packaged binary dist/adfir-backend does not exist")
 def test_port_conflict_unrelated_service_rejection_and_identity_protection(tmp_path):
     # Spin up dummy unrelated HTTP service on ephemeral loopback port
     dummy_server = HTTPServer(("127.0.0.1", 0), DummyUnrelatedServiceHandler)

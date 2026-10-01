@@ -622,8 +622,16 @@ def list_case_executions_compat(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    from backend.app.models.models import ToolExecution
+    from backend.app.models.models import ToolExecution, ForensicExecution
     case = get_authorized_case(case_id, db, current_user)
+    fe_list = (
+        db.query(ForensicExecution)
+        .filter(ForensicExecution.case_id == case.id)
+        .order_by(ForensicExecution.created_at.desc())
+        .all()
+    )
+    if fe_list:
+        return fe_list
     return db.query(ToolExecution).filter(ToolExecution.case_id == case.id).all()
 
 
@@ -634,15 +642,22 @@ def get_case_execution_compat(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    from backend.app.models.models import ToolExecution
+    from backend.app.models.models import ToolExecution, ForensicExecution
     case = get_authorized_case(case_id, db, current_user)
+    fe = (
+        db.query(ForensicExecution)
+        .filter(ForensicExecution.id == execution_id, ForensicExecution.case_id == case.id)
+        .first()
+    )
+    if fe:
+        return fe
     exec_rec = (
         db.query(ToolExecution)
         .filter(ToolExecution.id == execution_id, ToolExecution.case_id == case.id)
         .first()
     )
     if not exec_rec:
-        raise HTTPException(status_code=404, detail="Tool execution record not found.")
+        raise HTTPException(status_code=404, detail="Execution record not found.")
     return exec_rec
 
 

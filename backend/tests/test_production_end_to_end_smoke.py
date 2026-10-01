@@ -13,6 +13,7 @@ from pathlib import Path
 DIST_DIR = Path(__file__).resolve().parent.parent.parent / "dist" / "adfir-backend"
 EXECUTABLE = DIST_DIR / ("adfir-backend.exe" if sys.platform.startswith("win") else "adfir-backend")
 
+@pytest.mark.skipif(not EXECUTABLE.exists(), reason="Packaged binary dist/adfir-backend does not exist")
 def test_production_end_to_end_smoke(tmp_path):
     """
     End-to-End Production Smoke & Lifecycle Reliability Test:

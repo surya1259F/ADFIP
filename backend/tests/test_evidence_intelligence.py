@@ -79,6 +79,7 @@ def test_tool_mapping_and_resource_profile(tmp_path):
     assert intel.resource_profile.expected_cpu_class == "LOW"
     assert intel.resource_profile.risk_level == "LOW"
 
+@pytest.mark.skipif(not EXECUTABLE.exists(), reason="Packaged binary dist/adfir-backend does not exist")
 def test_evidence_intake_verify_and_intelligence_api(tmp_path):
     assert EXECUTABLE.exists(), "Packaged backend executable must exist."
 

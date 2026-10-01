@@ -171,7 +171,7 @@ def test_4_client_cannot_override_identity(db_session):
     )
     assert res.status_code == 200
     # Audit log actor must equal User A
-    event = db_session.query(AuditEvent).filter(AuditEvent.case_id == case_a_id).order_by(AuditEvent.created_at.desc()).first()
+    event = db_session.query(AuditEvent).filter(AuditEvent.case_id == case_a_id).order_by(AuditEvent.timestamp.desc()).first()
     assert event is not None
     assert event.actor_id == user_a_id
 
@@ -282,7 +282,7 @@ def test_11_12_13_provider_test_credential_handling(db_session):
     assert "api_key" not in data
 
     # 13. API key absent from audit payload
-    audit_event = db_session.query(AuditEvent).filter(AuditEvent.actor_id == user_id).order_by(AuditEvent.created_at.desc()).first()
+    audit_event = db_session.query(AuditEvent).filter(AuditEvent.actor_id == user_id).order_by(AuditEvent.timestamp.desc()).first()
     assert audit_event is not None
     assert MOCK_SECRET_KEY not in audit_event.details
     assert MOCK_SECRET_KEY not in json.dumps(audit_event.metadata_json)

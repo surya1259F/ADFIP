@@ -112,11 +112,12 @@ class ReportAgent(Agent):
         for f in findings:
             f_id = f.get("id") or f.get("finding_id")
             title = f.get("title") or f.get("rule_id") or "Finding"
-            severity = f.get("severity", "MEDIUM")
-            confidence = f.get("confidence_score", 1.0)
+            severity = f.get("severity") or "INFO"
+            confidence = f.get("confidence_score")
+            conf_str = f"{confidence:.2f}" if confidence is not None else "Uncalibrated"
             observations.append({
                 "fact_type": "REPORT_SECTION_TECHNICAL_FINDING",
-                "description": f"Verified Finding: [{severity}] {title} (Confidence: {confidence:.2f}).",
+                "description": f"Verified Finding: [{severity}] {title} (Confidence: {conf_str}).",
                 "supporting_evidence_ids": supporting_ev_ids,
                 "supporting_artifact_ids": f.get("supporting_artifact_ids") or [],
                 "details": {

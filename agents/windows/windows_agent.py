@@ -313,8 +313,9 @@ class WindowsForensicsAgent(Agent):
                 }
 
         return {
-            "status": "SUCCESS",
+            "status": "NOT_IMPLEMENTED",
             "execution_id": execution_id,
+            "message": f"Specialized parser for Windows artifact '{ev_path}' is not implemented. Supported types: .evtx, .xml.",
             "artifacts_count": 0,
             "findings_count": 0,
             "artifacts": [],

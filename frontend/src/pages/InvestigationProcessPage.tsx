@@ -32,7 +32,7 @@ export const InvestigationProcessPage: React.FC = () => {
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<string>('');
   const [selectedTool, setSelectedTool] = useState<'disk' | 'memory' | 'malware' | 'log'>('disk');
   const [volatilityPlugin, setVolatilityPlugin] = useState<string>('windows.pslist');
-  const [yaraRule, setYaraRule] = useState<string>('adfir_test_rules');
+  const [yaraRule, setYaraRule] = useState<string>('adfir_webshell_indicators');
   const [maxEvtxRecords, setMaxEvtxRecords] = useState<number>(5000);
 
   if (!activeInvestigation) {
@@ -327,7 +327,6 @@ export const InvestigationProcessPage: React.FC = () => {
                   onChange={(e) => setYaraRule(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-indigo-500"
                 >
-                  <option value="adfir_test_rules">adfir_test_rules</option>
                   <option value="adfir_webshell_indicators">adfir_webshell_indicators</option>
                   <option value="adfir_suspicious_commands">adfir_suspicious_commands</option>
                 </select>

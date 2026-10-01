@@ -379,7 +379,7 @@ def test_missing_vault_file_blocks_analysis():
 # -----------------------------------------------------------------------------
 # Test 12: Post-Analysis Hash Verification Succeeds
 # -----------------------------------------------------------------------------
-def test_post_analysis_hash_verification_succeeds():
+def test_post_analysis_hash_verification_succeeds(monkeypatch):
     inv_id = _create_case(client)
     intake_res = client.post(f"/api/investigations/{inv_id}/evidence/intake", json={
         "path": str(FIXTURE_CLEAN)
@@ -387,6 +387,17 @@ def test_post_analysis_hash_verification_succeeds():
     assert intake_res.status_code == 201
     ev_data = intake_res.json()
     ev_id = ev_data["id"]
+
+    from backend.app.api.endpoints.investigations import malware_agent
+    monkeypatch.setattr(
+        malware_agent,
+        "analyze",
+        lambda evidence_item, parameters=None: {
+            "status": "SUCCESS",
+            "findings": [],
+            "provenance": {"tool": "yara", "version": "4.2.3"}
+        }
+    )
 
     scan_res = client.post(f"/api/investigations/{inv_id}/analysis/malware", json={
         "evidence_id": ev_id,

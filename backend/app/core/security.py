@@ -195,6 +195,8 @@ def create_access_token(user_id: str, email: str, role: str, expires_delta_minut
 def verify_access_token(token: str) -> Optional[Dict[str, Any]]:
     """
     Verifies token signature, expiration, format, and revocation status.
+    Fast path: checks in-memory REVOKED_TOKENS set.
+    Fallback path: checks revoked_tokens DB table (handles post-restart cache miss).
     """
     if not token or not isinstance(token, str):
         return None
@@ -229,8 +231,23 @@ def verify_access_token(token: str) -> Optional[Dict[str, Any]]:
             return None
 
         jti = payload.get("jti")
-        if jti and jti in REVOKED_TOKENS:
-            return None
+        if jti:
+            # Fast path: in-memory set
+            if jti in REVOKED_TOKENS:
+                return None
+            # Fallback path: DB check for post-restart cache miss
+            try:
+                from backend.app.models.models import RevokedToken
+                from backend.app.core.database import SessionLocal
+                with SessionLocal() as _db:
+                    db_revoked = _db.query(RevokedToken).filter(RevokedToken.jti == jti).first()
+                    if db_revoked:
+                        # Warm the in-memory cache to avoid repeat DB hits
+                        REVOKED_TOKENS.add(jti)
+                        return None
+            except Exception:
+                # DB unavailable — fall through and accept the token
+                pass
 
         return payload
     except Exception:
@@ -239,11 +256,25 @@ def verify_access_token(token: str) -> Optional[Dict[str, Any]]:
 
 def revoke_access_token(token: str) -> bool:
     """
-    Revokes an access token by adding its JTI to the revocation registry.
+    Revokes an access token by adding its JTI to the in-memory revocation registry
+    AND persisting it to the database for durability across restarts.
     """
     payload = verify_access_token(token)
     if payload and payload.get("jti"):
-        REVOKED_TOKENS.add(payload["jti"])
+        jti = payload["jti"]
+        REVOKED_TOKENS.add(jti)
+        # Persist to DB (graceful: if DB unavailable, in-memory revocation still works)
+        try:
+            from backend.app.models.models import RevokedToken
+            from backend.app.core.database import SessionLocal
+            from datetime import datetime, timezone
+            with SessionLocal() as _db:
+                existing = _db.query(RevokedToken).filter(RevokedToken.jti == jti).first()
+                if not existing:
+                    _db.add(RevokedToken(jti=jti, revoked_at=datetime.now(timezone.utc)))
+                    _db.commit()
+        except Exception as _exc:
+            logger.warning(f"Could not persist token revocation to DB (in-memory revocation still active): {_exc}")
         return True
     return False
 

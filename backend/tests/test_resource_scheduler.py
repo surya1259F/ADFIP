@@ -304,9 +304,21 @@ def test_actual_bounded_parallel_execution_overlap(monkeypatch):
 # 7. Dependency Failure Semantics (Failed Prerequisite Blocks Child, Allows Independent)
 # -----------------------------------------------------------------------------
 
-def test_failed_dependency_blocks_child_and_allows_independent():
+def test_failed_dependency_blocks_child_and_allows_independent(monkeypatch):
     case_id = _create_case("Dependency Failure Case")
     sample_path = str(Path(__file__).resolve().parent.parent.parent / "tests" / "fixtures" / "sample-evidence.txt")
+
+    from agents.disk.disk_agent import DiskAgent
+    monkeypatch.setattr(
+        DiskAgent,
+        "analyze",
+        lambda self, evidence_item, parameters=None: {
+            "status": "SUCCESS",
+            "artifacts": [{"name": "meta", "type": "metadata"}],
+            "findings": [],
+            "provenance": {"tool": "ExifTool"}
+        }
+    )
 
     res = client.post(f"/api/investigations/{case_id}/evidence/intake", json={"path": sample_path})
     evidence_id = res.json()["id"]

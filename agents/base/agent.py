@@ -49,7 +49,7 @@ class AgentObservation:
     supporting_evidence_ids: List[str] = field(default_factory=list)
     supporting_artifact_ids: List[str] = field(default_factory=list)
     details: Dict[str, Any] = field(default_factory=dict)
-    confidence: float = 1.0
+    confidence: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -78,7 +78,7 @@ class AgentAnalysisResult:
     supporting_correlation_ids: List[str] = field(default_factory=list)
     supporting_finding_ids: List[str] = field(default_factory=list)
     confidence_inputs: Dict[str, Any] = field(default_factory=dict)
-    confidence_score: float = 1.0
+    confidence_score: Optional[float] = None
     summary: str = ""
     provenance: Dict[str, Any] = field(default_factory=dict)
 

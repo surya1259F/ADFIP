@@ -69,7 +69,7 @@ class WorkspaceInitResponse(BaseModel):
     case_id: str
     workspace_state: str
     workspace_path: Optional[str] = None
-    subdirectories: List[str] = []
+    subdirectories: List[str] = Field(default_factory=list)
     initialized_at: Optional[str] = None
 
 # Case / Investigation Schemas
@@ -348,15 +348,15 @@ class EvidenceIntelligenceProfileResponse(BaseModel):
     filesystem_basis: Optional[str] = None
     filesystem_detection_status: str = "NOT_PRESENT"
     partition_table_type: str = "NONE"
-    partitions_json: Optional[List[Any]] = []
-    metadata_json: Optional[Dict[str, Any]] = {}
-    characteristics_json: Optional[List[Any]] = []
-    detection_methods: Optional[List[Any]] = []
-    tags_json: Optional[List[Any]] = []
-    resource_profile_json: Optional[Dict[str, Any]] = {}
-    recommended_tools_json: Optional[List[Any]] = []
-    recommended_families_json: Optional[List[Any]] = []
-    limitations_json: Optional[List[Any]] = []
+    partitions_json: Optional[List[Any]] = Field(default_factory=list)
+    metadata_json: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    characteristics_json: Optional[List[Any]] = Field(default_factory=list)
+    detection_methods: Optional[List[Any]] = Field(default_factory=list)
+    tags_json: Optional[List[Any]] = Field(default_factory=list)
+    resource_profile_json: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    recommended_tools_json: Optional[List[Any]] = Field(default_factory=list)
+    recommended_families_json: Optional[List[Any]] = Field(default_factory=list)
+    limitations_json: Optional[List[Any]] = Field(default_factory=list)
     evidence_sha256_verified: str
     generated_at: datetime
     created_at: datetime
@@ -472,8 +472,8 @@ class ToolDefinitionResponse(BaseModel):
     name: str
     version: Optional[str] = None
     executable_path: str
-    supported_evidence: List[str] = []
-    capabilities_json: Dict[str, Any] = {}
+    supported_evidence: List[str] = Field(default_factory=list)
+    capabilities_json: Dict[str, Any] = Field(default_factory=dict)
     is_available: bool
 
 class ToolExecutionResponse(BaseModel):
@@ -527,8 +527,8 @@ class DiskAnalysisResponse(BaseModel):
     tool_version: Optional[str] = None
     raw_output_reference: Optional[str] = None
     error: Optional[str] = None
-    artifacts: List[ArtifactResponse] = []
-    findings: List[FindingResponse] = []
+    artifacts: List[ArtifactResponse] = Field(default_factory=list)
+    findings: List[FindingResponse] = Field(default_factory=list)
 
 class MemoryAnalysisRequest(BaseModel):
     evidence_id: str
@@ -547,12 +547,12 @@ class MemoryAnalysisResponse(BaseModel):
     tool_version: Optional[str] = None
     raw_output_reference: Optional[str] = None
     error: Optional[str] = None
-    artifacts: List[ArtifactResponse] = []
-    findings: List[FindingResponse] = []
+    artifacts: List[ArtifactResponse] = Field(default_factory=list)
+    findings: List[FindingResponse] = Field(default_factory=list)
 
 class MalwareAnalysisRequest(BaseModel):
     evidence_id: str
-    rule_id: str = Field(default="adfir_test_rules", pattern=r"^[a-zA-Z0-9_\-]+$")
+    rule_id: str = Field(default="adfir_webshell_indicators", pattern=r"^[a-zA-Z0-9_\-]+$")
     timeout_seconds: int = Field(default=60, ge=1, le=600)
 
 class MalwareAnalysisResponse(BaseModel):
@@ -568,8 +568,8 @@ class MalwareAnalysisResponse(BaseModel):
     tool_version: Optional[str] = None
     raw_output_reference: Optional[str] = None
     error: Optional[str] = None
-    artifacts: List[ArtifactResponse] = []
-    findings: List[FindingResponse] = []
+    artifacts: List[ArtifactResponse] = Field(default_factory=list)
+    findings: List[FindingResponse] = Field(default_factory=list)
 
 class LogAnalysisRequest(BaseModel):
     evidence_id: str
@@ -587,8 +587,8 @@ class LogAnalysisResponse(BaseModel):
     tool_version: Optional[str] = None
     raw_output_reference: Optional[str] = None
     error: Optional[str] = None
-    artifacts: List[ArtifactResponse] = []
-    findings: List[FindingResponse] = []
+    artifacts: List[ArtifactResponse] = Field(default_factory=list)
+    findings: List[FindingResponse] = Field(default_factory=list)
 
 class YaraRuleResponse(BaseModel):
     rule_id: str
@@ -733,7 +733,12 @@ class InvestigationPlanResponse(BaseModel):
                     serialized_adj.append(adj)
             self.adjustments = serialized_adj
 
-        # Sync steps and tasks
+        # Sync planned_tasks, tasks, and steps
+        if not self.planned_tasks and self.tasks:
+            self.planned_tasks = self.tasks
+        elif not self.tasks and self.planned_tasks:
+            self.tasks = self.planned_tasks
+
         if self.tasks and not self.steps:
             try:
                 self.steps = [PlanTaskStep(**t) if isinstance(t, dict) else t for t in self.tasks]
@@ -741,6 +746,8 @@ class InvestigationPlanResponse(BaseModel):
                 pass
         elif self.steps and not self.tasks:
             self.tasks = self.steps
+            if not self.planned_tasks:
+                self.planned_tasks = self.steps
 
         if self.tasks:
             self.total_tasks = len(self.tasks)
@@ -786,10 +793,10 @@ class CorrelatedGroupResponse(BaseModel):
     correlated_entity: str
     title: str
     description: str
-    tools_involved: List[str] = []
-    supporting_finding_ids: List[str] = []
-    supporting_artifact_ids: Optional[List[str]] = []
-    supporting_evidence_ids: Optional[List[str]] = []
+    tools_involved: List[str] = Field(default_factory=list)
+    supporting_finding_ids: List[str] = Field(default_factory=list)
+    supporting_artifact_ids: Optional[List[str]] = Field(default_factory=list)
+    supporting_evidence_ids: Optional[List[str]] = Field(default_factory=list)
     correlation_confidence: float
     created_at: Optional[datetime] = None
 
