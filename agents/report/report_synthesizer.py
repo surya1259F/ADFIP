@@ -127,7 +127,9 @@ class ReportSynthesizer:
         md_lines.extend([
             "",
             "---",
-            "*Report generated autonomously by ADFIR Forensic Engine with verified ground-truth backing.*"
+            "Report contains only recorded forensic data, derived analysis, and explicitly "
+            "marked unverified/investigator-review states. Final certification requires "
+            "explicit investigator approval."
         ])
 
         full_md = "\n".join(md_lines)

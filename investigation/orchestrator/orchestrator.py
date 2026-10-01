@@ -217,7 +217,7 @@ class InvestigationOrchestrator:
             command_args = ["vol", "-f", target_path, plugin_name]
         elif tool_name_raw.lower() == "yara":
             exec_tool_id = "yara"
-            rule_name = params.get("rule_set") or params.get("rule_id", "adfir_test_rules")
+            rule_name = params.get("rule_set") or params.get("rule_id", "adfir_webshell_indicators")
             command_args = ["yara", rule_name, target_path]
         elif tool_name_raw.lower() in ["python-evtx", "python_evtx"]:
             exec_tool_id = "python_evtx"
@@ -291,7 +291,7 @@ class InvestigationOrchestrator:
             elif agent_type == "MalwareAgent":
                 mal_params = {
                     "action": action_str,
-                    "rule_id": params.get("rule_set") or params.get("rule_id", "adfir_test_rules"),
+                    "rule_id": params.get("rule_set") or params.get("rule_id", "adfir_webshell_indicators"),
                     "timeout_seconds": timeout_val,
                     "execution_id": execution.id,
                 }

@@ -10,14 +10,36 @@ from backend.app.core.config import settings
 logger = logging.getLogger("ADFIR_AUDIT")
 logger.setLevel(logging.INFO)
 
-# File handler for security audit events
-audit_log_path = Path(__file__).resolve().parent.parent.parent.parent / "data" / "security_audit.log"
-audit_log_path = settings.LOGS_DIR / "security_audit.log"
-audit_log_path.parent.mkdir(parents=True, exist_ok=True)
-handler = logging.FileHandler(str(audit_log_path))
+_LOGGER_INITIALIZED = False
 
-handler.setFormatter(logging.Formatter('[%(asctime)s UTC] [%(levelname)s] %(message)s'))
-logger.addHandler(handler)
+
+def _ensure_security_logger() -> logging.Logger:
+    global _LOGGER_INITIALIZED
+
+    if _LOGGER_INITIALIZED:
+        return logger
+
+    audit_log_path = settings.LOGS_DIR / "security_audit.log"
+    audit_log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    formatter = logging.Formatter(
+        '[%(asctime)s UTC] [%(levelname)s] %(message)s'
+    )
+
+    existing_file_handlers = [
+        h for h in logger.handlers
+        if isinstance(h, logging.FileHandler)
+        and Path(getattr(h, "baseFilename", "")).resolve()
+        == audit_log_path.resolve()
+    ]
+
+    if not existing_file_handlers:
+        handler = logging.FileHandler(str(audit_log_path))
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+
+    _LOGGER_INITIALIZED = True
+    return logger
 
 class SecurityValidator:
     """
@@ -99,7 +121,7 @@ class AuditLogger:
     def log_event(event_type: str, details: Dict[str, Any], actor: str = "local-user"):
         now_utc = datetime.now(timezone.utc).isoformat()
         log_msg = f"EVENT={event_type} | ACTOR={actor} | DETAILS={details}"
-        logger.info(log_msg)
+        _ensure_security_logger().info(log_msg)
 
 
 # =============================================================================
@@ -253,7 +275,7 @@ def verify_access_token(token: str) -> Optional[Dict[str, Any]]:
                         return None
 
             except Exception as exc:
-                logger.error(
+                _ensure_security_logger().error(
                     "Persistent token revocation check failed; "
                     "rejecting token because authentication cannot be "
                     "safely verified: %s",
@@ -286,7 +308,7 @@ def revoke_access_token(token: str) -> bool:
                     _db.add(RevokedToken(jti=jti, revoked_at=datetime.now(timezone.utc)))
                     _db.commit()
         except Exception as _exc:
-            logger.warning(f"Could not persist token revocation to DB (in-memory revocation still active): {_exc}")
+            _ensure_security_logger().warning(f"Could not persist token revocation to DB (in-memory revocation still active): {_exc}")
         return True
     return False
 

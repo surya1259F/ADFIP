@@ -78,7 +78,7 @@ class ReportGenerator:
 
         if evidence_items:
             for e in evidence_items:
-                md.append(f"| {e.get('name')} | `{e.get('evidence_type')}` | {e.get('size_bytes', 0):,.0f} | `{e.get('sha256')}` | {e.get('integrity_status', 'VERIFIED')} |")
+                md.append(f"| {e.get('name')} | `{e.get('evidence_type')}` | {e.get('size_bytes', 0):,.0f} | `{e.get('sha256')}` | {e.get('integrity_status') or 'UNKNOWN'} |")
         else:
             md.append("| None | - | - | - | INSUFFICIENT EVIDENCE |")
 
@@ -93,7 +93,10 @@ class ReportGenerator:
             for c in custody_events:
                 md.append(f"| {c.get('timestamp')} | `{c.get('event_type')}` | {c.get('actor')} | {c.get('description')} | `{str(c.get('sha256', 'N/A'))[:16]}...` |")
         else:
-            md.append("| N/A | INITIALIZED | local-user | Case created | N/A |")
+            md.append(
+                "| N/A | NOT_RECORDED | NOT_RECORDED | "
+                "INSUFFICIENT EVIDENCE — no chain-of-custody events recorded. | N/A |"
+            )
 
         md.extend([
             "",
@@ -210,14 +213,21 @@ class ReportGenerator:
         md.extend([
             "",
             "## 16. Prevention Strategies",
-            "1. Implement strict application allowlisting.",
-            "2. Enforce PowerShell script block logging and Constrained Language Mode.",
-            "3. Restrict lateral network communication across workstations.",
+            "The following are general defensive considerations and are not presented as "
+            "case-specific findings. Applicability requires investigator validation against "
+            "the verified evidence.",
+            "",
+            "1. Consider application allowlisting where appropriate.",
+            "2. Consider enabling relevant PowerShell logging and restrictive execution policies.",
+            "3. Consider restricting unnecessary lateral network communication.",
             "",
             "## 17. Remediation Recommendations",
-            "1. **Isolate Affected Endpoints:** Disconnect network interfaces immediately.",
-            "2. **Revoke Active Credentials:** Reset passwords and invalidate session tokens.",
-            "3. **Perimeter Blocklist:** Add identified malicious IPs and hashes to firewall/EDR.",
+            "No case-specific remediation action is asserted unless supported by verified "
+            "findings and investigator review.",
+            "",
+            "Where verified findings justify action, the investigator may evaluate "
+            "endpoint isolation, credential rotation, and blocking of verified malicious "
+            "indicators.",
             "",
             "## 18. Limitations",
             "- Analysis is bounded by the submitted evidence artifacts.",
@@ -230,7 +240,9 @@ class ReportGenerator:
             f"- Generated via: ADFIR Autonomous DFIR Platform",
             "",
             "---",
-            "*Report generated autonomously by ADFIR Forensic Engine with verified ground-truth backing.*"
+            "Report contains only recorded forensic data, derived analysis, and explicitly "
+            "marked unverified/investigator-review states. Final certification requires "
+            "explicit investigator approval."
         ])
 
         full_md_text = "\n".join(md)

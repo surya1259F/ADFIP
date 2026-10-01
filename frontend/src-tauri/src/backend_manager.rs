@@ -399,7 +399,7 @@ impl BackendManager {
                         pid,
                         start_time,
                         port,
-                        bootstrap_secret,
+                        bootstrap_secret: bootstrap_secret.clone(),
                         is_running: true,
                         shutdown_requested: false,
                         has_crashed: false,

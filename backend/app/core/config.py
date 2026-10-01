@@ -134,24 +134,46 @@ def get_backend_port() -> int:
         return validate_port(settings.ADFIR_PORT)
     return 8000
 
-# Dynamic secret key fallback: deterministic per-installation, not random across restarts
-import hashlib
+# Dynamic secret key fallback: cryptographically random and securely persisted to data directory
+import secrets
 import logging as _cfg_logging
 
 _cfg_logger = _cfg_logging.getLogger("ADFIR_CONFIG")
 
 def get_jwt_secret() -> str:
     """
-    Returns the configured JWT secret key, or a deterministic fallback derived from
-    the DATABASE_URL so that restarts with the same database re-use the same key.
-    A random key (the old behaviour) would invalidate all tokens on every restart.
+    Returns the configured JWT secret key, or a cryptographically random secret
+    persisted to settings.DATA_DIR / 'jwt_secret.key' so that restarts reuse the same key.
     """
     if settings.JWT_SECRET_KEY:
         return settings.JWT_SECRET_KEY
-    # Deterministic fallback: same DB path → same secret across restarts
-    _cfg_logger.warning(
-        "JWT_SECRET_KEY is not set. Using a deterministic fallback derived from "
-        "DATABASE_URL. Production deployments MUST set JWT_SECRET_KEY to a strong, "
-        "randomly generated value."
-    )
-    return hashlib.sha256(settings.DATABASE_URL.encode()).hexdigest()
+
+    secret_path = settings.DATA_DIR / "jwt_secret.key"
+
+    try:
+        if secret_path.exists():
+            secret = secret_path.read_text(encoding="utf-8").strip()
+            if secret:
+                return secret
+
+        secret = secrets.token_urlsafe(64)
+
+        secret_path.parent.mkdir(parents=True, exist_ok=True)
+
+        secret_path.write_text(secret, encoding="utf-8")
+
+        try:
+            secret_path.chmod(0o600)
+        except OSError:
+            pass
+
+        return secret
+
+    except Exception as exc:
+        _cfg_logger.error(
+            "Unable to securely load or persist JWT signing secret: %s",
+            exc,
+        )
+        raise RuntimeError(
+            "JWT signing secret is unavailable; authentication cannot start safely."
+        ) from exc

@@ -1963,7 +1963,7 @@ class AIStatementItem(BaseModel):
     statement_id: str
     insight: str
     classification: str  # FACT, INFERENCE, UNVERIFIED
-    confidence: float
+    confidence: Optional[float] = None
     supporting_evidence_ids: List[str] = Field(default_factory=list)
     supporting_artifact_ids: List[str] = Field(default_factory=list)
     supporting_finding_ids: List[str] = Field(default_factory=list)

@@ -419,13 +419,17 @@ class AIReasoningService:
             if cls._detect_prompt_injection(f_text):
                 prompt_injection_flag = True
 
+            confidence_value = getattr(f, "confidence", None)
+            if confidence_value is None:
+                confidence_value = getattr(f, "confidence_score", None)
+
             findings_data.append({
                 "finding_id": f.id,
                 "finding_type": f.finding_type,
                 "title": f.title,
                 "description": f.description,
                 "severity": f.severity,
-                "confidence_score": getattr(f, "confidence", 0.95) or 0.95,
+                "confidence_score": confidence_value,
                 "supporting_evidence_ids": f.supporting_evidence_ids,
                 "supporting_artifact_ids": f.supporting_artifact_ids,
                 "created_at": f.created_at.isoformat()
@@ -713,10 +717,9 @@ class AIReasoningService:
                 classification = "UNVERIFIED"
 
             # Auto-assign provenance and confidence
-            confidence = float(stmt.get("confidence", 0.8))
-            if classification == "FACT":
-                confidence = max(confidence, 0.95)
-            elif classification == "UNVERIFIED":
+            raw_conf = stmt.get("confidence")
+            confidence = float(raw_conf) if raw_conf is not None else None
+            if confidence is not None and classification == "UNVERIFIED":
                 confidence = min(confidence, 0.60)
 
             item = AIStatementItem(
@@ -866,7 +869,7 @@ class AIReasoningService:
                 "statement_id": str(uuid.uuid4()),
                 "insight": f"Observed forensic fact: {title}. {desc}",
                 "classification": "FACT",
-                "confidence": 1.0 if f.get("confidence_score", 0) >= 0.9 else 0.95,
+                "confidence": f.get("confidence_score"),
                 "supporting_finding_ids": [f_id],
                 "supporting_artifact_ids": supp_arts,
                 "supporting_evidence_ids": supp_evs,
@@ -889,7 +892,7 @@ class AIReasoningService:
                 "statement_id": str(uuid.uuid4()),
                 "insight": f"Forensic inference ({rel_type}): {desc}",
                 "classification": "INFERENCE",
-                "confidence": float(rel.get("confidence_score") or 0.85),
+                "confidence": float(rel["confidence_score"]) if rel.get("confidence_score") is not None else None,
                 "supporting_finding_ids": [],
                 "supporting_artifact_ids": art_ids,
                 "supporting_evidence_ids": ev_ids,

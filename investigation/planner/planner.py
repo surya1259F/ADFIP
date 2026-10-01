@@ -182,7 +182,7 @@ class InvestigationPlanner:
                         "priority": 1,
                         "dependencies": [],
                         "status": "PLANNED",
-                        "parameters": {"rule_set": "adfir_test_rules"},
+                        "parameters": {"rule_set": "adfir_webshell_indicators"},
                         "estimated_resource_cost": {"cpu": "high", "ram": "low"},
                         "cpu_weight": 1.0,
                         "memory_mb": 512,

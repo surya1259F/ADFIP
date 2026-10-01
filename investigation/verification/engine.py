@@ -14,25 +14,61 @@ class VerificationEngine:
             finding_id = f.get("id")
             tool = f.get("tool") or f.get("source_tool")
             ref = f.get("evidence_reference")
-            desc = f.get("description") or f.get("title")
-            details = f.get("details", {})
 
-            if not tool or (not desc and not details):
+            evidence_ids = f.get("supporting_evidence_ids") or []
+            if not evidence_ids and f.get("evidence_id"):
+                evidence_ids = [f.get("evidence_id")]
+            artifact_ids = f.get("supporting_artifact_ids") or []
+            if not artifact_ids and f.get("artifact_id"):
+                artifact_ids = [f.get("artifact_id")]
+            execution_id = f.get("execution_id")
+            output_id = f.get("output_id")
+
+            desc = f.get("description") or f.get("title")
+
+            has_provenance = bool(
+                ref
+                or evidence_ids
+                or artifact_ids
+                or execution_id
+                or output_id
+            )
+
+            if not tool:
                 status = "UNVERIFIED"
-                score = 0.0
+                score = None
                 is_verified = False
-                reason = "Missing forensic tool provenance or description."
-            elif not ref and not details:
+                reason = "Finding lacks recorded forensic tool provenance."
+
+            elif not desc:
+                status = "UNVERIFIED"
+                score = None
+                is_verified = False
+                reason = "Finding lacks a recorded description or title."
+
+            elif not has_provenance:
                 status = "UNSUPPORTED"
-                score = 0.3
+                score = None
                 is_verified = False
-                reason = "Finding lacks concrete evidence reference (inode, offset, or path) and data payload."
+                reason = (
+                    "Finding lacks concrete evidence provenance. "
+                    "A descriptive payload alone cannot establish forensic support."
+                )
+
             else:
                 status = "SUPPORTED"
-                raw_score = f.get("confidence") or f.get("confidence_score")
-                score = raw_score if raw_score is not None else 0.95
+
+                raw_score = f.get("confidence")
+                if raw_score is None:
+                    raw_score = f.get("confidence_score")
+
+                score = raw_score
                 is_verified = True
-                reason = f"Verified with ground-truth reference '{ref or 'structured payload'}' produced by tool '{tool}'."
+
+                reason = (
+                    "Finding has recorded forensic provenance through "
+                    "evidence, artifact, execution, output, or evidence reference."
+                )
 
             verified.append({
                 "finding_id": finding_id,

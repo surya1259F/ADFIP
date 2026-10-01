@@ -156,7 +156,7 @@ class FinalForensicReportService:
             "case_id": case.id,
             "case_number": case.case_number,
             "name": case.name,
-            "objective": case.objective or "Comprehensive incident investigation and root cause analysis.",
+            "objective": case.objective,
             "description": case.description or "",
             "case_type": case.case_type,
             "priority": case.priority,
@@ -203,13 +203,23 @@ class FinalForensicReportService:
                 "evidence_id": ev.id,
                 "name": ev.name,
                 "registered_sha256": ev.sha256,
-                "current_sha256": current_hash or ev.sha256,
+                "current_sha256": current_hash,
                 "integrity_status": v_status,
                 "storage_path": ev.storage_path or ev.original_path,
                 "read_only_verified": ev.read_only_verified
             })
 
-        overall_integrity_status = "INTEGRITY_WARNING" if evidence_summary["warning_count"] > 0 else "VERIFIED"
+        if evidence_summary["warning_count"] > 0:
+            overall_integrity_status = "INTEGRITY_WARNING"
+        elif evidence_summary["unchecked_count"] > 0:
+            overall_integrity_status = "UNCHECKED"
+        elif (
+            evidence_summary["total_items"] > 0
+            and evidence_summary["verified_count"] == evidence_summary["total_items"]
+        ):
+            overall_integrity_status = "VERIFIED"
+        else:
+            overall_integrity_status = "UNCHECKED"
 
         # 4. Section 4: Chain of Custody
         custody_records = (
@@ -248,7 +258,7 @@ class FinalForensicReportService:
             tool_executions.append({
                 "id": ex.id,
                 "tool_name": ex.tool_name,
-                "tool_version": ex.tool_version or "1.0",
+                "tool_version": ex.tool_version,
                 "capability": ex.capability_requested or "forensic_analysis",
                 "status": ex.status,
                 "exit_code": ex.exit_code,
@@ -270,7 +280,7 @@ class FinalForensicReportService:
                 tool_executions.append({
                     "id": lex.id,
                     "tool_name": lex.tool_name,
-                    "tool_version": "1.0",
+                    "tool_version": None,
                     "capability": lex.tool_name,
                     "status": lex.status,
                     "exit_code": 0 if lex.status == "SUCCESS" else 1,
@@ -372,7 +382,11 @@ class FinalForensicReportService:
                     "source_entity": getattr(r, "source_entity", f"{getattr(r, 'source_type', 'ARTIFACT')}:{getattr(r, 'source_id', '')}"),
                     "target_entity": getattr(r, "target_entity", f"{getattr(r, 'target_type', 'ARTIFACT')}:{getattr(r, 'target_id', '')}"),
                     "relationship_type": r.relationship_type,
-                    "confidence": getattr(r, "confidence", getattr(r, "confidence_score", 1.0))
+                    "confidence": (
+                        getattr(r, "confidence", None)
+                        if getattr(r, "confidence", None) is not None
+                        else getattr(r, "confidence_score", None)
+                    )
                 }
                 for r in relationships[:30]
             ]
@@ -510,7 +524,7 @@ class FinalForensicReportService:
 
         # 10. Section 10: Confidence / Verification
         confidences = [f["confidence"] for f in findings_list if f.get("confidence") is not None]
-        mean_conf = round(sum(confidences) / len(confidences), 4) if confidences else 1.0
+        mean_conf = round(sum(confidences) / len(confidences), 4) if confidences else None
 
         confidence_verification = {
             "overall_integrity_status": overall_integrity_status,
@@ -648,7 +662,7 @@ class FinalForensicReportService:
         lines = [
             "# ADFIR OFFICIAL FINAL FORENSIC REPORT",
             f"**Case Reference:** {case_info.get('case_number', 'N/A')} — {case_info.get('name', 'N/A')}  ",
-            f"**Report Version:** v{ver} | **Status:** OFFICIAL_FINAL | **Integrity:** {report_meta.get('integrity_status', 'VERIFIED')}  ",
+            f"**Report Version:** v{ver} | **Status:** OFFICIAL_FINAL | **Integrity:** {report_meta.get('integrity_status') or 'UNKNOWN'}  ",
             f"**Lead Investigator:** {gen_by}  ",
             f"**Generated Date:** {gen_at}  ",
             f"**Canonical SHA-256 Hash:** `{report_hash}`  ",
@@ -686,7 +700,8 @@ class FinalForensicReportService:
             "| :--- | :--- | :--- | :--- | :--- |",
         ])
         for h in hashes:
-            lines.append(f"| {h['name']} | `{h['registered_sha256'][:16]}...` | `{h['current_sha256'][:16]}...` | **{h['integrity_status']}** | {'✓' if h['read_only_verified'] else '✗'} |")
+            curr_str = f"`{h['current_sha256'][:16]}...`" if h.get("current_sha256") else "NOT_RECOMPUTED"
+            lines.append(f"| {h['name']} | `{h['registered_sha256'][:16]}...` | {curr_str} | **{h['integrity_status']}** | {'✓' if h['read_only_verified'] else '✗'} |")
 
         lines.extend([
             "",
@@ -700,7 +715,7 @@ class FinalForensicReportService:
             for c in custody:
                 lines.append(f"| {c['timestamp']} | {c['action']} | {c['actor']} | `{c['event_hash'][:12]}...` | {c['notes'] or '-'} |")
         else:
-            lines.append("| N/A | INITIAL_INGESTION | Lead Investigator | Recorded in Case Manifest | Standard intake protocol |")
+            lines.append("| N/A | NOT_RECORDED | NOT_RECORDED | INSUFFICIENT EVIDENCE — no chain-of-custody events recorded. | N/A |")
 
         lines.extend([
             "",
@@ -765,11 +780,17 @@ class FinalForensicReportService:
             if f.get("investigator_rationale"):
                 lines.append(f"  - *Investigator Rationale:* {f['investigator_rationale']}")
 
+        mean_confidence = conf.get("findings_confidence_mean")
+        if mean_confidence is None:
+            confidence_display = "NOT_AVAILABLE"
+        else:
+            confidence_display = f"{mean_confidence * 100:.1f}%"
+
         lines.extend([
             "",
             "## SECTION 10: CONFIDENCE & VERIFICATION ANALYSIS",
             f"- **Overall Investigation Integrity:** {conf['overall_integrity_status']}",
-            f"- **Mean Findings Confidence:** {conf['findings_confidence_mean']*100:.1f}%",
+            f"- **Mean Findings Confidence:** {confidence_display}",
             f"- **Severity Breakdown:** Critical: {conf['findings_by_severity']['CRITICAL']}, High: {conf['findings_by_severity']['HIGH']}, Medium: {conf['findings_by_severity']['MEDIUM']}, Low: {conf['findings_by_severity']['LOW']}",
             f"- **Classification Breakdown:** FACT: {conf['findings_by_classification']['FACT']}, INFERENCE: {conf['findings_by_classification']['INFERENCE']}, UNVERIFIED: {conf['findings_by_classification']['UNVERIFIED']}",
             f"- **Evidence Grounding Metric:** {conf['grounded_claims_count']} grounded claims, {conf['unsupported_claims_count']} unsupported/unverified claims.",
@@ -849,11 +870,21 @@ class FinalForensicReportService:
         markdown_text = cls._render_markdown(sections, report_meta)
 
         title = request_data.title or f"Final Forensic Report v{next_ver} — {case.name}"
+        reviewed_count = sum(
+            1
+            for item in sections["findings"]["items"]
+            if item.get("investigator_decision") not in (None, "PENDING_REVIEW")
+        )
+
         exec_summary = request_data.executive_summary_override or (
-            f"Official Final Forensic Report v{next_ver} for Case {case.case_number} ({case.name}). "
-            f"Evaluated {len(sections['evidence_inventory'])} evidence container(s) across {len(sections['tool_executions'])} tool execution(s). "
-            f"Identified {len(sections['findings']['items'])} technical findings and claims with {sections['confidence_verification']['findings_confidence_mean']*100:.1f}% mean confidence. "
-            f"All findings have been reviewed and grounded under strict human-in-the-loop oversight."
+            f"Final Forensic Report v{next_ver} for Case {case.case_number} ({case.name}). "
+            f"Evaluated {len(sections['evidence_inventory'])} evidence container(s) across "
+            f"{len(sections['tool_executions'])} recorded tool execution(s). "
+            f"Recorded {len(sections['findings']['items'])} finding/claim item(s), "
+            f"with {reviewed_count} having an explicit investigator review decision. "
+            f"Evidence integrity status: {integrity_status}. "
+            f"Final conclusions require investigator review where findings remain unverified "
+            f"or pending review."
         )
 
         # 6. Save report files to disk in case reports workspace

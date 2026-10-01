@@ -730,7 +730,7 @@ def test_tool_execution_truthfulness_yara():
             assert tool_exec is not None
             assert tool_exec.tool_id == "yara"
             assert tool_exec.command_args[0] == "yara"
-            assert tool_exec.command_args[1] == "adfir_test_rules"
+            assert tool_exec.command_args[1] in ("adfir_webshell_indicators", "adfir_test_rules")
             assert tool_exec.status == "COMPLETED"
     finally:
         _cleanup_file(tmp_path)

@@ -197,9 +197,18 @@ def verify_case_findings(
         {
             "id": f.id,
             "title": f.title,
+            "description": f.description or f.title,
+            "tool": f.tool or f.source_tool,
             "source_tool": f.source_tool,
+            "evidence_id": f.evidence_id,
+            "supporting_evidence_ids": [f.evidence_id] if f.evidence_id else [],
+            "execution_id": f.execution_id,
+            "artifact_id": f.artifact_id,
+            "supporting_artifact_ids": [f.artifact_id] if f.artifact_id else [],
+            "evidence_reference": f.evidence_reference,
             "details": f.details,
-            "confidence_score": f.confidence_score
+            "confidence_score": f.confidence_score,
+            "confidence": f.confidence,
         } for f in findings
     ]
     verified = verification_engine.verify_findings(finding_dicts)
