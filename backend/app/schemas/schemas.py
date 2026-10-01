@@ -221,7 +221,7 @@ class EvidenceResponse(BaseModel):
     metadata_json: Optional[Dict[str, Any]] = None
     intelligence_json: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None
-    created_by: Optional[str] = "local-investigator"
+    created_by: Optional[str] = "NOT_RECORDED"
     acquired_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
     modified_at: Optional[datetime] = None
@@ -813,7 +813,7 @@ class CorrelatedGroupResponse(BaseModel):
 class VerificationResultResponse(BaseModel):
     finding_id: Optional[str] = None
     verification_status: str
-    confidence_score: float
+    confidence_score: Optional[float] = None
     reason: str
 
 # Investigator Decision Schemas (Mandatory Gate)
@@ -822,7 +822,7 @@ class InvestigatorDecisionCreate(BaseModel):
     rationale: str = Field(..., min_length=3)
     finding_ids: List[str] = []
     evidence_ids: List[str] = []
-    investigator_name: Optional[str] = "Lead DFIR Investigator"
+    investigator_name: Optional[str] = None
 
 class InvestigatorDecisionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)

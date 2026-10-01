@@ -133,8 +133,8 @@ def ingest_single_file_evidence(
     db: Session,
     case_id: str,
     source_path: str,
-    actor_id: str = "local-investigator",
-    actor_name: str = "local-investigator",
+    actor_id: str = "NOT_RECORDED",
+    actor_name: str = "NOT_RECORDED",
     evidence_type_override: Optional[str] = None,
     acquisition_type: str = "SINGLE_FILE",
     notes: Optional[str] = None,
@@ -290,8 +290,8 @@ def ingest_directory_evidence(
     db: Session,
     case_id: str,
     source_path: str,
-    actor_id: str = "local-investigator",
-    actor_name: str = "local-investigator",
+    actor_id: str = "NOT_RECORDED",
+    actor_name: str = "NOT_RECORDED",
     notes: Optional[str] = None
 ) -> Tuple[EvidenceAcquisition, Dict[str, Any]]:
     """

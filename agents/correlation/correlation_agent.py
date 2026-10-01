@@ -93,9 +93,9 @@ class CorrelationAgent(Agent):
                     "relationship_id": rel_id,
                     "relationship_type": rel_type,
                     "matched_value": matching_field,
-                    "confidence": rel.get("confidence_score", 1.0)
+                    "confidence": rel.get("confidence_score")
                 },
-                "confidence": rel.get("confidence_score", 1.0)
+                "confidence": rel.get("confidence_score")
             })
 
         # 2. Analyze timeline temporal sequence
@@ -118,6 +118,9 @@ class CorrelationAgent(Agent):
             if ev_id and ev_id not in supporting_ev_ids:
                 supporting_ev_ids.append(ev_id)
 
+        obs_confs = [o.get("confidence") for o in observations if isinstance(o, dict) and o.get("confidence") is not None]
+        mean_conf = round(sum(obs_confs) / len(obs_confs), 4) if obs_confs else None
+
         return AgentAnalysisResult(
             agent_id=self.id,
             agent_version=self.version,
@@ -132,7 +135,7 @@ class CorrelationAgent(Agent):
                 "relationship_count": len(relationships),
                 "timeline_event_count": len(timeline_events)
             },
-            confidence_score=1.0 if observations else 0.8,
+            confidence_score=mean_conf,
             summary=f"Correlation analysis synthesized {len(relationships)} relationships and {len(timeline_events)} timeline events; identified {len(observations)} verified observations.",
             provenance={"agent": self.name, "version": self.version, "timestamp": datetime.now(timezone.utc).isoformat()}
         )

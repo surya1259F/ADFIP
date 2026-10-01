@@ -10,7 +10,7 @@ class ReportSynthesizer:
     def generate_report(self, case_info: Dict[str, Any], evidence_list: List[Dict[str, Any]], findings: List[Dict[str, Any]], correlated_groups: List[Dict[str, Any]]) -> Dict[str, Any]:
         case_title = case_info.get("title", "Digital Forensics Investigation")
         case_number = case_info.get("case_number") or case_info.get("id") or "UNSPECIFIED"
-        investigator = case_info.get("investigator", "Lead Investigator")
+        investigator = case_info.get("investigator") or "NOT_RECORDED"
         now_str = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
         
         # Build timeline
@@ -44,7 +44,7 @@ class ReportSynthesizer:
             "",
             "## 1. Executive Summary",
             f"This investigation examined {len(evidence_list)} evidence item(s) relating to case {case_number}. "
-            f"Autonomous deterministic extraction identified {len(findings)} technical finding(s) with {len(correlated_groups)} correlated attack event(s).",
+            f"Deterministic analysis recorded {len(findings)} technical finding(s) with {len(correlated_groups)} correlated event(s); investigator review required.",
             "",
             "## 2. Evidence Inventory & Chain of Custody",
             "| Item Name | Evidence Type | SHA-256 Hash | Integrity Status |",
@@ -95,7 +95,7 @@ class ReportSynthesizer:
             for ioc in iocs:
                 md_lines.append(f"| {ioc['type']} | `{ioc['value']}` | {ioc['source']} |")
         else:
-            md_lines.append("| N/A | None detected in analyzed samples | - |")
+            md_lines.append("| INSUFFICIENT EVIDENCE | INSUFFICIENT EVIDENCE: No verified IOC recorded | - |")
 
         if findings:
             reconstruction_text = f"Root cause and activity reconstruction requires investigator review of the {len(findings)} technical finding(s) and {len(correlated_groups)} correlated group(s) documented across analyzed evidence artifacts."
@@ -105,7 +105,11 @@ class ReportSynthesizer:
                 if rec:
                     recommendations.append({"priority": "HIGH", "action": str(rec), "phase": "Remediation"})
         else:
-            reconstruction_text = "No unauthorized activity, malicious artifacts, or compromise indicators were identified across analyzed evidence items."
+            reconstruction_text = (
+                "INSUFFICIENT EVIDENCE: No forensic findings were recorded. "
+                "Absence of recorded findings does not establish absence of malicious "
+                "activity or compromise. Investigator review is required."
+            )
             recommendations = []
 
         md_lines.extend([

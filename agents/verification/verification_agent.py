@@ -103,7 +103,7 @@ class VerificationAgent(Agent):
                 "supporting_evidence_ids": supporting_ev_ids,
                 "supporting_artifact_ids": supporting_art_ids[:20],
                 "details": {"total_artifacts": len(normalized_artifacts), "unbroken_count": unbroken_art_count},
-                "confidence": 1.0 if unbroken_art_count == len(normalized_artifacts) else 0.8
+                "confidence": round(unbroken_art_count / len(normalized_artifacts), 4) if normalized_artifacts else None
             })
 
         # 3. Audit finding grounding & check for unsupported claims
@@ -122,7 +122,7 @@ class VerificationAgent(Agent):
                     "supporting_evidence_ids": [],
                     "supporting_artifact_ids": [],
                     "details": {"finding_id": f_id, "issue": "NO_SUPPORTING_ARTIFACTS"},
-                    "confidence": 0.95
+                    "confidence": None
                 })
             else:
                 observations.append({
@@ -133,6 +133,9 @@ class VerificationAgent(Agent):
                     "details": {"finding_id": f_id, "supporting_artifacts": len(sup_arts), "supporting_correlations": len(sup_rels)},
                     "confidence": 1.0
                 })
+
+        obs_confs = [o.get("confidence") for o in observations if isinstance(o, dict) and o.get("confidence") is not None]
+        mean_conf = round(sum(obs_confs) / len(obs_confs), 4) if obs_confs else None
 
         return AgentAnalysisResult(
             agent_id=self.id,
@@ -149,7 +152,7 @@ class VerificationAgent(Agent):
                 "artifact_count": len(normalized_artifacts),
                 "finding_count": len(findings)
             },
-            confidence_score=1.0 if observations else 0.8,
+            confidence_score=mean_conf,
             summary=f"Verification audit verified {len(supporting_ev_ids)} evidence items, {len(supporting_art_ids)} artifacts, and {len(findings)} findings; identified {len(observations)} audit observations.",
             provenance={"agent": self.name, "version": self.version, "timestamp": datetime.now(timezone.utc).isoformat()}
         )

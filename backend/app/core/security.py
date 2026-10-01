@@ -118,7 +118,7 @@ class AuditLogger:
     """
 
     @staticmethod
-    def log_event(event_type: str, details: Dict[str, Any], actor: str = "local-user"):
+    def log_event(event_type: str, details: Dict[str, Any], actor: str = "NOT_RECORDED"):
         now_utc = datetime.now(timezone.utc).isoformat()
         log_msg = f"EVENT={event_type} | ACTOR={actor} | DETAILS={details}"
         _ensure_security_logger().info(log_msg)

@@ -656,7 +656,7 @@ class FinalForensicReportService:
 
         ver = report_meta.get("version", 1)
         gen_at = report_meta.get("generated_at", utc_now().strftime("%Y-%m-%d %H:%M:%S UTC"))
-        gen_by = report_meta.get("generated_by", "Lead Forensic Investigator")
+        gen_by = report_meta.get("generated_by") or "NOT_RECORDED"
         report_hash = report_meta.get("report_hash", "PENDING_HASH")
 
         lines = [

@@ -84,8 +84,8 @@ class LogAgent(Agent):
         parameters: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         params = parameters or {}
-        inv_id = evidence_item.get("investigation_id", "default_case")
-        ev_id = evidence_item.get("id", "default_evidence")
+        inv_id = evidence_item.get("investigation_id") or evidence_item.get("case_id") or "UNKNOWN"
+        ev_id = evidence_item.get("id") or "UNKNOWN"
         ev_name = evidence_item.get("name", "unknown_log")
         ev_path = evidence_item.get("storage_path")
         orig_path = evidence_item.get("original_path")
@@ -397,6 +397,9 @@ class LogAgent(Agent):
                     "requested_by_agent": self.name
                 })
 
+        obs_confs = [o.get("confidence") for o in observations if isinstance(o, dict) and o.get("confidence") is not None]
+        mean_conf = round(sum(obs_confs) / len(obs_confs), 4) if obs_confs else None
+
         return AgentAnalysisResult(
             agent_id=self.id,
             agent_version=self.version,
@@ -408,7 +411,7 @@ class LogAgent(Agent):
             supporting_correlation_ids=[],
             supporting_finding_ids=[],
             confidence_inputs={"matching_artifact_count": len(supporting_art_ids)},
-            confidence_score=1.0 if observations else 0.8,
+            confidence_score=mean_conf,
             summary=f"Log forensics analyzed {len(supporting_art_ids)} log artifacts; identified {len(observations)} observations.",
             provenance={"agent": self.name, "version": self.version, "timestamp": datetime.now(timezone.utc).isoformat()}
         )

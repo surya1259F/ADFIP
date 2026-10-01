@@ -94,7 +94,7 @@ class AuditService:
         details: str,
         case_id: Optional[str] = None,
         actor_id: Optional[str] = None,
-        actor_name: str = "local-investigator",
+        actor_name: str = "NOT_RECORDED",
         metadata_json: Optional[Dict[str, Any]] = None,
         provenance_context: Optional[Dict[str, Any]] = None,
         ip_address: str = "127.0.0.1"
@@ -303,7 +303,7 @@ def log_audit_event(
     details: str,
     case_id: Optional[str] = None,
     actor_id: Optional[str] = None,
-    actor_name: str = "local-investigator",
+    actor_name: str = "NOT_RECORDED",
     metadata_json: Optional[Dict[str, Any]] = None,
     ip_address: str = "127.0.0.1",
     provenance_context: Optional[Dict[str, Any]] = None

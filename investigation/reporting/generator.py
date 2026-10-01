@@ -26,15 +26,16 @@ class ReportGenerator:
         # Build timeline
         timeline = []
         for f in findings:
-            t = f.get("timestamp") or f.get("created_at") or now_str
+            raw_t = f.get("timestamp") or f.get("created_at")
+            t = str(raw_t) if raw_t else "NOT_RECORDED"
             timeline.append({
-                "timestamp": str(t),
+                "timestamp": t,
                 "event": f.get("title"),
                 "tool": f.get("tool"),
                 "evidence_ref": f.get("evidence_reference")
             })
 
-        # Build IOCs — extracted strictly from verified finding details fields only
+        # Build IOCs — extracted strictly from verified evidence-backed finding details
         _IOC_FIELD_TYPE_MAP = {
             "ip_address":    "IP_ADDRESS",
             "c2_domain":     "DOMAIN",
@@ -47,6 +48,17 @@ class ReportGenerator:
         }
         iocs = []
         for f in findings:
+            has_provenance = bool(
+                f.get("evidence_reference")
+                or f.get("supporting_evidence_ids")
+                or f.get("evidence_id")
+                or f.get("supporting_artifact_ids")
+                or f.get("artifact_id")
+                or f.get("execution_id")
+                or f.get("output_id")
+            )
+            if not has_provenance:
+                continue
             title = f.get("title", "")
             details = f.get("details") or {}
             for field, ioc_type in _IOC_FIELD_TYPE_MAP.items():
@@ -145,7 +157,7 @@ class ReportGenerator:
 
         md.extend([
             "## 8. Evidence References",
-            "All findings are strictly mapped to underlying byte offsets, inode tables, or file hashes.",
+            "Finding references are reported from the provenance recorded by the investigation pipeline. Missing provenance is explicitly marked as UNKNOWN or INSUFFICIENT EVIDENCE.",
             "",
             "## 9. Attack Classification",
             "[INFERENCE] Attack classification requires investigator review of the attached findings. No automated classification is applied." if has_findings else "[FACT] INSUFFICIENT EVIDENCE: No attack classification possible.",
@@ -175,12 +187,12 @@ class ReportGenerator:
             for row in mitre_rows:
                 md.append(row)
         else:
-            md.append("| N/A | N/A | INSUFFICIENT EVIDENCE: No verified MITRE mapping | - |")
+            md.append("| INSUFFICIENT EVIDENCE | N/A | INSUFFICIENT EVIDENCE: No verified MITRE mapping recorded | - |")
 
         md.extend([
             "",
             "## 11. Confidence Assessment",
-            f"Overall Confidence: {'HIGH (Calibrated against deterministic tool outputs)' if has_findings else 'INSUFFICIENT EVIDENCE'}",
+            "Overall Confidence: INVESTIGATOR REVIEW REQUIRED" if has_findings else "Overall Confidence: INSUFFICIENT EVIDENCE",
             "",
             "## 12. Correlation Graph",
         ])
@@ -189,7 +201,7 @@ class ReportGenerator:
             for ce in correlated_events:
                 md.append(f"- **{ce.get('title')}**: {ce.get('description')}")
         else:
-            md.append("*No cross-source correlations detected.*")
+            md.append("*INSUFFICIENT EVIDENCE: No cross-source correlations recorded.*")
 
         md.extend([
             "",
@@ -208,7 +220,7 @@ class ReportGenerator:
             for ioc in iocs:
                 md.append(f"| {ioc['type']} | `{ioc['value']}` | {ioc['context']} |")
         else:
-            md.append("| N/A | No verified IOC available | - |")
+            md.append("| INSUFFICIENT EVIDENCE | INSUFFICIENT EVIDENCE: No verified IOC recorded | - |")
 
         md.extend([
             "",

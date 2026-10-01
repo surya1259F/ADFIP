@@ -1736,13 +1736,16 @@ def verify_findings(
     finding_dicts = [
         {
             "id": f.id,
+            "evidence_id": f.evidence_id,
+            "artifact_id": f.artifact_id,
+            "execution_id": f.execution_id,
             "title": f.title,
             "description": f.description,
             "evidence_reference": f.evidence_reference,
             "tool": f.tool,
             "agent": f.agent,
             "confidence": f.confidence,
-            "raw_output_reference": f.raw_output_reference
+            "raw_output_reference": f.raw_output_reference,
         }
         for f in findings
     ]
@@ -1770,7 +1773,7 @@ def verify_findings(
         VerificationResultResponse(
             finding_id=v.get("finding_id"),
             verification_status=v.get("verification_status", "UNVERIFIED"),
-            confidence_score=v.get("confidence_score", 0.0),
+            confidence_score=v.get("confidence_score"),
             reason=v.get("reason", "Verification assessment completed.")
         )
         for v in ver_results

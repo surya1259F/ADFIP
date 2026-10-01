@@ -44,13 +44,21 @@ class LocalLLMProvider(LLMProvider):
     async def analyze(self, verified_context: Dict[str, Any]) -> Dict[str, Any]:
         findings_count = len(verified_context.get("findings", []))
         if findings_count == 0:
-            return {"attack_type": "INSUFFICIENT EVIDENCE", "confidence": "LOW"}
+            return {
+                "attack_type": "INSUFFICIENT EVIDENCE",
+                "mitre_tactic": None,
+                "confidence": None,
+                "summary": "No verified findings are available for attack classification."
+            }
 
         return {
-            "attack_type": "Suspected Unauthorized Host Artifact Activity",
-            "mitre_tactic": "TA0002 Execution / TA0003 Persistence",
-            "confidence": "HIGH" if findings_count >= 2 else "MEDIUM",
-            "summary": f"Identified {findings_count} verified forensic artifact(s) anchored in ground-truth tools."
+            "attack_type": "PENDING_INVESTIGATOR_REVIEW",
+            "mitre_tactic": None,
+            "confidence": None,
+            "summary": (
+                f"{findings_count} finding(s) are available for investigator review. "
+                "No automated attack classification is asserted."
+            )
         }
 
     async def summarize(self, findings: List[Dict[str, Any]]) -> str:
