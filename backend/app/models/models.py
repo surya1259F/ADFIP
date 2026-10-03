@@ -1960,16 +1960,21 @@ class UserExternalIdentity(Base):
 class OAuthState(Base):
     """
     Cryptographically secure, single-use OAuth 2.0 state tokens for CSRF protection.
-    Includes PKCE code_verifier storage and a strict expiration window.
+    Includes PKCE code_verifier storage, OIDC nonce, purpose (LOGIN vs LINK),
+    and strict expiration window.
     """
     __tablename__ = "oauth_states"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     state = Column(String(128), unique=True, nullable=False, index=True)
     provider = Column(String(50), default="google", nullable=False)
+    purpose = Column(String(20), default="LOGIN", nullable=False)  # LOGIN or LINK
+    target_user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    nonce = Column(String(128), nullable=True)
     redirect_uri = Column(Text, nullable=False)
     code_verifier = Column(String(128), nullable=True)
     frontend_redirect_url = Column(Text, nullable=True)
+    frontend_origin = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=utc_now, nullable=False)
     expires_at = Column(DateTime, nullable=False)
     is_consumed = Column(Boolean, default=False, nullable=False)
@@ -1979,17 +1984,23 @@ class OAuthState(Base):
 class OAuthExchangeCode(Base):
     """
     Short-lived (60s), single-use exchange ticket issued upon successful OAuth callback.
-    Allows desktop/browser frontend to claim the authenticated JWT via POST without exposing tokens in URLs.
+    Stores SHA-256 code digest (code_hash) rather than plaintext secrets.
+    Bound by purpose (LOGIN vs LINK) and target user to prevent cross-account token abuse.
     """
     __tablename__ = "oauth_exchange_codes"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    code = Column(String(128), unique=True, nullable=False, index=True)
-    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    code = Column(String(128), nullable=True, index=True)  # Legacy/raw (optional)
+    code_hash = Column(String(64), unique=True, nullable=True, index=True)  # SHA-256 digest
+    purpose = Column(String(20), default="LOGIN", nullable=False, index=True)  # LOGIN or LINK
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    target_user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    google_sub = Column(String(255), nullable=True)
+    google_email = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=utc_now, nullable=False)
     expires_at = Column(DateTime, nullable=False)
     is_consumed = Column(Boolean, default=False, nullable=False)
     consumed_at = Column(DateTime, nullable=True)
 
-    user = relationship("User")
+    user = relationship("User", foreign_keys=[user_id])
 

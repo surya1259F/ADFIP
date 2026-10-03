@@ -61,5 +61,28 @@ export const authService = {
     const res = await apiClient.post<TokenResponse>('/auth/google/exchange', { code });
     return res.data;
   },
+
+  getGoogleLinkUrl: async (redirectUrl?: string): Promise<GoogleAuthUrlResponse> => {
+    const res = await apiClient.get<GoogleAuthUrlResponse>('/auth/google/link-url', {
+      params: redirectUrl ? { redirect_url: redirectUrl } : undefined,
+    });
+    return res.data;
+  },
+
+  linkGoogleAccount: async (data: { exchange_code: string; password: string }): Promise<unknown> => {
+    const res = await apiClient.post('/auth/google/link', data);
+    return res.data;
+  },
+
+  unlinkGoogleAccount: async (): Promise<unknown> => {
+    const res = await apiClient.delete('/auth/google/unlink');
+    return res.data;
+  },
+
+  getExternalIdentities: async (): Promise<Array<{ id: string; provider: string; provider_subject: string; provider_email?: string }>> => {
+    const res = await apiClient.get('/auth/external-identities');
+    return res.data;
+  },
 };
+
 

@@ -13,23 +13,29 @@ export const AuthCallbackPage: React.FC = () => {
 
   const [status, setStatus] = useState<'exchanging' | 'success' | 'error'>('exchanging');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const executedRef = React.useRef(false);
 
   useEffect(() => {
+    if (executedRef.current) return;
+
     const code = searchParams.get('code');
     const error = searchParams.get('error') || searchParams.get('error_description');
 
     if (error) {
+      executedRef.current = true;
       setStatus('error');
       setErrorMessage(error);
       return;
     }
 
-    if (!code) {
+    if (!code || typeof code !== 'string' || code.length < 16 || code.length > 256) {
+      executedRef.current = true;
       setStatus('error');
-      setErrorMessage('No authorization exchange code was received from the callback.');
+      setErrorMessage('Invalid or missing authorization exchange code.');
       return;
     }
 
+    executedRef.current = true;
     let isMounted = true;
 
     const exchangeCode = async () => {
@@ -54,7 +60,7 @@ export const AuthCallbackPage: React.FC = () => {
           }
         }
 
-        // Navigate to dashboard
+        // Navigate to dashboard with replace to clear sensitive parameters from browser history
         navigate('/dashboard', { replace: true });
       } catch (err: unknown) {
         if (!isMounted) return;
@@ -70,6 +76,7 @@ export const AuthCallbackPage: React.FC = () => {
       isMounted = false;
     };
   }, [searchParams, navigate, login]);
+
 
   return (
     <div className="min-h-screen bg-stone-50 flex items-center justify-center p-4">

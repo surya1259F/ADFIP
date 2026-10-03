@@ -1,6 +1,8 @@
+import html
+import urllib.parse
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
@@ -12,6 +14,7 @@ from backend.app.core.security import (
     create_access_token,
     revoke_access_token,
     get_current_active_user,
+    get_current_user_optional,
     oauth2_scheme,
 )
 from backend.app.models.models import User, UserExternalIdentity
@@ -28,10 +31,18 @@ from backend.app.schemas.schemas import (
     UserExternalIdentityResponse,
 )
 from backend.app.services.audit import log_audit_event
-from backend.app.services.google_oauth import GoogleOAuthService
+from backend.app.services.google_oauth import (
+    GoogleOAuthService,
+    safe_json_for_script,
+    OAuthRateLimiter,
+)
+import logging
 
-
+logger = logging.getLogger("ADFIR_AUTH")
 router = APIRouter()
+
+
+
 
 
 @router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -209,88 +220,64 @@ def get_google_oauth_status():
     )
 
 
-@router.get("/google/login", response_model=GoogleAuthUrlResponse, status_code=status.HTTP_200_OK)
-def initiate_google_oauth_login(
-    redirect_url: Optional[str] = Query(None, description="Frontend post-login redirection path"),
-    db: Session = Depends(get_db),
-):
-    """
-    Initiates Google OAuth 2.0 authorization code flow with PKCE and state protection.
-    Returns the Google consent URL and anti-CSRF state token.
-    """
-    return GoogleOAuthService.get_login_url(db=db, frontend_redirect_url=redirect_url)
+def make_secure_html_response(content: str, status_code: int = 200) -> HTMLResponse:
+    resp = HTMLResponse(content=content, status_code=status_code)
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["Content-Security-Policy"] = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-ancestors 'none';"
+    return resp
 
 
-@router.get("/google/callback", response_class=HTMLResponse)
-def handle_google_oauth_callback(
-    code: Optional[str] = Query(None, description="Google OAuth authorization code"),
-    state: Optional[str] = Query(None, description="Anti-CSRF state token"),
-    error: Optional[str] = Query(None, description="Google OAuth error code if denied"),
-    error_description: Optional[str] = Query(None, description="Human readable OAuth error"),
-    db: Session = Depends(get_db),
-):
-    """
-    Handles Google OAuth redirect:
-    1. Validates and consumes single-use state token.
-    2. Exchanges authorization code for tokens server-side using PKCE verifier.
-    3. Verifies Google OpenID Connect identity claims (email_verified, sub).
-    4. Resolves or registers ADFIP investigator account.
-    5. Generates short-lived (60s) single-use exchange ticket.
-    6. Returns HTML with postMessage and redirect fallback for seamless desktop/browser handoff.
-    """
-    if error:
-        err_msg = error_description or error or "Google authorization was denied or cancelled."
-        log_audit_event(
-            db=db,
-            case_id=None,
-            event_type="OAUTH_LOGIN_CANCELLED",
-            details=f"Google OAuth cancelled or returned error: {err_msg}",
-        )
-        escaped_err = err_msg.replace('"', '\\"').replace("'", "\\'")
-        html_content = f"""<!DOCTYPE html>
+def make_error_callback_html(err_msg: Any, target_origin: str, status_code: int = 400) -> HTMLResponse:
+    err_text = str(err_msg)
+    escaped_html_err = html.escape(err_text)
+    script_err = safe_json_for_script(err_text)
+    script_target_origin = safe_json_for_script(target_origin)
+    script_fallback_url = safe_json_for_script(f"/signin?error={urllib.parse.quote(err_text)}")
+
+    html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Authentication Cancelled — ADFIP</title>
+  <title>Authentication Error — ADFIP</title>
   <style>
     body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #f8fafc; color: #1e293b; }}
-    .card {{ background: white; padding: 2rem; border-radius: 12px; border: 1px solid #fee2e2; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); text-align: center; max-width: 420px; }}
+    .card {{ background: white; padding: 2rem; border-radius: 12px; border: 1px solid #fee2e2; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); text-align: center; max-width: 440px; }}
     h2 {{ color: #dc2626; font-size: 1.1rem; margin: 0 0 0.5rem; }}
-    p {{ font-size: 0.875rem; color: #64748b; margin: 0 0 1rem; }}
+    p {{ font-size: 0.875rem; color: #64748b; margin: 0 0 1rem; line-height: 1.4; }}
   </style>
 </head>
 <body>
   <div class="card">
-    <h2>Sign In Cancelled</h2>
-    <p>{err_msg}</p>
+    <h2>Authentication Failed</h2>
+    <p>{escaped_html_err}</p>
   </div>
   <script>
+    const targetOrigin = {script_target_origin};
+    const errMsg = {script_err};
+    const fallbackUrl = {script_fallback_url};
     if (window.opener && !window.opener.closed) {{
-      window.opener.postMessage({{ type: 'ADFIP_OAUTH_ERROR', error: "{escaped_err}" }}, '*');
+      window.opener.postMessage({{ type: 'ADFIP_OAUTH_ERROR', error: errMsg }}, targetOrigin);
       setTimeout(() => window.close(), 600);
     }} else {{
-      window.location.href = '/signin?error=' + encodeURIComponent("{escaped_err}");
+      window.location.href = fallbackUrl;
     }}
   </script>
 </body>
 </html>"""
-        return HTMLResponse(content=html_content, status_code=400)
+    return make_secure_html_response(html_content, status_code=status_code)
 
-    try:
-        oauth_state = GoogleOAuthService.verify_and_consume_state(db=db, state=state or "")
-        tokens = GoogleOAuthService.exchange_code_for_tokens(
-            code=code or "",
-            code_verifier=oauth_state.code_verifier,
-            redirect_uri=oauth_state.redirect_uri,
-        )
-        identity = GoogleOAuthService.verify_google_identity(
-            access_token=tokens.get("access_token") or "",
-            id_token=tokens.get("id_token"),
-        )
-        user, _ = GoogleOAuthService.resolve_or_create_user(db=db, identity=identity)
-        ticket = GoogleOAuthService.create_exchange_code(db=db, user=user)
 
-        html_content = f"""<!DOCTYPE html>
+def make_success_callback_html(ticket: str, target_origin: str, oauth_state: Any) -> HTMLResponse:
+    script_ticket = safe_json_for_script(ticket)
+    script_target_origin = safe_json_for_script(target_origin)
+    fallback_path = oauth_state.frontend_redirect_url or "/auth/callback"
+    script_fallback_url = safe_json_for_script(f"{fallback_path}?code={urllib.parse.quote(ticket)}")
+
+    html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -311,103 +298,261 @@ def handle_google_oauth_callback(
     <p>Returning to ADFIP investigation workstation...</p>
   </div>
   <script>
-    const ticket = "{ticket}";
+    const ticket = {script_ticket};
+    const targetOrigin = {script_target_origin};
+    const fallbackUrl = {script_fallback_url};
     if (window.opener && !window.opener.closed) {{
-      window.opener.postMessage({{ type: 'ADFIP_OAUTH_SUCCESS', code: ticket }}, '*');
+      window.opener.postMessage({{ type: 'ADFIP_OAUTH_SUCCESS', code: ticket }}, targetOrigin);
       setTimeout(() => window.close(), 400);
     }} else {{
-      window.location.href = '/auth/callback?code=' + encodeURIComponent(ticket);
+      window.location.href = fallbackUrl;
     }}
   </script>
 </body>
 </html>"""
-        return HTMLResponse(content=html_content, status_code=200)
+    return make_secure_html_response(html_content, status_code=200)
+
+
+@router.get("/google/login", response_model=GoogleAuthUrlResponse, status_code=status.HTTP_200_OK)
+def initiate_google_oauth_login(
+    request: Request,
+    redirect_url: Optional[str] = Query(None, description="Frontend post-login redirection path"),
+    purpose: str = Query("LOGIN", description="OAuth flow purpose: LOGIN or LINK"),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """
+    Initiates Google OAuth 2.0 authorization code flow with PKCE S256, OIDC nonce, and state protection.
+    Returns the Google consent URL, anti-CSRF state token, and configuration status.
+    """
+    client_ip = request.client.host if request.client else "unknown"
+    OAuthRateLimiter.check_rate_limit(client_ip)
+
+    origin = request.headers.get("origin") or request.headers.get("referer")
+    if origin:
+        try:
+            parsed = urllib.parse.urlparse(origin)
+            origin = f"{parsed.scheme}://{parsed.netloc}"
+        except Exception:
+            origin = None
+
+    target_user = current_user if purpose.upper() == "LINK" else None
+    if purpose.upper() == "LINK" and not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required to initiate account linking."
+        )
+
+    return GoogleOAuthService.get_login_url(
+        db=db,
+        frontend_redirect_url=redirect_url,
+        purpose=purpose,
+        target_user=target_user,
+        frontend_origin=origin,
+    )
+
+
+@router.get("/google/link-url", response_model=GoogleAuthUrlResponse, status_code=status.HTTP_200_OK)
+def initiate_google_oauth_link(
+    request: Request,
+    redirect_url: Optional[str] = Query(None, description="Frontend post-linking redirection path"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Dedicated endpoint for authenticated investigators to initiate a secure Google account link flow.
+    Binds the generated OAuthState explicitly to current_user.id.
+    """
+    client_ip = request.client.host if request.client else "unknown"
+    OAuthRateLimiter.check_rate_limit(client_ip)
+
+    origin = request.headers.get("origin") or request.headers.get("referer")
+    if origin:
+        try:
+            parsed = urllib.parse.urlparse(origin)
+            origin = f"{parsed.scheme}://{parsed.netloc}"
+        except Exception:
+            origin = None
+
+    return GoogleOAuthService.get_login_url(
+        db=db,
+        frontend_redirect_url=redirect_url,
+        purpose="LINK",
+        target_user=current_user,
+        frontend_origin=origin,
+    )
+
+
+@router.get("/google/callback", response_class=HTMLResponse)
+def handle_google_oauth_callback(
+    code: Optional[str] = Query(None, description="Google OAuth authorization code"),
+    state: Optional[str] = Query(None, description="Anti-CSRF state token"),
+    error: Optional[str] = Query(None, description="Google OAuth error code if denied"),
+    error_description: Optional[str] = Query(None, description="Human readable OAuth error"),
+    db: Session = Depends(get_db),
+):
+    """
+    Handles Google OAuth redirect:
+    1. Validates and consumes single-use state token atomically (replay protection).
+    2. Exchanges authorization code for tokens server-side using PKCE S256 verifier.
+    3. Verifies Google OpenID Connect identity claims and OIDC nonce (fails closed).
+    4. Routes by purpose:
+       - LOGIN: resolves or registers investigator account (INVESTIGATOR least-privilege).
+       - LINK: validates target user, prevents cross-account ticket abuse.
+    5. Issues short-lived (60s) single-use exchange ticket (stored as SHA-256 digest).
+    6. Returns hardened HTML with strict postMessage targetOrigin and no-store headers.
+    """
+    target_origin = "http://localhost:5173"
+
+    if error:
+        err_msg = error_description or error or "Google authorization was denied or cancelled."
+        log_audit_event(
+            db=db,
+            case_id=None,
+            event_type="OAUTH_LOGIN_CANCELLED",
+            details=f"Google OAuth cancelled or returned error: {err_msg}",
+        )
+        return make_error_callback_html(err_msg, target_origin, status_code=400)
+
+    try:
+        oauth_state = GoogleOAuthService.verify_and_consume_state(db=db, state=state or "")
+        target_origin = oauth_state.frontend_origin or target_origin
+
+        tokens = GoogleOAuthService.exchange_code_for_tokens(
+            code=code or "",
+            code_verifier=oauth_state.code_verifier,
+            redirect_uri=oauth_state.redirect_uri,
+        )
+        import inspect
+        verify_fn = GoogleOAuthService.verify_google_identity
+        sig = inspect.signature(verify_fn)
+        call_kwargs = {}
+        if "expected_nonce" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+            call_kwargs["expected_nonce"] = oauth_state.nonce
+        if "db" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+            call_kwargs["db"] = db
+
+        identity = verify_fn(
+            access_token=tokens.get("access_token") or "",
+            id_token=tokens.get("id_token"),
+            **call_kwargs,
+        )
+
+
+        if oauth_state.purpose == "LINK":
+            target_user = db.query(User).filter(User.id == oauth_state.target_user_id).first()
+            if not target_user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Target investigator account for link transaction does not exist."
+                )
+
+            # Global check: ensure Google sub is not already linked to another investigator account
+            existing_link = (
+                db.query(UserExternalIdentity)
+                .filter(
+                    UserExternalIdentity.provider == "google",
+                    UserExternalIdentity.provider_subject == identity["sub"]
+                )
+                .first()
+            )
+            if existing_link and existing_link.user_id != target_user.id:
+                log_audit_event(
+                    db=db,
+                    case_id=None,
+                    event_type="OAUTH_LINK_DENIED",
+                    details=f"Google sub '{identity['sub']}' is already linked to another account '{existing_link.user_id}'.",
+                    actor_id=target_user.id,
+                    actor_name=target_user.name,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This Google account is already linked to another investigator profile."
+                )
+
+            ticket = GoogleOAuthService.create_exchange_code(
+                db=db,
+                purpose="LINK",
+                target_user_id=target_user.id,
+                google_sub=identity["sub"],
+                google_email=identity["email"],
+            )
+        else:
+            user, _ = GoogleOAuthService.resolve_or_create_user(db=db, identity=identity)
+            ticket = GoogleOAuthService.create_exchange_code(
+                db=db,
+                user=user,
+                purpose="LOGIN",
+            )
+
+        return make_success_callback_html(ticket, target_origin, oauth_state)
 
     except HTTPException as http_exc:
-        err_detail = http_exc.detail
-        escaped_err = str(err_detail).replace('"', '\\"').replace("'", "\\'")
-        html_content = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>Authentication Error — ADFIP</title>
-  <style>
-    body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #f8fafc; color: #1e293b; }}
-    .card {{ background: white; padding: 2rem; border-radius: 12px; border: 1px solid #fecaca; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); text-align: center; max-width: 440px; }}
-    h2 {{ color: #b91c1c; font-size: 1.1rem; margin: 0 0 0.5rem; }}
-    p {{ font-size: 0.875rem; color: #475569; margin: 0 0 1rem; line-height: 1.4; }}
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h2>Authentication Failed</h2>
-    <p>{err_detail}</p>
-  </div>
-  <script>
-    if (window.opener && !window.opener.closed) {{
-      window.opener.postMessage({{ type: 'ADFIP_OAUTH_ERROR', error: "{escaped_err}" }}, '*');
-      setTimeout(() => window.close(), 800);
-    }} else {{
-      window.location.href = '/signin?error=' + encodeURIComponent("{escaped_err}");
-    }}
-  </script>
-</body>
-</html>"""
-        return HTMLResponse(content=html_content, status_code=http_exc.status_code)
+        return make_error_callback_html(http_exc.detail, target_origin, status_code=http_exc.status_code)
+    except Exception as exc:
+        logger.exception("Unexpected error in Google OAuth callback: %s", exc)
+        return make_error_callback_html("Authentication failed due to an unexpected server error.", target_origin, status_code=500)
 
 
 @router.post("/google/exchange", response_model=TokenResponse, status_code=status.HTTP_200_OK)
 def exchange_oauth_code_for_jwt(
     req: OAuthExchangeRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """
     Exchanges a single-use, 60-second exchange ticket for an official signed ADFIP JWT access token.
     Prevents token leakage through browser history, referer headers, or URL parameters.
     """
+    client_ip = request.client.host if request.client else "unknown"
+    OAuthRateLimiter.check_rate_limit(client_ip)
     return GoogleOAuthService.exchange_code_for_jwt(db=db, code=req.code)
 
 
 @router.post("/google/link", response_model=UserExternalIdentityResponse, status_code=status.HTTP_200_OK)
 def link_google_identity(
     req: AccountLinkRequest,
+    request: Request,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
     """
     Securely links an existing password account to a Google OAuth identity.
     Requires proof of password control to prevent unauthorized account takeover.
+    Enforces purpose == 'LINK' and target_user_id == current_user.id.
     """
-    # 1. Verify current account password
+    client_ip = request.client.host if request.client else "unknown"
+    OAuthRateLimiter.check_rate_limit(client_ip)
+
+    # 1. Verify current account password if password exists
     if current_user.password_hash:
         if not verify_password(req.password, current_user.password_hash):
+            log_audit_event(
+                db=db,
+                case_id=None,
+                event_type="OAUTH_LINK_DENIED",
+                details="Incorrect account password during account linking attempt.",
+                actor_id=current_user.id,
+                actor_name=current_user.name,
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect account password. Proof of account control failed."
             )
 
-    # 2. Exchange ticket to obtain the verified Google identity claims
-    # (The exchange code maps to the user or identity extracted during OAuth)
-    token_resp = GoogleOAuthService.exchange_code_for_jwt(db=db, code=req.exchange_code)
-    target_user_id = token_resp.user.id
-
-    # If the exchange code was tied to a temporary user, fetch external identity
-    ext_id = (
-        db.query(UserExternalIdentity)
-        .filter(UserExternalIdentity.user_id == target_user_id, UserExternalIdentity.provider == "google")
-        .first()
+    # 2. Verify and atomically consume link ticket (enforces purpose == 'LINK' and target_user_id == current_user.id)
+    ticket_record = GoogleOAuthService.verify_and_consume_link_ticket(
+        db=db,
+        code=req.exchange_code,
+        current_user=current_user,
     )
-    if not ext_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Google identity record not found for supplied exchange code."
-        )
 
+    # 3. Link Google identity to current_user
     linked = GoogleOAuthService.link_google_account_to_user(
         db=db,
         current_user=current_user,
-        google_sub=ext_id.provider_subject,
-        google_email=ext_id.provider_email or current_user.email,
+        google_sub=ticket_record.google_sub,
+        google_email=ticket_record.google_email or current_user.email,
     )
     return linked
 
@@ -430,14 +575,9 @@ def unlink_google_identity(
 ):
     """
     Unlinks Google identity from the current investigator account.
-    Fails safely if user has no password configured (prevents permanent account lockout).
+    Fails safely if user has no password configured AND no other external identity
+    (prevents permanent account lockout).
     """
-    if not current_user.password_hash:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot unlink Google account without first setting a password. You would be locked out of your account."
-        )
-
     link = (
         db.query(UserExternalIdentity)
         .filter(UserExternalIdentity.user_id == current_user.id, UserExternalIdentity.provider == "google")
@@ -448,6 +588,21 @@ def unlink_google_identity(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No linked Google identity found for this account."
         )
+
+    if not current_user.password_hash:
+        other_identities_count = (
+            db.query(UserExternalIdentity)
+            .filter(
+                UserExternalIdentity.user_id == current_user.id,
+                UserExternalIdentity.provider != "google"
+            )
+            .count()
+        )
+        if other_identities_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot unlink Google account without first setting a password or having another external identity linked. You would be locked out of your account."
+            )
 
     db.delete(link)
     db.commit()
@@ -462,6 +617,7 @@ def unlink_google_identity(
     )
 
     return {"message": "Google account successfully unlinked."}
+
 
 
 

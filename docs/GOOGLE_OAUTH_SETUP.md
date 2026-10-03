@@ -73,9 +73,23 @@ GOOGLE_REDIRECT_URI="http://localhost:8000/api/v1/auth/google/callback"
 
 ## 5. Architectural Security Highlights
 
-* **PKCE Enforcement:** ADFIP implements Proof Key for Code Exchange (RFC 7636) with SHA-256 (`S256`) challenges on all authorization requests.
-* **Anti-CSRF Protection:** Cryptographically secure 32-byte state tokens are tracked in `oauth_states`, enforced for single use, and strictly expire after 10 minutes.
-* **Single-Use Exchange Tickets:** Google tokens are never exposed in browser URLs, redirect fragments, or browser history. Upon successful callback, ADFIP issues a high-entropy, 60-second exchange code (`OAuthExchangeCode`) that the frontend exchanges for a signed Bearer JWT via POST.
+* **Authorization Code Flow with PKCE S256:** ADFIP implements the OAuth 2.0 Authorization Code flow with Proof Key for Code Exchange (RFC 7636) using high-entropy SHA-256 (`S256`) verifiers and challenges managed server-side.
+* **Cryptographic State & Replay Protection:** Cryptographically random 32-byte state tokens are tracked in `oauth_states`, enforced for single use via atomic database transactions, bound by purpose (`LOGIN` vs `LINK`), and expire strictly after 10 minutes.
+* **OIDC Nonce Verification:** Every authorization transaction generates a cryptographic nonce sent to Google and verified against the OpenID Connect ID token claim (`nonce`) during callback processing, eliminating token injection and replay risks.
+* **Server-Side Token Exchange & Fail-Closed Claims Verification:** The Google authorization code is exchanged directly by the backend with Google's token endpoint using the client secret and PKCE verifier. ID token claims (`iss`, `aud`, `exp`, `sub`, `email`, `email_verified`, `nonce`) are validated with strict fail-closed enforcement.
+* **Short-Lived Single-Use Exchange Transaction:** 
+  - The final ADFIP JWT is issued **only** by the backend `/api/v1/auth/google/exchange` endpoint.
+  - The short-lived, single-use exchange ticket (valid 60 seconds) is not itself the final JWT; it only authorizes a single atomic claim of the user session.
+  - Plaintext exchange tickets are never stored in the database; only their SHA-256 digests (`code_hash`) are persisted.
+  - In popup mode, tickets are transmitted directly to the parent workstation window via hardened `window.opener.postMessage` targeting the exact frontend origin; in fallback mode, the ticket is forwarded to the callback router and immediately consumed.
+* **Target-Bound Account Linking & Cross-Account Abuse Defense:**
+  - Account linking requires a dedicated `LINK` OAuth transaction bound to the initiating `current_user.id`.
+  - Attempts by another authenticated user to consume a victim's link ticket are rejected with HTTP 403 Forbidden without consuming the victim's ticket.
+  - Proof of existing account control is enforced via investigator password verification prior to link creation.
+  - Duplicate Google identities are rejected with HTTP 409 Conflict.
+  - Linking an account never alters investigator roles or permissions.
 * **Account Takeover Prevention (Scenario C):** If an existing password-authenticated account matches a Google email but is not yet linked, automated account takeover is blocked with HTTP 409 Conflict. The investigator must authenticate with their password and link their Google account from Settings.
-* **Least Privilege:** New users authenticated via Google default strictly to the `INVESTIGATOR` role. Administrative privileges can only be elevated by an existing Administrator.
+* **Least Privilege:** New users authenticated via Google default strictly to the `INVESTIGATOR` role.
 * **Lockout Protection:** An account cannot be unlinked from Google if no password has been configured, preventing permanent investigator lockout.
+* **Tauri Desktop Shell Compatibility:** Supports both web origins (`http://localhost:5173`) and Tauri v2 custom URI schemes (`tauri://localhost`, `http://tauri.localhost`, `https://tauri.localhost`). The backend callback enforces strict origin matching and restrictive security headers (`Cache-Control: no-store`, `X-Content-Type-Options: nosniff`).
+

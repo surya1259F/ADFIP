@@ -120,8 +120,39 @@ export const SignInPage: React.FC = () => {
         return;
       }
 
+      const allowedOrigins = [
+        window.location.origin,
+        'http://localhost:5173',
+        'http://127.0.0.1:5173',
+        'http://localhost:8000',
+        'http://127.0.0.1:8000',
+        'tauri://localhost',
+        'http://tauri.localhost',
+        'https://tauri.localhost',
+      ];
+
       const handleMessage = async (event: MessageEvent) => {
-        if (event.data?.type === 'ADFIP_OAUTH_SUCCESS') {
+        // 1. Strict Origin Validation
+        if (!event.origin || !allowedOrigins.includes(event.origin)) {
+          return;
+        }
+
+        // 2. Strict Source Validation
+        if (popup && event.source !== popup) {
+          return;
+        }
+
+        // 3. Payload Type Validation
+        if (!event.data || typeof event.data !== 'object') {
+          return;
+        }
+
+        if (event.data.type === 'ADFIP_OAUTH_SUCCESS') {
+          // 4. Strict Code Payload Validation
+          if (typeof event.data.code !== 'string' || event.data.code.length < 16 || event.data.code.length > 256) {
+            return;
+          }
+
           window.removeEventListener('message', handleMessage);
           const exchangeCode = event.data.code;
           try {
@@ -136,7 +167,12 @@ export const SignInPage: React.FC = () => {
           } finally {
             setLoading(false);
           }
-        } else if (event.data?.type === 'ADFIP_OAUTH_ERROR') {
+        } else if (event.data.type === 'ADFIP_OAUTH_ERROR') {
+          // 5. Strict Error Payload Validation
+          if (typeof event.data.error !== 'string' || event.data.error.length > 500) {
+            return;
+          }
+
           window.removeEventListener('message', handleMessage);
           setErrors((prev) => ({ ...prev, general: event.data.error || 'Google authentication was cancelled or failed.' }));
           setLoading(false);
@@ -144,6 +180,7 @@ export const SignInPage: React.FC = () => {
       };
 
       window.addEventListener('message', handleMessage);
+
 
       // Heartbeat monitor if user closes popup window
       const checkClosedInterval = setInterval(() => {

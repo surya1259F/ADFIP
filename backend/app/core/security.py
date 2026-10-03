@@ -374,3 +374,26 @@ def get_current_active_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     return current_user
+
+
+def get_current_user_optional(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
+) -> Optional[User]:
+    """
+    Extracts Bearer token if present and resolves User, or returns None if unauthenticated.
+    """
+    if not credentials or not credentials.credentials:
+        return None
+    token = credentials.credentials
+    payload = verify_access_token(token)
+    if not payload:
+        return None
+    user_id = payload.get("sub")
+    if not user_id:
+        return None
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or not user.is_active:
+        return None
+    return user
+
