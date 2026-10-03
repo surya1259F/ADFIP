@@ -35,6 +35,9 @@ async def lifespan(app: FastAPI):
     # Run Alembic migrations
     from backend.app.core.migrations import run_db_migrations
     run_db_migrations(engine)
+    logging.getLogger("uvicorn").setLevel(logging.INFO)
+    logging.getLogger("uvicorn.error").setLevel(logging.INFO)
+    logging.getLogger("uvicorn.access").setLevel(logging.INFO)
 
     # Ensure RevokedToken table exists (created if missing, safe on existing DBs)
     try:

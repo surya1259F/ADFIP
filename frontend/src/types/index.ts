@@ -28,7 +28,7 @@ export interface CaseMemberCreateRequest {
 export interface Case {
   id: string;
   case_number?: string;
-  name: string;
+  name?: string;
   title?: string;
   description?: string;
   objective?: string;
@@ -41,17 +41,20 @@ export interface Case {
   owner_id?: string;
   created_by?: string;
   investigator?: string;
+  investigator_id?: string;
+  investigator_name?: string;
   created_at: string;
-  updated_at: string;
+  updated_at?: string;
   closed_at?: string;
   evidence_count?: number;
   findings_count?: number;
   artifacts_count?: number;
   members_count?: number;
+  metadata?: Record<string, unknown>;
 }
 
 export interface CaseCreateRequest {
-  title: string;
+  title?: string;
   name?: string;
   case_number?: string;
   description?: string;
@@ -91,19 +94,27 @@ export interface CustodyRecord {
   event_type: string;
   timestamp: string;
   actor: string;
-  description: string;
+  action?: string;
+  description?: string;
   source_path?: string;
   destination_path?: string;
   sha256?: string;
-  metadata_json: Record<string, any>;
+  hash?: string;
+  notes?: string;
+  metadata_json?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
+
+export type CustodyEvent = CustodyRecord;
 
 export interface Evidence {
   id: string;
-  investigation_id: string;
+  investigation_id?: string;
+  case_id?: string;
   name: string;
-  original_path: string;
+  original_path?: string;
   storage_path?: string;
+  file_path?: string;
   evidence_type: string;
   evidence_subtype?: string;
   source_kind?: string;
@@ -113,17 +124,25 @@ export interface Evidence {
   platform_hint?: string;
   size_bytes: number;
   sha256: string;
+  sha256_hash?: string;
   md5?: string;
+  md5_hash?: string;
   mime_type?: string;
   status?: string;
   created_at: string;
-  modified_at: string;
+  modified_at?: string;
+  updated_at?: string;
+  acquired_at?: string;
   intake_status: string;
   integrity_status: string;
+  verification_status?: string;
+  vault_path?: string;
+  vault_status?: string;
   read_only_verified: boolean;
   notes?: string;
-  created_by: string;
+  created_by?: string;
   metadata_json?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   intelligence_json?: Record<string, any>;
   error_message?: string;
 }
@@ -166,7 +185,15 @@ export interface ResourceProfile {
 
 export interface EvidenceIntelligence {
   evidence_id: string;
-  evidence_name: string;
+  evidence_name?: string;
+  mime_type?: string;
+  file_signature?: string;
+  entropy?: number;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  partitions?: unknown[];
+  indicators?: unknown[];
+  profile?: Record<string, unknown>;
   source_kind: string;
   evidence_type: string;
   evidence_subtype?: string;
@@ -261,7 +288,7 @@ export interface Finding {
   agent: string;
   tool: string;
   finding_type: string;
-  title: string;
+  title?: string;
   description: string;
   confidence?: number;
   timestamp?: string;
@@ -274,7 +301,7 @@ export interface Finding {
 export interface DiskAnalysisResult {
   investigation_id: string;
   evidence_id: string;
-  status: string;
+  status?: string;
   execution_id: string;
   artifacts_count: number;
   findings_count: number;
@@ -289,7 +316,7 @@ export interface DiskAnalysisResult {
 export interface MemoryAnalysisResult {
   investigation_id: string;
   evidence_id: string;
-  status: string;
+  status?: string;
   plugin: string;
   execution_id: string;
   artifacts_count: number;
@@ -305,7 +332,7 @@ export interface MemoryAnalysisResult {
 export interface MalwareAnalysisResult {
   investigation_id: string;
   evidence_id: string;
-  status: string;
+  status?: string;
   rule_id: string;
   rule_sha256?: string;
   execution_id: string;
@@ -322,7 +349,7 @@ export interface MalwareAnalysisResult {
 export interface LogAnalysisResult {
   investigation_id: string;
   evidence_id: string;
-  status: string;
+  status?: string;
   execution_id: string;
   artifacts_count: number;
   findings_count: number;
@@ -370,7 +397,7 @@ export interface StrategyTask {
   priority_level: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'BLOCKED';
   priority_score: number;
   priority_rationale?: Record<string, any>;
-  status: string;
+  status?: string;
   required_inputs: string[];
   expected_outputs: string[];
   resource_requirements: Record<string, any>;
@@ -387,7 +414,7 @@ export interface DependencyGraphNode {
   agent: string;
   tool: string;
   priority: string;
-  status: string;
+  status?: string;
   evidence_id?: string;
 }
 
@@ -459,7 +486,7 @@ export interface InvestigationPlan {
   strategy_summary: string;
   validation_status?: string;
   total_tasks: number;
-  status: string;
+  status?: string;
   version?: number;
   evidence_snapshot?: any[];
   resource_snapshot?: Record<string, any>;
@@ -472,7 +499,7 @@ export interface InvestigationPlan {
 export interface PlanExecutionSummary {
   investigation_id: string;
   plan_id: string;
-  status: string;
+  status?: string;
   tasks_executed: number;
   tasks_succeeded: number;
   tasks_failed: number;
@@ -488,7 +515,7 @@ export interface CorrelatedGroup {
   dimension: string;
   rule?: string;
   correlated_entity: string;
-  title: string;
+  title?: string;
   description: string;
   tools_involved: string[];
   supporting_finding_ids: string[];
@@ -506,7 +533,7 @@ export interface VerificationResult {
 }
 
 export interface Report {
-  title: string;
+  title?: string;
   investigation_id: string;
   executive_summary: string;
   findings_count: number;
@@ -518,7 +545,7 @@ export interface Report {
 export interface SystemStatus {
   application: string;
   version: string;
-  status: string;
+  status?: string;
   platform: string;
   logical_cpus: number;
   max_concurrent_tasks: number;
@@ -557,6 +584,7 @@ export interface UserRegisterRequest {
   password: string;
   organization?: string;
   badge_id?: string;
+  role?: string;
 }
 
 export interface TokenResponse {
@@ -632,13 +660,20 @@ export interface AuditEvent {
   id: string;
   case_id?: string;
   actor_id?: string;
-  actor_name: string;
+  actor_name?: string;
+  actor?: string;
+  action?: string;
   event_type: string;
-  details: string;
-  metadata_json: Record<string, any>;
-  ip_address: string;
+  details?: string;
+  resource_type?: string;
+  resource_id?: string;
+  result?: string;
+  metadata_json?: Record<string, any>;
+  metadata?: Record<string, unknown>;
+  ip_address?: string;
   timestamp: string;
   event_hash?: string;
+  sha256_hash?: string;
 }
 
 export interface ToolDefinition {
@@ -699,7 +734,7 @@ export type ExplainFindingRequest = AIExplainFindingRequest;
 
 export interface AIExplanationResponse {
   finding_id: string;
-  title: string;
+  title?: string;
   explanation: string;
   mitre_techniques: string[];
   provider: string;
@@ -721,7 +756,7 @@ export type ProviderTestRequest = AIProviderTestRequest;
 export interface AIProviderTestResponse {
   provider: string;
   model: string;
-  status: string;
+  status?: string;
   details: string;
 }
 
@@ -793,7 +828,7 @@ export interface RequestMoreEvidenceResponse {
   pipeline_stage: string;
   governance_decision_id: string;
   governance_decision: string;
-  status: string;
+  status?: string;
   reentry_objective: string;
 }
 
@@ -803,7 +838,7 @@ export interface ReviewEvidenceItem {
   evidence_type: string;
   sha256_hash: string;
   size_bytes?: number;
-  status: string;
+  status?: string;
   verification_status: string;
   chain_of_custody_events_count: number;
 }
@@ -888,12 +923,12 @@ export interface ForensicReportVersionItem {
   id: string;
   case_id: string;
   version: number;
-  title: string;
+  title?: string;
   findings_count: number;
   evidence_count: number;
   report_hash: string;
   sha256_hash?: string;
-  status: string;
+  status?: string;
   integrity_status: string;
   generated_by: string;
   generated_at: string;
@@ -903,14 +938,14 @@ export interface ForensicReportResponse {
   id: string;
   case_id: string;
   version: number;
-  title: string;
+  title?: string;
   executive_summary: string;
   findings_count: number;
   evidence_count: number;
   full_report_markdown: string;
   report_hash: string;
   sha256_hash?: string;
-  status: string;
+  status?: string;
   sections: {
     case_information: Record<string, any>;
     evidence_inventory: Array<Record<string, any>>;
@@ -927,7 +962,7 @@ export interface ForensicReportResponse {
       items: Array<{
         id: string;
         type: string;
-        title: string;
+        title?: string;
         finding_type: string;
         severity: string;
         confidence: number;
@@ -989,3 +1024,102 @@ export interface ForensicReportProvenanceResponse {
   report_hash: string;
 }
 
+
+
+export interface EvidenceIntakeRequest {
+  name: string;
+  evidence_type: string;
+  source_path?: string;
+  notes?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ArtifactItem {
+  id: string;
+  case_id?: string;
+  evidence_id?: string;
+  execution_id?: string;
+  artifact_type: string;
+  name: string;
+  description?: string;
+  file_path?: string;
+  size_bytes?: number;
+  sha256_hash?: string;
+  source_tool?: string;
+  source_agent?: string;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface FindingItem {
+  id: string;
+  case_id?: string;
+  title?: string;
+  description: string;
+  severity?: string;
+  finding_type?: string;
+  rule_name?: string;
+  confidence?: number;
+  classification?: 'FACT' | 'INFERENCE' | 'UNVERIFIED';
+  verification_status?: string;
+  source_tool?: string;
+  source_agent?: string;
+  evidence_id?: string;
+  artifact_id?: string;
+  execution_id?: string;
+  evidence_reference?: string;
+  raw_output_reference?: string;
+  supporting_artifact_ids?: string[];
+  supporting_evidence_ids?: string[];
+  mitre_techniques?: string[];
+  sha256_hash?: string;
+  created_at: string;
+  updated_at?: string;
+  existing_reviews?: InvestigatorReviewResponse[];
+  latest_decision?: InvestigatorDecisionType | null;
+}
+
+export interface ExecutionRecord {
+  id: string;
+  case_id: string;
+  evidence_id?: string;
+  agent?: string;
+  tool?: string;
+  status?: string;
+  progress?: number;
+  started_at?: string;
+  completed_at?: string;
+  duration_ms?: number;
+  error?: string;
+  artifacts_count?: number;
+  findings_count?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ToolInfo {
+  name: string;
+  version?: string;
+  path?: string;
+  installed: boolean;
+  available: boolean;
+  capabilities?: string[];
+  evidence_types?: string[];
+  is_library_adapter?: boolean;
+  status?: string;
+}
+
+export interface AgentInfo {
+  name: string;
+  domain?: string;
+  status?: string;
+  capabilities?: string[];
+  description?: string;
+}
+
+export interface SystemHealth {
+  status?: string;
+  version?: string;
+  services?: Record<string, string>;
+  database?: string;
+  uptime_seconds?: number;
+}

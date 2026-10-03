@@ -1,0 +1,102 @@
+import React from 'react';
+import { useLocation, useParams, Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { Users, FolderKanban } from 'lucide-react';
+import { useAuthStore } from '../../stores/authStore';
+import { casesService } from '../../services/cases';
+
+const ROUTE_LABELS: Record<string, string> = {
+  '': 'Home',
+  dashboard: 'Dashboard',
+  cases: 'Cases',
+  evidence: 'Evidence',
+  intelligence: 'Intelligence',
+  strategy: 'Strategy',
+  execution: 'Execution',
+  findings: 'Findings',
+  verification: 'Verification',
+  report: 'Reports',
+  audit: 'Audit',
+  tools: 'Tools & Agents',
+  account: 'Account',
+  settings: 'Settings',
+  terms: 'Terms of Service',
+  privacy: 'Privacy Policy',
+};
+
+export const TopBar: React.FC = () => {
+  const { user } = useAuthStore();
+  const location = useLocation();
+  const { caseId } = useParams<{ caseId?: string }>();
+
+  const { data: activeCase } = useQuery({
+    queryKey: ['cases', caseId],
+    queryFn: () => casesService.get(caseId!),
+    enabled: !!caseId,
+    staleTime: 60_000,
+  });
+
+  // Build breadcrumbs from current path
+  const segments = location.pathname.split('/').filter(Boolean);
+  const crumbs: { label: string; path: string }[] = [];
+  let acc = '';
+  for (const seg of segments) {
+    acc += '/' + seg;
+    const label = seg === caseId
+      ? (activeCase?.title || seg.slice(0, 8).toUpperCase())
+      : (ROUTE_LABELS[seg] || seg);
+    crumbs.push({ label, path: acc });
+  }
+
+  return (
+    <header className="h-11 bg-white border-b border-stone-200 flex items-center px-4 gap-4 shrink-0">
+      {/* Breadcrumb */}
+      <nav className="flex items-center gap-1.5 text-xs text-slate-500 flex-1 min-w-0" aria-label="Breadcrumb">
+        <Link to="/dashboard" className="text-slate-400 hover:text-slate-700 font-semibold transition-colors">
+          ADFIP
+        </Link>
+        {crumbs.map((crumb, i) => (
+          <React.Fragment key={crumb.path}>
+            <span className="text-stone-300">/</span>
+            {i === crumbs.length - 1 ? (
+              <span className="text-slate-800 font-medium truncate max-w-[240px]">{crumb.label}</span>
+            ) : (
+              <Link to={crumb.path} className="hover:text-slate-800 truncate max-w-[180px] transition-colors">
+                {crumb.label}
+              </Link>
+            )}
+          </React.Fragment>
+        ))}
+      </nav>
+
+      {/* Right side contextual items */}
+      <div className="flex items-center gap-3 shrink-0">
+        {/* Active Case Context Pill if inside a case */}
+        {activeCase && (
+          <Link
+            to={`/cases/${activeCase.id}`}
+            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 bg-stone-100 hover:bg-stone-200 text-slate-700 rounded-md text-xs font-mono transition-colors"
+          >
+            <FolderKanban className="w-3.5 h-3.5 text-slate-500" />
+            <span className="truncate max-w-[140px] font-sans font-medium">{activeCase.title}</span>
+          </Link>
+        )}
+
+        {/* Investigator Account */}
+        {user && (
+          <Link
+            to="/account"
+            className="flex items-center gap-2 text-xs text-slate-600 hover:text-slate-900 transition-colors pl-1"
+          >
+            <div className="w-6 h-6 rounded-full bg-slate-200 border border-slate-300 flex items-center justify-center">
+              <Users className="w-3.5 h-3.5 text-slate-600" />
+            </div>
+            <span className="hidden md:block truncate max-w-[130px] font-medium">
+              {user.name || user.email}
+            </span>
+          </Link>
+        )}
+      </div>
+    </header>
+  );
+};

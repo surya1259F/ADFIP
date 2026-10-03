@@ -183,8 +183,11 @@ class EvidenceIntelligenceEngine:
             signals.append({"method": "magic_bytes", "signal": "Mach-O Binary Header", "confidence": 0.95})
             return "MALWARE_SAMPLE", "MACHO_EXECUTABLE", "macho", "MACHO_BINARY", 0.95, signals
 
-        # 6. Zip Container (magic: PK\x03\x04)
+        # 6. Zip Container / Office OpenXML (magic: PK\x03\x04)
         if header_bytes.startswith(b"PK\x03\x04"):
+            if ext in [".docx", ".pptx", ".xlsx", ".odt"]:
+                signals.append({"method": "magic_bytes_and_ext", "signal": f"PK\\x03\\x04 (Document Container - {ext})", "confidence": 0.95})
+                return "FILE", "DOCUMENT", ext.lstrip("."), f"{ext.lstrip('.').upper()}_DOCUMENT", 0.95, signals
             signals.append({"method": "magic_bytes", "signal": "PK\\x03\\x04 (Zip Container)", "confidence": 0.9})
             return "ARCHIVE", "ARCHIVE", "zip", "ZIP_CONTAINER", 0.9, signals
 
@@ -250,8 +253,11 @@ class EvidenceIntelligenceEngine:
 
         if ext in [".exe", ".dll", ".sys", ".elf", ".pe"]:
             signals.append({"method": "filename_extension", "signal": f"Executable extension {ext}", "confidence": 0.8})
-            return "MALWARE_SAMPLE", "EXECUTABLE", ext.lstrip("."), "PE_EXECUTABLE", 0.8, signals
             return "MALWARE_SAMPLE", "PE_EXECUTABLE" if ext in [".exe", ".dll", ".sys", ".pe"] else "ELF_EXECUTABLE", ext.lstrip("."), "PE_EXECUTABLE", 0.8, signals
+
+        if ext in [".doc", ".docx", ".pdf", ".txt", ".rtf", ".odt", ".xlsx", ".pptx"]:
+            signals.append({"method": "filename_extension", "signal": f"Document extension {ext}", "confidence": 0.85})
+            return "FILE", "DOCUMENT", ext.lstrip("."), f"{ext.lstrip('.').upper()}_DOCUMENT", 0.85, signals
 
         if ext in [".dmp", ".vmem", ".raw"] or ("mem" in name and ext in [".raw", ".bin"]):
             signals.append({"method": "filename_heuristics", "signal": f"Name/Ext pattern '{name}'", "confidence": 0.75})

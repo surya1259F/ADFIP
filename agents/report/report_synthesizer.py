@@ -24,9 +24,29 @@ class ReportSynthesizer:
                     "details": f.get("details")
                 })
 
-        # Build IOCs
+        # Collect verified finding IDs from correlated groups if available
+        correlated_finding_ids = set()
+        for cg in correlated_groups:
+            if isinstance(cg, dict):
+                for fid in cg.get("supporting_finding_ids") or []:
+                    correlated_finding_ids.add(fid)
+
+        # Build IOCs (only from verified/supported findings)
         iocs = []
         for f in findings:
+            status = str(
+                f.get("verification_status")
+                or f.get("status")
+                or ""
+            ).upper()
+            if status:
+                if status not in {"SUPPORTED", "VERIFIED"}:
+                    continue
+            else:
+                is_verified = bool(f.get("verified") or (f.get("id") and f.get("id") in correlated_finding_ids))
+                if not is_verified:
+                    continue
+
             details = f.get("details", {})
             for key in ["sha256", "md5", "ip_address", "c2_domain", "file_name", "process_name"]:
                 if key in details:
@@ -59,13 +79,33 @@ class ReportSynthesizer:
             (f.get("source_tool") or f.get("tool")) for f in findings if (f.get("source_tool") or f.get("tool"))
         ))
 
+        # Determine which tools have proven execution records
+        executed_tools = set()
+        for ex in (case_info.get("tool_executions") or case_info.get("executions") or []):
+            if isinstance(ex, dict):
+                t_name = ex.get("tool_name") or ex.get("tool") or ex.get("name")
+                status = str(ex.get("status") or "").upper()
+                if t_name and (not status or status in {"COMPLETED", "SUCCESS", "EXECUTED"}):
+                    executed_tools.add(t_name)
+            elif isinstance(ex, str):
+                executed_tools.add(ex)
+
+        for f in findings:
+            if f.get("execution_id") or f.get("tool_execution"):
+                t_name = f.get("source_tool") or f.get("tool")
+                if t_name:
+                    executed_tools.add(t_name)
+
         md_lines.extend([
             "",
             "## 3. Investigation Methodology & Specialist Tools Used",
         ])
         if tools_used:
             for t in tools_used:
-                md_lines.append(f"- **{t}**: Specialist analysis and artifact extraction.")
+                if t in executed_tools:
+                    md_lines.append(f"- **{t}**: Verified specialist tool execution.")
+                else:
+                    md_lines.append(f"- **{t}**: Recorded tool association.")
         else:
             md_lines.append("- Deterministic forensic verification and cryptographic integrity pipeline.")
 

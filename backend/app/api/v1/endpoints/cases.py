@@ -11,6 +11,7 @@ from backend.app.schemas.schemas import (
     CaseCreate,
     CaseUpdate,
     CaseResponse,
+    EvidenceResponse,
     CaseMemberCreateRequest,
     CaseMemberUpdateRequest,
     CaseMemberResponse,
@@ -492,7 +493,7 @@ def update_case_permissions(
     return case.case_permissions
 
 
-@router.post("/{case_id}/evidence/intake", status_code=status.HTTP_201_CREATED)
+@router.post("/{case_id}/evidence/intake", response_model=EvidenceResponse, status_code=status.HTTP_201_CREATED)
 def intake_case_evidence(
     case_id: str,
     payload: Dict[str, Any],
