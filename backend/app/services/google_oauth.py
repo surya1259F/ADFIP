@@ -397,193 +397,251 @@ class GoogleOAuthService:
         db: Optional[Session] = None,
     ) -> Dict[str, Any]:
         """
-        Validates Google identity tokens and claims (FAIL CLOSED):
-        1. Fetches verified OpenID Connect userinfo.
-        2. Validates id_token via Google tokeninfo endpoint:
+        Validates Google identity tokens and claims (MANDATORY ID TOKEN & NONCE, FAIL CLOSED):
+        1. Mandates presence of both id_token and expected_nonce (fails closed if omitted).
+        2. Cryptographically validates id_token via Google tokeninfo endpoint:
            - Status MUST be 200 (fails closed if non-200)
            - Issuer MUST be accounts.google.com or https://accounts.google.com
            - Audience MUST match settings.GOOGLE_CLIENT_ID
            - Expiration MUST be in the future
-           - Subject MUST match userinfo subject
-           - Email MUST match userinfo email
+           - Subject MUST be present and non-empty (authoritative identity)
+           - Email MUST be present, non-empty, and valid
            - Email verified MUST be True
            - Nonce MUST match expected_nonce from OAuthState
-        3. Enforces email_verified requirement.
-        4. Uses stable Google sub claim as primary provider identity.
+        3. Treats userinfo as supplementary enrichment only:
+           - Fetches userinfo via access_token if available
+           - Validates that userinfo claims do NOT conflict with verified ID token
+           - Fails closed if userinfo subject or email conflicts with ID token
+        4. Uses verified ID token claims as authoritative identity.
         """
+        # 1. Mandatory ID token check (FAIL CLOSED)
+        if not id_token or not str(id_token).strip():
+            logger.error("Missing mandatory Google OIDC ID token")
+            if db:
+                log_audit_event(
+                    db=db,
+                    case_id=None,
+                    event_type="OAUTH_IDENTITY_VERIFICATION_FAILED",
+                    details="Missing mandatory Google OIDC ID token in verification request.",
+                )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Google OIDC ID token is mandatory. Authentication failed closed."
+            )
+
+        # 2. Mandatory Nonce check (FAIL CLOSED)
+        if not expected_nonce or not str(expected_nonce).strip():
+            logger.error("Missing mandatory transaction nonce for Google OIDC verification")
+            if db:
+                log_audit_event(
+                    db=db,
+                    case_id=None,
+                    event_type="OAUTH_IDENTITY_VERIFICATION_FAILED",
+                    details="Missing mandatory transaction nonce in stored OAuth state.",
+                )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="OIDC transaction nonce is mandatory. Authentication failed closed."
+            )
+
         client = http_client or httpx.Client(timeout=15.0)
         try:
-            # 1. Fetch userinfo from OpenID Connect endpoint
-            userinfo_resp = client.get(
-                cls.GOOGLE_USERINFO_ENDPOINT,
-                headers={"Authorization": f"Bearer {access_token}"}
+            # 3. Validate ID token via Google tokeninfo endpoint (FAIL CLOSED)
+            tokeninfo_resp = client.get(
+                f"{cls.GOOGLE_TOKENINFO_ENDPOINT}?id_token={urllib.parse.quote(str(id_token).strip())}"
             )
-            if userinfo_resp.status_code != 200:
-                logger.warning("Google userinfo fetch failed (%d): %s", userinfo_resp.status_code, userinfo_resp.text)
+            if tokeninfo_resp.status_code != 200:
+                logger.error("Google tokeninfo validation failed (%d): %s", tokeninfo_resp.status_code, tokeninfo_resp.text)
                 if db:
                     log_audit_event(
                         db=db,
                         case_id=None,
                         event_type="OAUTH_IDENTITY_VERIFICATION_FAILED",
-                        details=f"Google userinfo endpoint returned status {userinfo_resp.status_code}.",
+                        details=f"Google tokeninfo endpoint returned status {tokeninfo_resp.status_code}.",
                     )
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Failed to retrieve verified user information from Google."
+                    detail="Google ID token validation failed."
                 )
-            userinfo = userinfo_resp.json()
 
-            # 2. If ID token present, verify claims via tokeninfo (FAIL CLOSED)
-            if id_token:
-                tokeninfo_resp = client.get(
-                    f"{cls.GOOGLE_TOKENINFO_ENDPOINT}?id_token={urllib.parse.quote(id_token)}"
-                )
-                if tokeninfo_resp.status_code != 200:
-                    logger.error("Google tokeninfo validation failed (%d): %s", tokeninfo_resp.status_code, tokeninfo_resp.text)
-                    if db:
-                        log_audit_event(
-                            db=db,
-                            case_id=None,
-                            event_type="OAUTH_IDENTITY_VERIFICATION_FAILED",
-                            details=f"Google tokeninfo endpoint returned status {tokeninfo_resp.status_code}.",
-                        )
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Google ID token validation failed."
+            tokeninfo = tokeninfo_resp.json()
+            aud = tokeninfo.get("aud")
+            iss = tokeninfo.get("iss")
+            expected_iss = ["accounts.google.com", "https://accounts.google.com"]
+
+            if settings.GOOGLE_CLIENT_ID and aud != settings.GOOGLE_CLIENT_ID:
+                logger.error("Google ID token audience mismatch: %s != %s", aud, settings.GOOGLE_CLIENT_ID)
+                if db:
+                    log_audit_event(
+                        db=db,
+                        case_id=None,
+                        event_type="OAUTH_IDENTITY_VERIFICATION_FAILED",
+                        details="Google ID token audience mismatch.",
                     )
-
-                tokeninfo = tokeninfo_resp.json()
-                aud = tokeninfo.get("aud")
-                iss = tokeninfo.get("iss")
-                expected_iss = ["accounts.google.com", "https://accounts.google.com"]
-
-                if settings.GOOGLE_CLIENT_ID and aud != settings.GOOGLE_CLIENT_ID:
-                    logger.error("Google ID token audience mismatch: %s != %s", aud, settings.GOOGLE_CLIENT_ID)
-                    if db:
-                        log_audit_event(
-                            db=db,
-                            case_id=None,
-                            event_type="OAUTH_IDENTITY_VERIFICATION_FAILED",
-                            details="Google ID token audience mismatch.",
-                        )
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Google ID token audience mismatch."
-                    )
-
-                if iss not in expected_iss:
-                    logger.error("Google ID token issuer mismatch: %s", iss)
-                    if db:
-                        log_audit_event(
-                            db=db,
-                            case_id=None,
-                            event_type="OAUTH_IDENTITY_VERIFICATION_FAILED",
-                            details=f"Google ID token issuer mismatch: {iss}.",
-                        )
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Google ID token issuer mismatch."
-                    )
-
-                # Expiration check
-                try:
-                    exp_val = int(tokeninfo.get("exp", 0))
-                    if exp_val <= int(time.time()):
-                        logger.error("Google ID token has expired (exp=%s)", exp_val)
-                        if db:
-                            log_audit_event(
-                                db=db,
-                                case_id=None,
-                                event_type="OAUTH_IDENTITY_VERIFICATION_FAILED",
-                                details="Google ID token has expired.",
-                            )
-                        raise HTTPException(
-                            status_code=status.HTTP_400_BAD_REQUEST,
-                            detail="Google ID token has expired."
-                        )
-                except (ValueError, TypeError):
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Invalid expiration claim in Google ID token."
-                    )
-
-                # Subject check
-                id_token_sub = str(tokeninfo.get("sub") or "").strip()
-                if not id_token_sub or id_token_sub != str(userinfo.get("sub") or "").strip():
-                    logger.error("Subject mismatch between userinfo and tokeninfo: %s != %s", userinfo.get("sub"), id_token_sub)
-                    if db:
-                        log_audit_event(
-                            db=db,
-                            case_id=None,
-                            event_type="OAUTH_IDENTITY_VERIFICATION_FAILED",
-                            details="Subject mismatch between userinfo and ID token.",
-                        )
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Google identity subject mismatch."
-                    )
-
-                # Email verification check in tokeninfo
-                tokeninfo_email_verified = tokeninfo.get("email_verified")
-                if tokeninfo_email_verified not in [True, "true", "True", 1]:
-                    logger.error("Google ID token email is not verified")
-                    if db:
-                        log_audit_event(
-                            db=db,
-                            case_id=None,
-                            event_type="OAUTH_IDENTITY_VERIFICATION_FAILED",
-                            details="Google ID token email is not verified.",
-                        )
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Google account email is not verified. A verified email address is required for ADFIP access."
-                    )
-
-                # Nonce check
-                if expected_nonce:
-                    token_nonce = tokeninfo.get("nonce")
-                    if not token_nonce or token_nonce != expected_nonce:
-                        logger.error("OIDC nonce mismatch: expected %s, got %s", expected_nonce, token_nonce)
-                        if db:
-                            log_audit_event(
-                                db=db,
-                                case_id=None,
-                                event_type="OAUTH_IDENTITY_VERIFICATION_FAILED",
-                                details="OIDC nonce validation failed.",
-                            )
-                        raise HTTPException(
-                            status_code=status.HTTP_400_BAD_REQUEST,
-                            detail="OIDC nonce mismatch. Possible replay or authentication injection attack."
-                        )
-
-            # 3. Ensure sub exists in userinfo
-            google_sub = str(userinfo.get("sub") or "").strip()
-            if not google_sub:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Google identity missing permanent subject identifier."
+                    detail="Google ID token audience mismatch."
                 )
 
-            # 4. Enforce email_verified in userinfo
-            email_verified = userinfo.get("email_verified")
-            if email_verified not in [True, "true", "True", 1]:
+            if iss not in expected_iss:
+                logger.error("Google ID token issuer mismatch: %s", iss)
+                if db:
+                    log_audit_event(
+                        db=db,
+                        case_id=None,
+                        event_type="OAUTH_IDENTITY_VERIFICATION_FAILED",
+                        details=f"Google ID token issuer mismatch: {iss}.",
+                    )
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Google account email is not verified. A verified email address is required for ADFIP access."
+                    detail="Google ID token issuer mismatch."
                 )
 
-            email = str(userinfo.get("email") or "").lower().strip()
-            if not email or "@" not in email:
+            # Expiration check
+            try:
+                exp_val = int(tokeninfo.get("exp", 0))
+                if exp_val <= int(time.time()):
+                    logger.error("Google ID token has expired (exp=%s)", exp_val)
+                    if db:
+                        log_audit_event(
+                            db=db,
+                            case_id=None,
+                            event_type="OAUTH_IDENTITY_VERIFICATION_FAILED",
+                            details="Google ID token has expired.",
+                        )
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Google ID token has expired."
+                    )
+            except (ValueError, TypeError):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid expiration claim in Google ID token."
+                )
+
+            # Subject check (authoritative identity from verified ID token)
+            id_token_sub = str(tokeninfo.get("sub") or "").strip()
+            if not id_token_sub:
+                logger.error("Google ID token missing permanent subject identifier")
+                if db:
+                    log_audit_event(
+                        db=db,
+                        case_id=None,
+                        event_type="OAUTH_IDENTITY_VERIFICATION_FAILED",
+                        details="Google ID token missing sub claim.",
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Google ID token missing permanent subject identifier."
+                )
+
+            # Email check in ID token
+            id_token_email = str(tokeninfo.get("email") or "").lower().strip()
+            if not id_token_email or "@" not in id_token_email:
+                logger.error("Invalid or missing email claim in Google ID token: %s", id_token_email)
+                if db:
+                    log_audit_event(
+                        db=db,
+                        case_id=None,
+                        event_type="OAUTH_IDENTITY_VERIFICATION_FAILED",
+                        details="Invalid or missing email claim in Google ID token.",
+                    )
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid email address returned from Google identity service."
                 )
 
+            # Email verified check in tokeninfo
+            tokeninfo_email_verified = tokeninfo.get("email_verified")
+            if tokeninfo_email_verified not in [True, "true", "True", 1]:
+                logger.error("Google ID token email is not verified")
+                if db:
+                    log_audit_event(
+                        db=db,
+                        case_id=None,
+                        event_type="OAUTH_IDENTITY_VERIFICATION_FAILED",
+                        details="Google ID token email is not verified.",
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Google account email is not verified. A verified email address is required for ADFIP access."
+                )
+
+            # Mandatory Nonce match check
+            token_nonce = tokeninfo.get("nonce")
+            if not token_nonce or str(token_nonce).strip() != str(expected_nonce).strip():
+                logger.error("OIDC nonce mismatch: expected %s, got %s", expected_nonce, token_nonce)
+                if db:
+                    log_audit_event(
+                        db=db,
+                        case_id=None,
+                        event_type="OAUTH_IDENTITY_VERIFICATION_FAILED",
+                        details=f"OIDC nonce mismatch: expected {expected_nonce}, got {token_nonce}.",
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="OIDC nonce mismatch. Possible replay or authentication injection attack."
+                )
+
+            # 4. Supplementary userinfo profile enrichment (cannot override verified ID token identity)
+            name = str(tokeninfo.get("name") or id_token_email.split("@")[0]).strip()
+            picture = tokeninfo.get("picture")
+
+            if access_token and str(access_token).strip():
+                try:
+                    userinfo_resp = client.get(
+                        cls.GOOGLE_USERINFO_ENDPOINT,
+                        headers={"Authorization": f"Bearer {str(access_token).strip()}"}
+                    )
+                    if userinfo_resp.status_code == 200:
+                        userinfo = userinfo_resp.json()
+                        # Strict consistency check 1: subject mismatch (FAIL CLOSED)
+                        userinfo_sub = str(userinfo.get("sub") or "").strip()
+                        if userinfo_sub and userinfo_sub != id_token_sub:
+                            logger.error("Subject mismatch between ID token and userinfo: %s != %s", id_token_sub, userinfo_sub)
+                            if db:
+                                log_audit_event(
+                                    db=db,
+                                    case_id=None,
+                                    event_type="OAUTH_IDENTITY_VERIFICATION_FAILED",
+                                    details=f"Subject mismatch between ID token ({id_token_sub}) and userinfo ({userinfo_sub}).",
+                                )
+                            raise HTTPException(
+                                status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="Google identity subject mismatch between ID token and userinfo."
+                            )
+
+                        # Strict consistency check 2: email mismatch (FAIL CLOSED)
+                        userinfo_email = str(userinfo.get("email") or "").lower().strip()
+                        if userinfo_email and userinfo_email != id_token_email:
+                            logger.error("Email mismatch between ID token and userinfo: %s != %s", id_token_email, userinfo_email)
+                            if db:
+                                log_audit_event(
+                                    db=db,
+                                    case_id=None,
+                                    event_type="OAUTH_IDENTITY_VERIFICATION_FAILED",
+                                    details=f"Email mismatch between ID token ({id_token_email}) and userinfo ({userinfo_email}).",
+                                )
+                            raise HTTPException(
+                                status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="Google identity email mismatch between ID token and userinfo."
+                            )
+
+                        # Profile enrichment only
+                        if userinfo.get("name"):
+                            name = str(userinfo.get("name")).strip()
+                        if userinfo.get("picture"):
+                            picture = userinfo.get("picture")
+                except HTTPException:
+                    raise
+                except Exception as exc:
+                    logger.warning("Supplementary userinfo fetch failed: %s", exc)
+
             return {
-                "sub": google_sub,
-                "email": email,
-                "name": str(userinfo.get("name") or email.split("@")[0]).strip(),
-                "picture": userinfo.get("picture"),
+                "sub": id_token_sub,
+                "email": id_token_email,
+                "name": name,
+                "picture": picture,
             }
         except HTTPException:
             raise
@@ -998,7 +1056,7 @@ class GoogleOAuthService:
                 detail="This Google account is already linked to another investigator profile."
             )
 
-        # Check if current user already has a Google account linked (update rather than duplicate)
+        # Case A check: Check if current user already has a Google account linked
         user_link = (
             db.query(UserExternalIdentity)
             .filter(
@@ -1008,24 +1066,35 @@ class GoogleOAuthService:
             .first()
         )
         if user_link:
-            user_link.provider_subject = google_sub
-            user_link.provider_email = google_email
-            user_link.updated_at = utc_now()
-            db.commit()
-            db.refresh(user_link)
-            link_record = user_link
-        else:
-            link_record = UserExternalIdentity(
-                user_id=current_user.id,
-                provider="google",
-                provider_subject=google_sub,
-                provider_email=google_email,
-                created_at=utc_now(),
-                updated_at=utc_now(),
+            # If already linked to the exact same Google identity, return idempotently
+            if user_link.provider_subject == google_sub:
+                return user_link
+
+            # Current user already has a different Google identity linked: REJECT silent replacement
+            log_audit_event(
+                db=db,
+                case_id=None,
+                event_type="OAUTH_LINK_DENIED",
+                details=f"User '{current_user.id}' already has Google identity '{user_link.provider_subject}' linked. Replacement with '{google_sub}' rejected.",
+                actor_id=current_user.id,
+                actor_name=current_user.name,
             )
-            db.add(link_record)
-            db.commit()
-            db.refresh(link_record)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A Google account is already linked to this investigator profile. It must be explicitly unlinked before another Google account can be linked."
+            )
+
+        link_record = UserExternalIdentity(
+            user_id=current_user.id,
+            provider="google",
+            provider_subject=google_sub,
+            provider_email=google_email,
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        )
+        db.add(link_record)
+        db.commit()
+        db.refresh(link_record)
 
         log_audit_event(
             db=db,

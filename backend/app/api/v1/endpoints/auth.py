@@ -423,21 +423,25 @@ def handle_google_oauth_callback(
             code_verifier=oauth_state.code_verifier,
             redirect_uri=oauth_state.redirect_uri,
         )
-        import inspect
-        verify_fn = GoogleOAuthService.verify_google_identity
-        sig = inspect.signature(verify_fn)
-        call_kwargs = {}
-        if "expected_nonce" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
-            call_kwargs["expected_nonce"] = oauth_state.nonce
-        if "db" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
-            call_kwargs["db"] = db
+        id_token = tokens.get("id_token")
+        if not id_token or not str(id_token).strip():
+            log_audit_event(
+                db=db,
+                case_id=None,
+                event_type="OAUTH_IDENTITY_VERIFICATION_FAILED",
+                details="Google token response omitted mandatory id_token.",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Google token response missing required OIDC ID token. Authentication failed closed."
+            )
 
-        identity = verify_fn(
+        identity = GoogleOAuthService.verify_google_identity(
             access_token=tokens.get("access_token") or "",
-            id_token=tokens.get("id_token"),
-            **call_kwargs,
+            id_token=str(id_token).strip(),
+            expected_nonce=oauth_state.nonce,
+            db=db,
         )
-
 
         if oauth_state.purpose == "LINK":
             target_user = db.query(User).filter(User.id == oauth_state.target_user_id).first()
@@ -447,8 +451,8 @@ def handle_google_oauth_callback(
                     detail="Target investigator account for link transaction does not exist."
                 )
 
-            # Global check: ensure Google sub is not already linked to another investigator account
-            existing_link = (
+            # Global check 1: ensure Google sub is not already linked to another investigator account
+            existing_sub_link = (
                 db.query(UserExternalIdentity)
                 .filter(
                     UserExternalIdentity.provider == "google",
@@ -456,18 +460,41 @@ def handle_google_oauth_callback(
                 )
                 .first()
             )
-            if existing_link and existing_link.user_id != target_user.id:
+            if existing_sub_link and existing_sub_link.user_id != target_user.id:
                 log_audit_event(
                     db=db,
                     case_id=None,
                     event_type="OAUTH_LINK_DENIED",
-                    details=f"Google sub '{identity['sub']}' is already linked to another account '{existing_link.user_id}'.",
+                    details=f"Google sub '{identity['sub']}' is already linked to another account '{existing_sub_link.user_id}'.",
                     actor_id=target_user.id,
                     actor_name=target_user.name,
                 )
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="This Google account is already linked to another investigator profile."
+                )
+
+            # Global check 2: ensure target_user does not already have a different Google identity linked
+            existing_user_link = (
+                db.query(UserExternalIdentity)
+                .filter(
+                    UserExternalIdentity.provider == "google",
+                    UserExternalIdentity.user_id == target_user.id
+                )
+                .first()
+            )
+            if existing_user_link and existing_user_link.provider_subject != identity["sub"]:
+                log_audit_event(
+                    db=db,
+                    case_id=None,
+                    event_type="OAUTH_LINK_DENIED",
+                    details=f"User '{target_user.id}' already has Google sub '{existing_user_link.provider_subject}' linked. Replacement with '{identity['sub']}' rejected.",
+                    actor_id=target_user.id,
+                    actor_name=target_user.name,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="A Google account is already linked to this investigator profile. It must be explicitly unlinked before another Google account can be linked."
                 )
 
             ticket = GoogleOAuthService.create_exchange_code(

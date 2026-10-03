@@ -186,6 +186,7 @@ def test_oauth_full_flow_new_user_and_exchange(monkeypatch):
             state=valid_state,
             provider="google",
             code_verifier="verifier_token_secret_12345",
+            nonce="verifier_nonce_12345",
             redirect_uri=settings.EFFECTIVE_GOOGLE_REDIRECT_URI,
             expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
             is_consumed=False,
@@ -201,7 +202,9 @@ def test_oauth_full_flow_new_user_and_exchange(monkeypatch):
         assert code_verifier == "verifier_token_secret_12345"
         return {"access_token": "mock_google_access_token", "id_token": "mock_id_token"}
 
-    def mock_verify_identity(access_token, id_token=None, http_client=None):
+    def mock_verify_identity(access_token, id_token=None, expected_nonce=None, db=None, http_client=None):
+        assert id_token == "mock_id_token"
+        assert expected_nonce == "verifier_nonce_12345"
         return {
             "sub": google_sub,
             "email": test_email,
@@ -303,6 +306,7 @@ def test_oauth_scenario_c_prevents_silent_account_takeover(monkeypatch):
             state=valid_state,
             provider="google",
             code_verifier="verifier_token_secret_takeover",
+            nonce="mock_scenario_c_nonce",
             redirect_uri=settings.EFFECTIVE_GOOGLE_REDIRECT_URI,
             expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
             is_consumed=False,
@@ -313,9 +317,11 @@ def test_oauth_scenario_c_prevents_silent_account_takeover(monkeypatch):
         db.close()
 
     def mock_exchange_tokens(code, code_verifier, redirect_uri, http_client=None):
-        return {"access_token": "mock_google_access_token"}
+        return {"access_token": "mock_google_access_token", "id_token": "mock_id_token"}
 
-    def mock_verify_identity(access_token, id_token=None, http_client=None):
+    def mock_verify_identity(access_token, id_token=None, expected_nonce=None, db=None, http_client=None):
+        assert id_token == "mock_id_token"
+        assert expected_nonce == "mock_scenario_c_nonce"
         return {
             "sub": "unlinked_google_sub_attempt",
             "email": target_email,
@@ -576,6 +582,7 @@ def test_id_token_claims_fail_closed_checks(monkeypatch):
                     "email": target_email,
                     "email_verified": True,
                     "exp": int(time.time()) + 3600,
+                    "nonce": "expected_nonce_val",
                 }
                 if tokeninfo_overrides:
                     data.update(tokeninfo_overrides)
@@ -586,37 +593,37 @@ def test_id_token_claims_fail_closed_checks(monkeypatch):
     # 1. Tokeninfo HTTP failure (e.g. 400 or 500) fails closed
     c_fail = make_mock_client(tokeninfo_status=400)
     with pytest.raises(Exception) as exc:
-        GoogleOAuthService.verify_google_identity(access_token="tok", id_token="id", http_client=c_fail)
+        GoogleOAuthService.verify_google_identity(access_token="tok", id_token="id", expected_nonce="expected_nonce_val", http_client=c_fail)
     assert "token validation failed" in str(exc.value.detail).lower()
 
     # 2. Wrong issuer
     c_iss = make_mock_client(tokeninfo_overrides={"iss": "https://attacker.example.com"})
     with pytest.raises(Exception) as exc:
-        GoogleOAuthService.verify_google_identity(access_token="tok", id_token="id", http_client=c_iss)
+        GoogleOAuthService.verify_google_identity(access_token="tok", id_token="id", expected_nonce="expected_nonce_val", http_client=c_iss)
     assert "issuer mismatch" in str(exc.value.detail).lower()
 
     # 3. Wrong audience
     c_aud = make_mock_client(tokeninfo_overrides={"aud": "unauthorized-client-id"})
     with pytest.raises(Exception) as exc:
-        GoogleOAuthService.verify_google_identity(access_token="tok", id_token="id", http_client=c_aud)
+        GoogleOAuthService.verify_google_identity(access_token="tok", id_token="id", expected_nonce="expected_nonce_val", http_client=c_aud)
     assert "audience mismatch" in str(exc.value.detail).lower()
 
     # 4. Expired token
     c_exp = make_mock_client(tokeninfo_overrides={"exp": int(time.time()) - 300})
     with pytest.raises(Exception) as exc:
-        GoogleOAuthService.verify_google_identity(access_token="tok", id_token="id", http_client=c_exp)
+        GoogleOAuthService.verify_google_identity(access_token="tok", id_token="id", expected_nonce="expected_nonce_val", http_client=c_exp)
     assert "expired" in str(exc.value.detail).lower()
 
     # 5. Missing or mismatched subject
     c_sub = make_mock_client(tokeninfo_overrides={"sub": "different_subject_id"})
     with pytest.raises(Exception) as exc:
-        GoogleOAuthService.verify_google_identity(access_token="tok", id_token="id", http_client=c_sub)
+        GoogleOAuthService.verify_google_identity(access_token="tok", id_token="id", expected_nonce="expected_nonce_val", http_client=c_sub)
     assert "subject mismatch" in str(exc.value.detail).lower()
 
     # 6. Unverified email (in tokeninfo)
     c_unverified = make_mock_client(tokeninfo_overrides={"email_verified": False})
     with pytest.raises(Exception) as exc:
-        GoogleOAuthService.verify_google_identity(access_token="tok", id_token="id", http_client=c_unverified)
+        GoogleOAuthService.verify_google_identity(access_token="tok", id_token="id", expected_nonce="expected_nonce_val", http_client=c_unverified)
     assert "not verified" in str(exc.value.detail).lower()
 
 
@@ -827,4 +834,488 @@ def test_callback_xss_protection_prevents_script_breakout():
     # Security check 3: Security headers present
     assert res.headers.get("x-content-type-options") == "nosniff"
     assert "no-store" in res.headers.get("cache-control", "").lower()
+
+
+# ============================================================================
+# TARGETED SECURITY HARDENING: TEST GROUPS A THROUGH G
+# ============================================================================
+
+
+def test_group_a_existing_google_identity_silent_replacement_rejected():
+    """
+    TEST GROUP A — EXISTING GOOGLE IDENTITY
+    User A already has Google identity A (sub-A).
+    Attempting to link Google identity B (sub-B) to User A MUST be rejected with HTTP 409 Conflict.
+    Assert:
+    - Existing identity remains Google A
+    - provider_subject remains unchanged (sub-A)
+    - No second Google identity row is created (count remains 1)
+    - No ownership changes
+    """
+    db = SessionLocal()
+    email_a = f"test_a_{uuid.uuid4().hex[:6]}@agency.gov"
+    pass_a = "StrongPasswordA123!"
+    sub_a = f"sub_google_A_{uuid.uuid4().hex[:8]}"
+    sub_b = f"sub_google_B_{uuid.uuid4().hex[:8]}"
+
+    try:
+        user_a = User(
+            email=email_a,
+            name="Investigator Alpha",
+            organization="Forensics",
+            role="INVESTIGATOR",
+            is_active=True,
+            password_hash=hash_password(pass_a),
+        )
+        db.add(user_a)
+        db.commit()
+        db.refresh(user_a)
+
+        # Existing link to Google Identity A
+        identity_a = UserExternalIdentity(
+            user_id=user_a.id,
+            provider="google",
+            provider_subject=sub_a,
+            provider_email=email_a,
+        )
+        db.add(identity_a)
+        db.commit()
+        db.refresh(identity_a)
+        original_identity_id = identity_a.id
+
+        token_a = create_access_token(user_id=user_a.id, email=user_a.email, role=user_a.role)
+
+        # 1. Test via service layer directly
+        with pytest.raises(Exception) as exc:
+            GoogleOAuthService.link_google_account_to_user(
+                db=db,
+                current_user=user_a,
+                google_sub=sub_b,
+                google_email="other_email@example.com",
+            )
+        assert exc.value.status_code == 409
+        assert "already linked" in exc.value.detail.lower()
+
+        # 2. Test via endpoint with exchange ticket
+        ticket_for_b = GoogleOAuthService.create_exchange_code(
+            db=db,
+            purpose="LINK",
+            target_user_id=user_a.id,
+            google_sub=sub_b,
+            google_email="other_email@example.com",
+        )
+
+        res = client.post(
+            "/api/v1/auth/google/link",
+            json={"exchange_code": ticket_for_b, "password": pass_a},
+            headers={"Authorization": f"Bearer {token_a}"},
+        )
+        assert res.status_code == 409
+        assert "already linked" in res.json()["detail"].lower()
+
+        # 3. Explicitly assert DB state after failure
+        db.expire_all()
+        identities = (
+            db.query(UserExternalIdentity)
+            .filter(UserExternalIdentity.user_id == user_a.id)
+            .all()
+        )
+        assert len(identities) == 1
+        assert identities[0].id == original_identity_id
+        assert identities[0].provider_subject == sub_a
+        assert identities[0].provider == "google"
+        assert identities[0].user_id == user_a.id
+    finally:
+        db.close()
+
+
+def test_group_b_google_identity_belongs_to_another_user():
+    """
+    TEST GROUP B — GOOGLE IDENTITY BELONGS TO ANOTHER USER
+    User A owns Google identity A.
+    User B attempts to link Google identity A.
+    Expected:
+    - Conflict (HTTP 409)
+    - Ownership remains User A
+    - User B receives no Google identity (User B links count remains 0)
+    """
+    db = SessionLocal()
+    email_a = f"owner_a_{uuid.uuid4().hex[:6]}@agency.gov"
+    email_b = f"intruder_b_{uuid.uuid4().hex[:6]}@agency.gov"
+    pass_a = "StrongPassA123!"
+    pass_b = "StrongPassB456!"
+    sub_a = f"sub_google_A_{uuid.uuid4().hex[:8]}"
+
+    try:
+        user_a = User(
+            email=email_a,
+            name="Investigator Owner A",
+            organization="Forensics",
+            role="INVESTIGATOR",
+            is_active=True,
+            password_hash=hash_password(pass_a),
+        )
+        user_b = User(
+            email=email_b,
+            name="Investigator B",
+            organization="Forensics",
+            role="INVESTIGATOR",
+            is_active=True,
+            password_hash=hash_password(pass_b),
+        )
+        db.add_all([user_a, user_b])
+        db.commit()
+        db.refresh(user_a)
+        db.refresh(user_b)
+
+        # User A owns Google Identity A
+        identity_a = UserExternalIdentity(
+            user_id=user_a.id,
+            provider="google",
+            provider_subject=sub_a,
+            provider_email=email_a,
+        )
+        db.add(identity_a)
+        db.commit()
+
+        token_b = create_access_token(user_id=user_b.id, email=user_b.email, role=user_b.role)
+
+        # 1. Test via service layer directly
+        with pytest.raises(Exception) as exc:
+            GoogleOAuthService.link_google_account_to_user(
+                db=db,
+                current_user=user_b,
+                google_sub=sub_a,
+                google_email=email_a,
+            )
+        assert exc.value.status_code == 409
+        assert "already linked to another investigator" in exc.value.detail.lower()
+
+        # 2. Test via endpoint
+        ticket = GoogleOAuthService.create_exchange_code(
+            db=db,
+            purpose="LINK",
+            target_user_id=user_b.id,
+            google_sub=sub_a,
+            google_email=email_a,
+        )
+        res = client.post(
+            "/api/v1/auth/google/link",
+            json={"exchange_code": ticket, "password": pass_b},
+            headers={"Authorization": f"Bearer {token_b}"},
+        )
+        assert res.status_code == 409
+        assert "already linked to another investigator" in res.json()["detail"].lower()
+
+        # 3. Explicitly assert DB state
+        db.expire_all()
+        owner_record = (
+            db.query(UserExternalIdentity)
+            .filter(UserExternalIdentity.provider_subject == sub_a)
+            .first()
+        )
+        assert owner_record is not None
+        assert owner_record.user_id == user_a.id
+
+        user_b_links = (
+            db.query(UserExternalIdentity)
+            .filter(UserExternalIdentity.user_id == user_b.id)
+            .all()
+        )
+        assert len(user_b_links) == 0
+    finally:
+        db.close()
+
+
+def test_group_c_missing_id_token_fails_closed(monkeypatch):
+    """
+    TEST GROUP C — MISSING ID TOKEN
+    Mock token exchange response has valid access_token, token_type, expires_in, BUT NO id_token.
+    Expected:
+    - Authentication fails closed with HTTP 400
+    - No ADFIP user is created
+    - No external identity is created
+    - No ADFIP JWT is issued (no exchange ticket)
+    """
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", "mock-client-id")
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_SECRET", "mock-client-secret")
+
+    db = SessionLocal()
+    st_val = f"missing_id_token_state_{uuid.uuid4().hex}"
+    unique_marker = uuid.uuid4().hex[:8]
+    test_email = f"missing_id_{unique_marker}@agency.gov"
+    try:
+        state_obj = OAuthState(
+            state=st_val,
+            provider="google",
+            code_verifier="test_code_verifier_123",
+            nonce="test_nonce_c",
+            redirect_uri=settings.EFFECTIVE_GOOGLE_REDIRECT_URI,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+            is_consumed=False,
+        )
+        db.add(state_obj)
+        db.commit()
+    finally:
+        db.close()
+
+    # Mock token response without id_token
+    def mock_exchange_without_id_token(code, code_verifier, redirect_uri, http_client=None):
+        return {
+            "access_token": "ya29.mock_access_token_sample",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+        }
+
+    monkeypatch.setattr(GoogleOAuthService, "exchange_code_for_tokens", mock_exchange_without_id_token)
+
+    res = client.get(
+        "/api/v1/auth/google/callback",
+        params={"code": "mock_code", "state": st_val},
+    )
+    assert res.status_code == 400
+    assert "ADFIP_OAUTH_ERROR" in res.text
+    assert "id token" in res.text.lower() or "missing" in res.text.lower()
+
+    # Verify no user, no external identity, no exchange code
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == test_email).first()
+        assert user is None
+
+        # Verify no unconsumed exchange code exists for this test email
+        tickets = db.query(OAuthExchangeCode).filter(OAuthExchangeCode.is_consumed == False).all()
+        assert len([t for t in tickets if t.user and t.user.email == test_email]) == 0
+    finally:
+        db.close()
+
+
+def test_group_d_missing_nonce_fails_closed(monkeypatch):
+    """
+    TEST GROUP D — MISSING NONCE
+    Provide a cryptographically valid / test-valid ID token whose nonce is missing.
+    Expected:
+    - Authentication fails closed with HTTP 400
+    """
+    import httpx
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", "mock-client-id.apps.googleusercontent.com")
+
+    # Mock tokeninfo that omits the nonce claim
+    def handler(request: httpx.Request) -> httpx.Response:
+        url_str = str(request.url)
+        if "tokeninfo" in url_str:
+            return httpx.Response(200, json={
+                "aud": settings.GOOGLE_CLIENT_ID,
+                "iss": "https://accounts.google.com",
+                "sub": "sub_d_test_123",
+                "email": "investigator_d@agency.gov",
+                "email_verified": True,
+                "exp": int(time.time()) + 3600,
+                # nonce omitted!
+            })
+        elif "userinfo" in url_str:
+            return httpx.Response(200, json={
+                "sub": "sub_d_test_123",
+                "email": "investigator_d@agency.gov",
+                "email_verified": True,
+            })
+        return httpx.Response(404)
+
+    mock_client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    with pytest.raises(Exception) as exc:
+        GoogleOAuthService.verify_google_identity(
+            access_token="mock_tok",
+            id_token="mock_id_token",
+            expected_nonce="expected_transaction_nonce_d",
+            http_client=mock_client,
+        )
+    assert exc.value.status_code == 400
+    assert "nonce mismatch" in exc.value.detail.lower() or "nonce" in exc.value.detail.lower()
+
+
+def test_group_e_wrong_nonce_fails_closed(monkeypatch):
+    """
+    TEST GROUP E — WRONG NONCE
+    Provide a valid ID token with nonce = "attacker_nonce"
+    while stored OAuth transaction contains nonce = "expected_nonce_e".
+    Expected:
+    - Authentication fails closed with HTTP 400
+    """
+    import httpx
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", "mock-client-id.apps.googleusercontent.com")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url_str = str(request.url)
+        if "tokeninfo" in url_str:
+            return httpx.Response(200, json={
+                "aud": settings.GOOGLE_CLIENT_ID,
+                "iss": "https://accounts.google.com",
+                "sub": "sub_e_test_456",
+                "email": "investigator_e@agency.gov",
+                "email_verified": True,
+                "exp": int(time.time()) + 3600,
+                "nonce": "attacker_or_other_nonce_999",
+            })
+        elif "userinfo" in url_str:
+            return httpx.Response(200, json={
+                "sub": "sub_e_test_456",
+                "email": "investigator_e@agency.gov",
+                "email_verified": True,
+            })
+        return httpx.Response(404)
+
+    mock_client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    with pytest.raises(Exception) as exc:
+        GoogleOAuthService.verify_google_identity(
+            access_token="mock_tok",
+            id_token="mock_id_token",
+            expected_nonce="expected_nonce_e",
+            http_client=mock_client,
+        )
+    assert exc.value.status_code == 400
+    assert "nonce mismatch" in exc.value.detail.lower()
+
+
+def test_group_f_valid_id_token_and_correct_nonce(monkeypatch):
+    """
+    TEST GROUP F — VALID ID TOKEN + CORRECT NONCE
+    Provide a valid test ID token containing:
+    - valid issuer
+    - valid audience
+    - valid subject
+    - valid email
+    - email_verified = true
+    - valid expiration
+    - correct transaction nonce
+    Expected:
+    - Authentication succeeds
+    """
+    import httpx
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", "test-client-id.apps.googleusercontent.com")
+
+    expected_nonce = "legit_transaction_nonce_fff"
+    target_sub = f"google_sub_f_{uuid.uuid4().hex[:8]}"
+    target_email = f"investigator_f_{uuid.uuid4().hex[:6]}@agency.gov"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url_str = str(request.url)
+        if "tokeninfo" in url_str:
+            return httpx.Response(200, json={
+                "aud": settings.GOOGLE_CLIENT_ID,
+                "iss": "https://accounts.google.com",
+                "sub": target_sub,
+                "email": target_email,
+                "email_verified": True,
+                "exp": int(time.time()) + 3600,
+                "nonce": expected_nonce,
+                "name": "Detective Frank",
+                "picture": "https://avatar.example.com/frank.png",
+            })
+        elif "userinfo" in url_str:
+            return httpx.Response(200, json={
+                "sub": target_sub,
+                "email": target_email,
+                "email_verified": True,
+                "name": "Detective Frank",
+                "picture": "https://avatar.example.com/frank.png",
+            })
+        return httpx.Response(404)
+
+    mock_client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    identity = GoogleOAuthService.verify_google_identity(
+        access_token="valid_access_token_f",
+        id_token="valid_id_token_f",
+        expected_nonce=expected_nonce,
+        http_client=mock_client,
+    )
+    assert identity["sub"] == target_sub
+    assert identity["email"] == target_email
+    assert identity["name"] == "Detective Frank"
+    assert identity["picture"] == "https://avatar.example.com/frank.png"
+
+
+def test_group_g_userinfo_subject_and_email_mismatch_fails_closed(monkeypatch):
+    """
+    TEST GROUP G — USERINFO SUBJECT MISMATCH & EMAIL MISMATCH
+    ID token has authoritative subject google-sub-A and email user_a@agency.gov.
+    If supplementary userinfo has different sub or email:
+    Expected:
+    - Authentication fails closed with HTTP 400
+    - Userinfo cannot override ID token identity
+    """
+    import httpx
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", "test-client-id.apps.googleusercontent.com")
+
+    expected_nonce = "test_nonce_g"
+    id_sub = "google-sub-authoritative-A"
+    id_email = "user_a@agency.gov"
+
+    # Sub-case 1: Subject mismatch
+    def handler_sub_mismatch(request: httpx.Request) -> httpx.Response:
+        url_str = str(request.url)
+        if "tokeninfo" in url_str:
+            return httpx.Response(200, json={
+                "aud": settings.GOOGLE_CLIENT_ID,
+                "iss": "https://accounts.google.com",
+                "sub": id_sub,
+                "email": id_email,
+                "email_verified": True,
+                "exp": int(time.time()) + 3600,
+                "nonce": expected_nonce,
+            })
+        elif "userinfo" in url_str:
+            return httpx.Response(200, json={
+                "sub": "google-sub-tampered-B",  # MISMATCH!
+                "email": id_email,
+                "email_verified": True,
+            })
+        return httpx.Response(404)
+
+    c_sub_mismatch = httpx.Client(transport=httpx.MockTransport(handler_sub_mismatch))
+
+    with pytest.raises(Exception) as exc1:
+        GoogleOAuthService.verify_google_identity(
+            access_token="tok_sub_mismatch",
+            id_token="id_tok",
+            expected_nonce=expected_nonce,
+            http_client=c_sub_mismatch,
+        )
+    assert exc1.value.status_code == 400
+    assert "subject mismatch" in exc1.value.detail.lower()
+
+    # Sub-case 2: Email mismatch
+    def handler_email_mismatch(request: httpx.Request) -> httpx.Response:
+        url_str = str(request.url)
+        if "tokeninfo" in url_str:
+            return httpx.Response(200, json={
+                "aud": settings.GOOGLE_CLIENT_ID,
+                "iss": "https://accounts.google.com",
+                "sub": id_sub,
+                "email": id_email,
+                "email_verified": True,
+                "exp": int(time.time()) + 3600,
+                "nonce": expected_nonce,
+            })
+        elif "userinfo" in url_str:
+            return httpx.Response(200, json={
+                "sub": id_sub,
+                "email": "attacker@evil.com",  # MISMATCH!
+                "email_verified": True,
+            })
+        return httpx.Response(404)
+
+    c_email_mismatch = httpx.Client(transport=httpx.MockTransport(handler_email_mismatch))
+
+    with pytest.raises(Exception) as exc2:
+        GoogleOAuthService.verify_google_identity(
+            access_token="tok_email_mismatch",
+            id_token="id_tok",
+            expected_nonce=expected_nonce,
+            http_client=c_email_mismatch,
+        )
+    assert exc2.value.status_code == 400
+    assert "email mismatch" in exc2.value.detail.lower()
 
