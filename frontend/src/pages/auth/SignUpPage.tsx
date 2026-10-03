@@ -40,7 +40,7 @@ const getPasswordStrength = (pass: string): StrengthResult => {
 };
 
 export const SignUpPage: React.FC = () => {
-  const { status } = useAuthStore();
+  const { status, login } = useAuthStore();
   const navigate = useNavigate();
 
   const [fullName, setFullName] = useState('');
@@ -141,11 +141,83 @@ export const SignUpPage: React.FC = () => {
     }
   };
 
-  const handleSocialSignUp = (provider: 'Google' | 'Microsoft') => {
-    setSocialNotice(
-      `${provider} SSO is not configured for this deployment. Complete the registration form below.`
-    );
+  const handleGoogleSignUp = async () => {
+    setSocialNotice(null);
+    setGeneralError(null);
+    setLoading(true);
+
+    try {
+      const res = await authService.getGoogleLoginUrl();
+      if (!res.authorization_url) {
+        setSocialNotice('Google OAuth is not configured for this deployment. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in server settings.');
+        setLoading(false);
+        return;
+      }
+
+      const width = 520;
+      const height = 660;
+      const left = window.screenX + (window.outerWidth - width) / 2;
+      const top = window.screenY + (window.outerHeight - height) / 2;
+
+      const popup = window.open(
+        res.authorization_url,
+        'adfip_google_oauth_signup',
+        `width=${width},height=${height},left=${left},top=${top},status=no,menubar=no,toolbar=no,location=yes`
+      );
+
+      if (!popup || popup.closed || typeof popup.closed === 'undefined') {
+        window.location.href = res.authorization_url;
+        return;
+      }
+
+      const handleMessage = async (event: MessageEvent) => {
+        if (event.data?.type === 'ADFIP_OAUTH_SUCCESS') {
+          window.removeEventListener('message', handleMessage);
+          const exchangeCode = event.data.code;
+          try {
+            const tokenRes = await authService.exchangeGoogleCode(exchangeCode);
+            const token = tokenRes.access_token;
+            const user = tokenRes.user || (await authService.me(token));
+            login(token, user);
+            navigate('/dashboard', { replace: true });
+          } catch (err: unknown) {
+            const msg = normalizeError(err);
+            setGeneralError(msg || 'Failed to complete Google registration.');
+          } finally {
+            setLoading(false);
+          }
+        } else if (event.data?.type === 'ADFIP_OAUTH_ERROR') {
+          window.removeEventListener('message', handleMessage);
+          setGeneralError(event.data.error || 'Google registration was cancelled or failed.');
+          setLoading(false);
+        }
+      };
+
+      window.addEventListener('message', handleMessage);
+
+      const checkClosedInterval = setInterval(() => {
+        if (popup.closed) {
+          clearInterval(checkClosedInterval);
+          window.removeEventListener('message', handleMessage);
+          setLoading(false);
+        }
+      }, 1000);
+
+    } catch (err: unknown) {
+      setLoading(false);
+      const msg = normalizeError(err);
+      if (msg.includes('not configured')) {
+        setSocialNotice('Google OAuth is not configured for this deployment. Please configure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in environment settings.');
+      } else {
+        setGeneralError(msg || 'Unable to reach Google OAuth service. Please verify server connection.');
+      }
+    }
   };
+
+  const handleMicrosoftSignUp = () => {
+    setSocialNotice('Microsoft SSO is not configured for this deployment. Complete the registration form below or use Google.');
+  };
+
 
   return (
     <div className="min-h-screen bg-white flex items-center justify-center p-4 sm:p-6 py-10 overflow-y-auto">
@@ -400,8 +472,8 @@ export const SignUpPage: React.FC = () => {
 
         {/* Social Buttons: Google & Microsoft */}
         <SocialButtons
-          onGoogle={() => handleSocialSignUp('Google')}
-          onMicrosoft={() => handleSocialSignUp('Microsoft')}
+          onGoogle={handleGoogleSignUp}
+          onMicrosoft={handleMicrosoftSignUp}
           disabled={loading}
         />
         {socialNotice && (

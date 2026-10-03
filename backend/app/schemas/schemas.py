@@ -2382,3 +2382,35 @@ class CaseClosureResponse(BaseModel):
     closure_metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
+# Google OAuth 2.0 Schemas
+class GoogleAuthUrlResponse(BaseModel):
+    authorization_url: str
+    state: str
+    is_configured: bool = True
+
+
+class OAuthStatusResponse(BaseModel):
+    google_configured: bool
+    client_id_configured: bool
+    redirect_uri: str
+
+
+class OAuthExchangeRequest(BaseModel):
+    code: str
+
+
+class AccountLinkRequest(BaseModel):
+    exchange_code: str
+    password: str
+
+
+class UserExternalIdentityResponse(BaseModel):
+    id: str
+    provider: str
+    provider_subject: str
+    provider_email: Optional[str] = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+

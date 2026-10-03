@@ -3,6 +3,7 @@ import { createBrowserRouter, Navigate, Outlet } from 'react-router-dom';
 import { AppLayout } from '../components/layout/AppLayout';
 import { SignInPage } from '../pages/auth/SignInPage';
 import { SignUpPage } from '../pages/auth/SignUpPage';
+import { AuthCallbackPage } from '../pages/auth/AuthCallbackPage';
 import { useAuthStore } from '../stores/authStore';
 import { Spinner } from '../components/ui/Spinner';
 
@@ -55,6 +56,7 @@ export const router = createBrowserRouter([
   // Public auth & legal routes
   { path: '/signin', element: <SignInPage /> },
   { path: '/signup', element: <SignUpPage /> },
+  { path: '/auth/callback', element: <AuthCallbackPage /> },
   { path: '/login', element: <Navigate to="/signin" replace /> },
   { path: '/terms', element: <PageSuspense><TermsPage /></PageSuspense> },
   { path: '/privacy', element: <PageSuspense><PrivacyPage /></PageSuspense> },

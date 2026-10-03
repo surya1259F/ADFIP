@@ -11,7 +11,8 @@ from sqlalchemy import (
     ForeignKey,
     JSON,
     Boolean,
-    BigInteger
+    BigInteger,
+    UniqueConstraint
 )
 from sqlalchemy.orm import relationship
 from backend.app.core.database import Base
@@ -42,6 +43,8 @@ class User(Base):
     audit_events = relationship("AuditEvent", back_populates="actor")
     ai_provider_configs = relationship("AIProviderConfigRecord", back_populates="user", cascade="all, delete-orphan")
     investigator_reviews = relationship("InvestigatorReviewRecord", back_populates="investigator")
+    external_identities = relationship("UserExternalIdentity", back_populates="user", cascade="all, delete-orphan")
+
 
     @property
     def roles(self):
@@ -1930,3 +1933,63 @@ class RevokedToken(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     jti = Column(String, unique=True, nullable=False, index=True)
     revoked_at = Column(DateTime, default=utc_now, nullable=False)
+
+
+class UserExternalIdentity(Base):
+    """
+    Links external OAuth providers (e.g., Google) to ADFIP investigator accounts.
+    Enforces a unique constraint on (provider, provider_subject) to prevent duplicate links.
+    """
+    __tablename__ = "user_external_identities"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider = Column(String(50), nullable=False, index=True)
+    provider_subject = Column(String(255), nullable=False, index=True)
+    provider_email = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+    user = relationship("User", back_populates="external_identities")
+
+    __table_args__ = (
+        UniqueConstraint("provider", "provider_subject", name="uq_user_external_identity_provider_sub"),
+    )
+
+
+class OAuthState(Base):
+    """
+    Cryptographically secure, single-use OAuth 2.0 state tokens for CSRF protection.
+    Includes PKCE code_verifier storage and a strict expiration window.
+    """
+    __tablename__ = "oauth_states"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    state = Column(String(128), unique=True, nullable=False, index=True)
+    provider = Column(String(50), default="google", nullable=False)
+    redirect_uri = Column(Text, nullable=False)
+    code_verifier = Column(String(128), nullable=True)
+    frontend_redirect_url = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    is_consumed = Column(Boolean, default=False, nullable=False)
+    consumed_at = Column(DateTime, nullable=True)
+
+
+class OAuthExchangeCode(Base):
+    """
+    Short-lived (60s), single-use exchange ticket issued upon successful OAuth callback.
+    Allows desktop/browser frontend to claim the authenticated JWT via POST without exposing tokens in URLs.
+    """
+    __tablename__ = "oauth_exchange_codes"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    code = Column(String(128), unique=True, nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    is_consumed = Column(Boolean, default=False, nullable=False)
+    consumed_at = Column(DateTime, nullable=True)
+
+    user = relationship("User")
+

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { LogIn, Mail, CheckCircle2 } from 'lucide-react';
 import { AuthCard } from '../../components/auth/AuthCard';
@@ -81,11 +81,97 @@ export const SignInPage: React.FC = () => {
     }
   };
 
-  const handleSocialSignIn = (provider: 'Google' | 'Microsoft') => {
-    setSocialNotice(
-      `${provider} SSO is not configured for this deployment. Use your investigator credentials to sign in.`
-    );
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const err = params.get('error');
+    if (err) {
+      setErrors((prev) => ({ ...prev, general: decodeURIComponent(err) }));
+    }
+  }, [location.search]);
+
+  const handleGoogleSignIn = async () => {
+    setSocialNotice(null);
+    setErrors({});
+    setLoading(true);
+
+    try {
+      const res = await authService.getGoogleLoginUrl();
+      if (!res.authorization_url) {
+        setSocialNotice('Google OAuth is not configured for this deployment. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in server settings.');
+        setLoading(false);
+        return;
+      }
+
+      // Calculate centered popup coordinates
+      const width = 520;
+      const height = 660;
+      const left = window.screenX + (window.outerWidth - width) / 2;
+      const top = window.screenY + (window.outerHeight - height) / 2;
+
+      const popup = window.open(
+        res.authorization_url,
+        'adfip_google_oauth',
+        `width=${width},height=${height},left=${left},top=${top},status=no,menubar=no,toolbar=no,location=yes`
+      );
+
+      if (!popup || popup.closed || typeof popup.closed === 'undefined') {
+        // Browser blocked popup - fallback to full-page redirect
+        window.location.href = res.authorization_url;
+        return;
+      }
+
+      const handleMessage = async (event: MessageEvent) => {
+        if (event.data?.type === 'ADFIP_OAUTH_SUCCESS') {
+          window.removeEventListener('message', handleMessage);
+          const exchangeCode = event.data.code;
+          try {
+            const tokenRes = await authService.exchangeGoogleCode(exchangeCode);
+            const token = tokenRes.access_token;
+            const user = tokenRes.user || (await authService.me(token));
+            login(token, user);
+            navigate('/dashboard', { replace: true });
+          } catch (err: unknown) {
+            const msg = normalizeError(err);
+            setErrors((prev) => ({ ...prev, general: msg || 'Failed to complete Google authentication.' }));
+          } finally {
+            setLoading(false);
+          }
+        } else if (event.data?.type === 'ADFIP_OAUTH_ERROR') {
+          window.removeEventListener('message', handleMessage);
+          setErrors((prev) => ({ ...prev, general: event.data.error || 'Google authentication was cancelled or failed.' }));
+          setLoading(false);
+        }
+      };
+
+      window.addEventListener('message', handleMessage);
+
+      // Heartbeat monitor if user closes popup window
+      const checkClosedInterval = setInterval(() => {
+        if (popup.closed) {
+          clearInterval(checkClosedInterval);
+          window.removeEventListener('message', handleMessage);
+          setLoading(false);
+        }
+      }, 1000);
+
+    } catch (err: unknown) {
+      setLoading(false);
+      const msg = normalizeError(err);
+      if (msg.includes('not configured')) {
+        setSocialNotice('Google OAuth is not configured for this deployment. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in server configuration.');
+      } else {
+        setErrors((prev) => ({
+          ...prev,
+          general: msg || 'Unable to reach Google OAuth service. Please check server connectivity.',
+        }));
+      }
+    }
   };
+
+  const handleMicrosoftSignIn = () => {
+    setSocialNotice('Microsoft SSO is not configured for this deployment. Use your investigator credentials or Google sign in.');
+  };
+
 
   const handleForgotPassword = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -208,8 +294,8 @@ export const SignInPage: React.FC = () => {
 
         {/* 10. Social Buttons: Google & Microsoft */}
         <SocialButtons
-          onGoogle={() => handleSocialSignIn('Google')}
-          onMicrosoft={() => handleSocialSignIn('Microsoft')}
+          onGoogle={handleGoogleSignIn}
+          onMicrosoft={handleMicrosoftSignIn}
           disabled={loading}
         />
         {socialNotice && (

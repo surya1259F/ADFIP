@@ -104,6 +104,25 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
     PASSWORD_MIN_LENGTH: int = 8
 
+    # Google OAuth 2.0 Settings
+    GOOGLE_CLIENT_ID: Optional[str] = None
+    GOOGLE_CLIENT_SECRET: Optional[str] = None
+    GOOGLE_REDIRECT_URI: Optional[str] = None
+
+    @property
+    def EFFECTIVE_GOOGLE_REDIRECT_URI(self) -> str:
+        if self.GOOGLE_REDIRECT_URI and self.GOOGLE_REDIRECT_URI.strip():
+            return self.GOOGLE_REDIRECT_URI.strip()
+        port = get_backend_port()
+        return f"http://localhost:{port}/api/v1/auth/google/callback"
+
+    @property
+    def IS_GOOGLE_OAUTH_CONFIGURED(self) -> bool:
+        cid = self.GOOGLE_CLIENT_ID or os.getenv("GOOGLE_CLIENT_ID")
+        csec = self.GOOGLE_CLIENT_SECRET or os.getenv("GOOGLE_CLIENT_SECRET")
+        return bool(cid and csec and str(cid).strip() and str(csec).strip())
+
+
     # Evidence Acquisition Resource Limits
     MAX_EVIDENCE_FILE_SIZE_BYTES: int = 100 * 1024 * 1024 * 1024  # 100 GB
     MAX_DIRECTORY_ACQUISITION_SIZE_BYTES: int = 500 * 1024 * 1024 * 1024  # 500 GB

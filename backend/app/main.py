@@ -39,12 +39,16 @@ async def lifespan(app: FastAPI):
     logging.getLogger("uvicorn.error").setLevel(logging.INFO)
     logging.getLogger("uvicorn.access").setLevel(logging.INFO)
 
-    # Ensure RevokedToken table exists (created if missing, safe on existing DBs)
+    # Ensure RevokedToken and OAuth tables exist (created if missing, safe on existing DBs)
     try:
-        from backend.app.models.models import RevokedToken
+        from backend.app.models.models import RevokedToken, UserExternalIdentity, OAuthState, OAuthExchangeCode
         RevokedToken.__table__.create(bind=engine, checkfirst=True)
+        UserExternalIdentity.__table__.create(bind=engine, checkfirst=True)
+        OAuthState.__table__.create(bind=engine, checkfirst=True)
+        OAuthExchangeCode.__table__.create(bind=engine, checkfirst=True)
     except Exception as exc:
-        logger.warning(f"Could not ensure revoked_tokens table: {exc}")
+        logger.warning(f"Could not ensure auth tables: {exc}")
+
 
     yield
     # (shutdown logic goes here if needed in the future)

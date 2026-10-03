@@ -22,6 +22,7 @@ def auto_authenticate_tests(request):
     module_name = request.module.__name__ if request.module else ""
     excluded_modules = [
         "test_auth",
+        "test_google_oauth",
         "test_case_authorization",
         "test_user_administration",
         "test_ai_api",
