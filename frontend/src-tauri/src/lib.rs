@@ -94,6 +94,11 @@ fn select_evidence_file() -> Result<Option<String>, String> {
     }
 }
 
+#[tauri::command]
+fn read_evidence_file(path: String) -> Result<Vec<u8>, String> {
+    std::fs::read(&path).map_err(|e| format!("Failed to read evidence file: {}", e))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let backend_manager = Arc::new(BackendManager::new());
@@ -105,7 +110,8 @@ pub fn run() {
             get_backend_config,
             get_backend_status,
             shutdown_backend,
-            select_evidence_file
+            select_evidence_file,
+            read_evidence_file
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

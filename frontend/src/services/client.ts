@@ -1,6 +1,6 @@
 import axios, { type AxiosInstance, type AxiosError } from 'axios';
 
-const DEFAULT_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001/api/v1';
+const DEFAULT_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8001/api/v1';
 
 let currentBaseUrl = DEFAULT_BASE_URL;
 let unauthorizedHandler: (() => void) | null = null;
@@ -8,13 +8,14 @@ let unauthorizedHandler: (() => void) | null = null;
 export const apiClient: AxiosInstance = axios.create({
   baseURL: currentBaseUrl,
   timeout: 30000,
-  headers: { 'Content-Type': 'application/json' },
 });
 
 export function setApiBaseUrl(url: string): void {
-  let normalizedUrl = url.trim();
+  let normalizedUrl = url.trim().replace('localhost', '127.0.0.1');
   if (normalizedUrl.endsWith('/api')) {
     normalizedUrl = `${normalizedUrl}/v1`;
+  } else if (!normalizedUrl.includes('/api')) {
+    normalizedUrl = normalizedUrl.replace(/\/+$/, '') + '/api/v1';
   }
   currentBaseUrl = normalizedUrl;
   apiClient.defaults.baseURL = normalizedUrl;
@@ -38,7 +39,13 @@ apiClient.interceptors.request.use((config) => {
     config.headers['X-ADFIR-Bootstrap-Secret'] = currentBootstrapSecret;
   }
   if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
-    delete config.headers['Content-Type'];
+    if (config.headers && typeof config.headers.delete === 'function') {
+      config.headers.delete('Content-Type');
+      config.headers.delete('content-type');
+    } else if (config.headers) {
+      delete config.headers['Content-Type'];
+      delete config.headers['content-type'];
+    }
   }
   return config;
 });

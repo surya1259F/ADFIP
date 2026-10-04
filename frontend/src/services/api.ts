@@ -50,7 +50,7 @@ import type {
   ForensicReportProvenanceResponse
 } from '../types';
 
-let currentApiBase = 'http://localhost:8001/api';
+let currentApiBase = 'http://127.0.0.1:8001/api/v1';
 
 export const validateDiscoveredBackendUrl = (urlStr: string, expectedPort?: number): boolean => {
   try {
@@ -112,9 +112,15 @@ const client = axios.create({
 });
 
 export const setApiBaseUrl = (url: string) => {
-  currentApiBase = url;
-  client.defaults.baseURL = url;
-  setClientApiBaseUrl(url);
+  let normalizedUrl = url.trim().replace('localhost', '127.0.0.1');
+  if (normalizedUrl.endsWith('/api')) {
+    normalizedUrl = `${normalizedUrl}/v1`;
+  } else if (!normalizedUrl.includes('/api')) {
+    normalizedUrl = normalizedUrl.replace(/\/+$/, '') + '/api/v1';
+  }
+  currentApiBase = normalizedUrl;
+  client.defaults.baseURL = normalizedUrl;
+  setClientApiBaseUrl(normalizedUrl);
 };
 
 export const getApiBaseUrl = (): string => {

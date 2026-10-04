@@ -48,7 +48,7 @@ export function runFrontendDiscoveryTests(): boolean {
 
   // Step 1 Test 9: setApiBaseUrl updates Axios runtime baseURL getter
   setApiBaseUrl('http://127.0.0.1:54321/api');
-  assertEqual(getApiBaseUrl(), 'http://127.0.0.1:54321/api', 'getApiBaseUrl must return updated runtime URL');
+  assertEqual(getApiBaseUrl(), 'http://127.0.0.1:54321/api/v1', 'getApiBaseUrl must return updated runtime URL');
   console.log('✓ Test 9: setApiBaseUrl updates runtime baseURL');
 
   // Step 2 Test 1: Initial state reset is DISCOVERING
@@ -60,7 +60,7 @@ export function runFrontendDiscoveryTests(): boolean {
   useInvestigationStore.getState().initializeBackend();
   const state = useInvestigationStore.getState();
   assertEqual(state.backendState, 'READY', 'initializeBackend must transition backendState to READY');
-  assertEqual(state.backendUrl, 'http://localhost:8001/api', 'Standalone browser dev mode initializes port 8001');
+  assertEqual(state.backendUrl, 'http://127.0.0.1:8001/api/v1', 'Standalone browser dev mode initializes port 8001');
   console.log('✓ Step 2 Test 2: Discovery completes to state READY');
 
   // Step 2 Test 3 & 4: Network failure changes state to UNAVAILABLE without logging user out
@@ -95,23 +95,23 @@ export function runFrontendDiscoveryTests(): boolean {
 
   // Step 3 Test 1: Case switching does NOT alter or reset backendUrl
   setApiBaseUrl('http://127.0.0.1:58400/api');
-  useInvestigationStore.setState({ backendUrl: 'http://127.0.0.1:58400/api', activeInvestigation: null });
+  useInvestigationStore.setState({ backendUrl: 'http://127.0.0.1:58400/api/v1', activeInvestigation: null });
   const origError = console.error;
   console.error = () => {}; // Suppress connection error logs for offline case switch test
   const mockInv = { id: 'case-99', name: 'Active Case 99', status: 'OPEN', created_at: '', updated_at: '' };
   useInvestigationStore.getState().setActiveInvestigation(mockInv);
   console.error = origError;
 
-  assertEqual(getApiBaseUrl(), 'http://127.0.0.1:58400/api', 'Case switching must NOT reset or alter API base URL');
-  assertEqual(useInvestigationStore.getState().backendUrl, 'http://127.0.0.1:58400/api', 'Case switching must NOT alter backendUrl in store');
+  assertEqual(getApiBaseUrl(), 'http://127.0.0.1:58400/api/v1', 'Case switching must NOT reset or alter API base URL');
+  assertEqual(useInvestigationStore.getState().backendUrl, 'http://127.0.0.1:58400/api/v1', 'Case switching must NOT alter backendUrl in store');
   console.log('✓ Step 3 Test 1: Case switching preserves dynamic backend URL');
 
   // Step 3 Test 2: AI and Forensic endpoints utilize the single runtime API base URL
-  assertEqual(getApiBaseUrl().endsWith('/api'), true, 'All API methods utilize dynamic Axios base URL ending in /api');
+  assertEqual(getApiBaseUrl().endsWith('/api/v1'), true, 'All API methods utilize dynamic Axios base URL ending in /api/v1');
   console.log('✓ Step 3 Test 2: Forensic and AI endpoints use single runtime API base authority');
 
   // Step 1 Test 14: Backend URL is memory-only and is NOT persisted
-  assertEqual(useInvestigationStore.getState().backendUrl, 'http://127.0.0.1:58400/api', 'backendUrl exists in memory store state');
+  assertEqual(useInvestigationStore.getState().backendUrl, 'http://127.0.0.1:58400/api/v1', 'backendUrl exists in memory store state');
   if (typeof globalThis.sessionStorage !== 'undefined') {
     assertEqual(globalThis.sessionStorage.getItem('backendUrl'), null, 'backendUrl must NOT be persisted to sessionStorage');
     assertEqual(globalThis.sessionStorage.getItem('backend_url'), null, 'backend_url must NOT be persisted to sessionStorage');

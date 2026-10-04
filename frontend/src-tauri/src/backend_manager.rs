@@ -306,7 +306,7 @@ impl BackendManager {
             if proc.is_running {
                 return Ok(BackendConfig {
                     port: proc.port,
-                    url: format!("http://127.0.0.1:{}/api", proc.port),
+                    url: format!("http://127.0.0.1:{}/api/v1", proc.port),
                     bootstrap_secret: proc.bootstrap_secret.clone(),
                 });
             }
@@ -408,7 +408,7 @@ impl BackendManager {
 
                     return Ok(BackendConfig {
                         port,
-                        url: format!("http://127.0.0.1:{}/api", port),
+                        url: format!("http://127.0.0.1:{}/api/v1", port),
                         bootstrap_secret: bootstrap_secret.clone(),
                     });
                 } else {
@@ -446,7 +446,7 @@ impl BackendManager {
             if is_dev_online {
                 Ok(BackendConfig {
                     port: dev_port,
-                    url: format!("http://127.0.0.1:{}/api", dev_port),
+                    url: format!("http://127.0.0.1:{}/api/v1", dev_port),
                     bootstrap_secret: String::new(),
                 })
             } else {

@@ -173,10 +173,21 @@ const AddEvidenceDialog: React.FC<{
         if (selectedPath) {
           const fileName = selectedPath.split(/[/\\]/).pop() || selectedPath;
           const detected = detectEvidenceType(fileName);
+          let fileObj: File | undefined = undefined;
+          try {
+            const raw = await invoke<number[] | Uint8Array>('read_evidence_file', { path: selectedPath });
+            if (raw && (Array.isArray(raw) ? raw.length > 0 : (raw as Uint8Array).byteLength > 0)) {
+              const u8 = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
+              fileObj = new File([u8 as any], fileName, { type: 'application/octet-stream' });
+            }
+          } catch (readErr) {
+            console.warn('Could not load binary bytes via Tauri IPC, falling back to workstation path:', readErr);
+          }
           setSelectedFile({
             name: fileName,
             path: selectedPath,
             type: detected,
+            file: fileObj,
           });
           setEvidenceType(detected);
           setErr(null);

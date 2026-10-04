@@ -217,7 +217,7 @@ export const useInvestigationStore = create<InvestigationState>((set, get) => ({
       }
     } else {
       // Standalone browser / Vite development fallback ONLY
-      const devUrl = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:8001/api';
+      const devUrl = (import.meta as any).env?.VITE_API_BASE_URL || 'http://127.0.0.1:8001/api/v1';
       setApiBaseUrl(devUrl);
       set({
         backendState: 'READY',
@@ -241,7 +241,7 @@ export const useInvestigationStore = create<InvestigationState>((set, get) => ({
 
         if (status.is_running && status.port) {
           const currentUrl = get().backendUrl;
-          const expectedUrl = `http://127.0.0.1:${status.port}/api`;
+          const expectedUrl = `http://127.0.0.1:${status.port}/api/v1`;
           if (currentUrl && currentUrl !== expectedUrl) {
             if (validateDiscoveredBackendUrl(expectedUrl, status.port)) {
               setApiBaseUrl(expectedUrl);

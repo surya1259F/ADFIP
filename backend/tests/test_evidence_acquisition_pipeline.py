@@ -231,3 +231,74 @@ def test_empty_stream_fails_safely(auth_headers, active_case):
     )
     assert res.status_code in (400, 422)
     assert "empty" in res.text.lower() or "0 bytes" in res.text.lower()
+
+
+def test_unauthenticated_evidence_intake_rejected(active_case):
+    """
+    Intake without auth token must be rejected with HTTP 401.
+    """
+    case = active_case
+    files = {"file": ("test.png", io.BytesIO(b"\x89PNG\r\n\x1a\n"), "image/png")}
+    res = client.post(
+        f"/api/v1/cases/{case['id']}/evidence/intake",
+        files=files,
+        data={"name": "test.png"}
+    )
+    assert res.status_code == 401
+
+
+def test_unauthorized_case_evidence_intake_rejected(auth_headers, active_case, db_session: Session):
+    """
+    Another investigator who is not a member of the case must be rejected with HTTP 403.
+    """
+    other_email = f"other_{os.urandom(4).hex()}@adfip.local"
+    signup_res = client.post("/api/v1/auth/signup", json={
+        "email": other_email,
+        "name": "Other Investigator",
+        "password": "InvestigationPass123!"
+    })
+    assert signup_res.status_code in (200, 201)
+    login_res = client.post("/api/v1/auth/login", json={
+        "email": other_email,
+        "password": "InvestigationPass123!"
+    })
+    other_token = login_res.json()["access_token"]
+    other_headers = {"Authorization": f"Bearer {other_token}"}
+
+    case = active_case
+    files = {"file": ("test.png", io.BytesIO(b"\x89PNG\r\n\x1a\n" + os.urandom(64)), "image/png")}
+    res = client.post(
+        f"/api/v1/cases/{case['id']}/evidence/intake",
+        headers=other_headers,
+        files=files,
+        data={"name": "test.png"}
+    )
+    assert res.status_code in (403, 404)
+
+
+def test_cors_preflight_and_error_headers(auth_headers, active_case):
+    """
+    OPTIONS preflight and error responses must include CORS headers for frontend origins.
+    """
+    case = active_case
+    url = f"/api/v1/cases/{case['id']}/evidence/intake"
+
+    # Preflight
+    options_res = client.options(
+        url,
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type"
+        }
+    )
+    assert options_res.status_code == 200
+    assert options_res.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+    # Error response (empty payload) must also include CORS
+    headers, _ = auth_headers
+    headers["Origin"] = "http://localhost:5173"
+    bad_res = client.post(url, headers=headers, json={})
+    assert bad_res.status_code == 400
+    assert bad_res.headers.get("access-control-allow-origin") == "http://localhost:5173"
+

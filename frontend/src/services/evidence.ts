@@ -34,7 +34,11 @@ export const evidenceService = {
       const targetPath = payload.file_path || payload.source_path;
       if (targetPath) formData.append('source_path', targetPath);
 
-      const res = await apiClient.post<Evidence>(`/cases/${caseId}/evidence/intake`, formData);
+      const res = await apiClient.post<Evidence>(`/cases/${caseId}/evidence/intake`, formData, {
+        headers: {
+          'Content-Type': undefined,
+        },
+      });
       return res.data;
     }
 

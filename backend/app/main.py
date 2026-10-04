@@ -107,13 +107,45 @@ async def desktop_bootstrap_middleware(request: Request, call_next):
     response = await call_next(request)
     return response
 
-# Global Security Exception Handler: Never expose raw stack traces to users
+# Global Security Exception Handler: Never expose raw stack traces to users, ensure CORS headers on errors
+from fastapi.exceptions import RequestValidationError
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.warning(f"Validation error on {request.method} {request.url.path}: {str(exc)}")
+    origin = request.headers.get("origin")
+    resp_headers = {}
+    if origin and (origin in get_allowed_origins()):
+        resp_headers["Access-Control-Allow-Origin"] = origin
+        resp_headers["Access-Control-Allow-Credentials"] = "true"
+        resp_headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+        resp_headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, X-ADFIR-Bootstrap-Secret, Accept"
+    safe_errors = []
+    for err in exc.errors():
+        safe_err = dict(err)
+        if "input" in safe_err and isinstance(safe_err["input"], (bytes, bytearray)):
+            safe_err["input"] = f"<binary data: {len(safe_err['input'])} bytes>"
+        safe_errors.append(safe_err)
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": safe_errors},
+        headers=resp_headers
+    )
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Internal Exception on {request.method} {request.url.path}: {str(exc)}", exc_info=True)
+    origin = request.headers.get("origin")
+    resp_headers = {}
+    if origin and (origin in get_allowed_origins()):
+        resp_headers["Access-Control-Allow-Origin"] = origin
+        resp_headers["Access-Control-Allow-Credentials"] = "true"
+        resp_headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+        resp_headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, X-ADFIR-Bootstrap-Secret, Accept"
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"detail": "An internal error occurred during forensic processing. Please contact your system administrator."}
+        content={"detail": "An internal error occurred during forensic processing. Please contact your system administrator."},
+        headers=resp_headers
     )
 
 
