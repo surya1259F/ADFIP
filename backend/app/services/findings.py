@@ -1405,18 +1405,21 @@ class DeterministicFindingsService:
         """Queries deterministic findings with comprehensive filters."""
         query = db.query(DeterministicFinding).filter(DeterministicFinding.case_id == case_id)
 
-        if severity:
+        if severity and isinstance(severity, str):
             query = query.filter(DeterministicFinding.severity == severity.upper())
-        if finding_type:
+        if finding_type and isinstance(finding_type, str):
             query = query.filter(DeterministicFinding.finding_type == finding_type)
-        if min_confidence is not None:
+        if min_confidence is not None and isinstance(min_confidence, (int, float)):
             query = query.filter(DeterministicFinding.confidence >= min_confidence)
-        if start_time:
+        if start_time and isinstance(start_time, datetime):
             query = query.filter(DeterministicFinding.created_at >= start_time)
-        if end_time:
+        if end_time and isinstance(end_time, datetime):
             query = query.filter(DeterministicFinding.created_at <= end_time)
 
-        records = query.order_by(DeterministicFinding.created_at.desc()).offset(skip).limit(limit).all()
+        skip_val = skip if isinstance(skip, int) else (skip.default if hasattr(skip, "default") and isinstance(skip.default, int) else 0)
+        limit_val = limit if isinstance(limit, int) else (limit.default if hasattr(limit, "default") and isinstance(limit.default, int) else 50)
+
+        records = query.order_by(DeterministicFinding.created_at.desc()).offset(skip_val).limit(limit_val).all()
 
         if evidence_id:
             # Filter in Python for JSON array match

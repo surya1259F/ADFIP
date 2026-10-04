@@ -93,7 +93,47 @@ def list_findings(
         skip=skip,
         limit=limit
     )
-    return [DeterministicFindingResponse.model_validate(r) for r in records]
+    results = [DeterministicFindingResponse.model_validate(r) for r in records]
+
+    # Also include findings produced by specialist tools
+    from backend.app.models.models import Finding
+    existing_ids = {r.id for r in results}
+    tool_findings = db.query(Finding).filter(Finding.case_id == case_id).order_by(Finding.created_at.desc()).all()
+    for tf in tool_findings:
+        if tf.id in existing_ids:
+            continue
+        if severity and isinstance(severity, str) and (tf.severity or "").upper() != severity.upper():
+            continue
+        if finding_type and isinstance(finding_type, str) and tf.finding_type != finding_type:
+            continue
+        if evidence_id and isinstance(evidence_id, str) and tf.evidence_id != evidence_id:
+            continue
+        if min_confidence is not None and isinstance(min_confidence, (int, float)) and (tf.confidence or 0) < min_confidence:
+            continue
+
+        results.append(DeterministicFindingResponse(
+            id=tf.id,
+            case_id=tf.case_id,
+            title=tf.title,
+            description=tf.description or tf.title,
+            observed_facts=[],
+            finding_type=tf.finding_type or "forensic_finding",
+            severity=(tf.severity or "MEDIUM").upper(),
+            severity_rule=f"Specialist Agent ({tf.agent or 'Tool'})",
+            confidence=float(tf.confidence or 0.9),
+            confidence_inputs={"source_tool": tf.tool, "source_agent": tf.agent},
+            supporting_artifact_ids=[tf.artifact_id] if tf.artifact_id else [],
+            supporting_event_ids=[],
+            supporting_relationship_ids=[],
+            supporting_group_ids=[],
+            supporting_evidence_ids=[tf.evidence_id] if tf.evidence_id else [],
+            provenance={"tool": tf.tool, "agent": tf.agent, "raw_output_reference": tf.raw_output_reference},
+            sha256_hash=tf.raw_output_reference or f"finding-{tf.id}",
+            storage_path=None,
+            created_at=tf.created_at or datetime.now(timezone.utc)
+        ))
+
+    return results
 
 
 @router.get(
@@ -114,6 +154,30 @@ def get_finding_details(
 
     finding = DeterministicFindingsService.get_finding_by_id(db, case_id, finding_id)
     if not finding:
+        from backend.app.models.models import Finding
+        tf = db.query(Finding).filter(Finding.id == finding_id, Finding.case_id == case_id).first()
+        if tf:
+            return DeterministicFindingResponse(
+                id=tf.id,
+                case_id=tf.case_id,
+                title=tf.title,
+                description=tf.description or tf.title,
+                observed_facts=[],
+                finding_type=tf.finding_type or "forensic_finding",
+                severity=(tf.severity or "MEDIUM").upper(),
+                severity_rule=f"Specialist Agent ({tf.agent or 'Tool'})",
+                confidence=float(tf.confidence or 0.9),
+                confidence_inputs={"source_tool": tf.tool, "source_agent": tf.agent},
+                supporting_artifact_ids=[tf.artifact_id] if tf.artifact_id else [],
+                supporting_event_ids=[],
+                supporting_relationship_ids=[],
+                supporting_group_ids=[],
+                supporting_evidence_ids=[tf.evidence_id] if tf.evidence_id else [],
+                provenance={"tool": tf.tool, "agent": tf.agent, "raw_output_reference": tf.raw_output_reference},
+                sha256_hash=tf.raw_output_reference or f"finding-{tf.id}",
+                storage_path=None,
+                created_at=tf.created_at or datetime.now(timezone.utc)
+            )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Finding '{finding_id}' not found in case '{case_id}'"

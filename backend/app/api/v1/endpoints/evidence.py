@@ -137,6 +137,16 @@ def process_evidence_intake(
         metadata_json=meta_dict
     )
 
+    try:
+        EvidenceIntelligenceEngine.analyze_and_store_profile(
+            db=db,
+            evidence=new_evidence,
+            current_user=current_user,
+            force_refresh=False
+        )
+    except Exception as e:
+        logger.warning(f"Could not immediately persist evidence intelligence profile: {e}")
+
     return new_evidence
 
 
@@ -313,17 +323,13 @@ def get_intelligence(
         raise HTTPException(status_code=404, detail=f"Evidence item {evidence_id} not found")
     get_authorized_case(evidence.case_id, db, current_user)
 
-    if evidence.intelligence_json and isinstance(evidence.intelligence_json, dict):
-        return EvidenceIntelligenceResponse(evidence_id=evidence.id, intelligence=evidence.intelligence_json)
-    profile = EvidenceIntelligenceEngine.analyze_and_store_profile(db, evidence, current_user, force_refresh=False)
+    if not evidence.intelligence_json or "mime_type" not in evidence.intelligence_json:
+        EvidenceIntelligenceEngine.analyze_and_store_profile(db, evidence, current_user, force_refresh=False)
+        db.refresh(evidence)
+
     intel_dict = evidence.intelligence_json or {}
     return EvidenceIntelligenceResponse(evidence_id=evidence.id, intelligence=intel_dict)
 
-    target_path = evidence.storage_path or evidence.original_path
-    intel = EvidenceIntelligenceEngine.analyze_evidence(evidence.id, evidence.name, target_path)
-    intel_dict = intel.model_dump()
-    evidence.intelligence_json = intel_dict
-    db.commit()
 @router.post("/{evidence_id}/intelligence", response_model=EvidenceIntelligenceResponse)
 def generate_intelligence(
     evidence_id: str,

@@ -201,7 +201,7 @@ class InvestigationPlanner:
                     )
 
             # 5. File / Document / Archive / Text / Generic Binary Metadata Evidence -> ExifTool -> metadata_extraction
-            elif ev_type in ["file", "document", "archive", "text", "generic_binary", "unknown", "image", "browser_artifact", "sqlite_database"] or src_kind in ["file", "archive", "browser_db", "unknown"]:
+            elif ev_type in ["file", "document", "archive", "text", "generic_binary", "unknown", "image", "raw_image", "png", "jpeg", "jpg", "bmp", "tiff", "gif", "webp", "browser_artifact", "sqlite_database"] or src_kind in ["file", "archive", "browser_db", "image", "unknown"]:
                 exif = self.registry.get_tool("exiftool")
                 req_cap = "metadata_extraction"
                 if exif and exif.is_available and exif.has_capability(req_cap):

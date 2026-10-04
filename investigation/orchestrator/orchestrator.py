@@ -605,6 +605,11 @@ class InvestigationOrchestrator:
             if "tool_available" not in task_norm:
                 task_norm["tool_available"] = True
 
+            # If task failed or was cancelled in a previous attempt, reset to PLANNED for execution
+            if task_norm.get("status") in ["FAILED", "TIMED_OUT", "CANCELLED"]:
+                task_norm["status"] = "PLANNED"
+                task_norm["error_message"] = None
+
             tasks.append(task_norm)
 
         if not tasks:

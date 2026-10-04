@@ -65,12 +65,42 @@ export const evidenceService = {
   },
 
   getIntelligence: async (evidenceId: string): Promise<EvidenceIntelligence> => {
-    const res = await apiClient.get<EvidenceIntelligence>(`/evidence/${evidenceId}/intelligence`);
-    return res.data;
+    const res = await apiClient.get<any>(`/evidence/${evidenceId}/intelligence`);
+    const raw = res.data?.intelligence || res.data || {};
+    const tags = Array.isArray(raw.tags)
+      ? raw.tags.map((t: any) => (typeof t === 'string' ? t : t?.tag || t?.name || JSON.stringify(t)))
+      : [];
+    return {
+      ...raw,
+      evidence_id: raw.evidence_id || evidenceId,
+      mime_type: raw.mime_type || raw.detected_mime,
+      file_signature: raw.file_signature || raw.detected_format,
+      entropy: raw.entropy ?? raw.metadata?.entropy,
+      metadata: raw.metadata || raw.metadata_json,
+      partitions: raw.partitions || raw.partitions_json,
+      indicators: raw.indicators,
+      tags,
+      profile: raw.profile || raw,
+    };
   },
 
   extractIntelligence: async (evidenceId: string): Promise<EvidenceIntelligence> => {
-    const res = await apiClient.post<EvidenceIntelligence>(`/evidence/${evidenceId}/intelligence`);
-    return res.data;
+    const res = await apiClient.post<any>(`/evidence/${evidenceId}/intelligence`);
+    const raw = res.data?.intelligence || res.data || {};
+    const tags = Array.isArray(raw.tags)
+      ? raw.tags.map((t: any) => (typeof t === 'string' ? t : t?.tag || t?.name || JSON.stringify(t)))
+      : [];
+    return {
+      ...raw,
+      evidence_id: raw.evidence_id || evidenceId,
+      mime_type: raw.mime_type || raw.detected_mime,
+      file_signature: raw.file_signature || raw.detected_format,
+      entropy: raw.entropy ?? raw.metadata?.entropy,
+      metadata: raw.metadata || raw.metadata_json,
+      partitions: raw.partitions || raw.partitions_json,
+      indicators: raw.indicators,
+      tags,
+      profile: raw.profile || raw,
+    };
   },
 };

@@ -39,6 +39,7 @@ from backend.app.models.models import (
     TimelineEvent,
     ArtifactRelationship,
     DeterministicFinding,
+    Finding,
     AIReasoningRecord,
     InvestigatorReviewRecord,
     InvestigationPlan,
@@ -146,6 +147,36 @@ class InvestigatorReviewService:
                 "supporting_evidence_ids": f.supporting_evidence_ids or [],
                 "sha256_hash": f.sha256_hash,
                 "created_at": f.created_at.isoformat() if f.created_at else None,
+                "verified_lineage": True
+            })
+
+        # Include specialist tool findings from Finding table
+        specialist_findings = db.query(Finding).filter(
+            Finding.case_id == case.id
+        ).order_by(Finding.created_at.desc()).all()
+
+        for sf in specialist_findings:
+            if any(item["id"] == sf.id for item in findings_items):
+                continue
+            sf_supp_arts = []
+            if sf.artifact_id:
+                sf_supp_arts.append({"id": sf.artifact_id, "type": "tool_artifact", "label": sf.tool or "Artifact"})
+            sf_hash = hashlib.sha256(f"{sf.id}:{sf.title}".encode()).hexdigest()
+            findings_items.append({
+                "id": sf.id,
+                "case_id": sf.case_id,
+                "title": sf.title,
+                "description": sf.description or "",
+                "finding_type": sf.finding_type or "specialist_finding",
+                "severity": sf.severity or "MEDIUM",
+                "severity_rule": f"Specialist tool: {sf.tool}" if sf.tool else "Specialist finding",
+                "confidence": sf.confidence if sf.confidence is not None else 0.85,
+                "observed_facts": [sf.evidence_reference] if sf.evidence_reference else [],
+                "supporting_artifact_ids": [sf.artifact_id] if sf.artifact_id else [],
+                "supporting_artifacts": sf_supp_arts,
+                "supporting_evidence_ids": [sf.evidence_id] if sf.evidence_id else [],
+                "sha256_hash": sf_hash,
+                "created_at": sf.created_at.isoformat() if sf.created_at else None,
                 "verified_lineage": True
             })
 
@@ -274,11 +305,18 @@ class InvestigatorReviewService:
                 DeterministicFinding.case_id == case.id
             ).first()
             if not finding:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Deterministic finding '{payload.target_id}' not found in case '{case.id}'."
-                )
-            target_name = finding.title
+                specialist_finding = db.query(Finding).filter(
+                    Finding.id == payload.target_id,
+                    Finding.case_id == case.id
+                ).first()
+                if not specialist_finding:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Finding '{payload.target_id}' not found in case '{case.id}'."
+                    )
+                target_name = specialist_finding.title
+            else:
+                target_name = finding.title
 
         elif target_type_upper == "AI_REASONING":
             reasoning = db.query(AIReasoningRecord).filter(
@@ -503,13 +541,19 @@ class InvestigatorReviewService:
         ).first()
 
         reasoning = None
+        specialist_finding = None
         if not finding:
             reasoning = db.query(AIReasoningRecord).filter(
                 AIReasoningRecord.id == target_id,
                 AIReasoningRecord.case_id == case_id
             ).first()
+            if not reasoning:
+                specialist_finding = db.query(Finding).filter(
+                    Finding.id == target_id,
+                    Finding.case_id == case_id
+                ).first()
 
-        if not finding and not reasoning:
+        if not finding and not reasoning and not specialist_finding:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Target claim/finding/reasoning '{target_id}' not found in case '{case_id}'."
@@ -632,9 +676,42 @@ class InvestigatorReviewService:
                         "sha256_hash": re.sha256_hash
                     })
 
+        elif specialist_finding:
+            sf_hash = hashlib.sha256(f"{specialist_finding.id}:{specialist_finding.title}".encode()).hexdigest()
+            claim_summary = {
+                "id": specialist_finding.id,
+                "type": "SPECIALIST_FINDING",
+                "title": specialist_finding.title,
+                "severity": specialist_finding.severity or "MEDIUM",
+                "confidence": specialist_finding.confidence if specialist_finding.confidence is not None else 0.85,
+                "sha256_hash": sf_hash,
+                "created_at": specialist_finding.created_at.isoformat() if specialist_finding.created_at else None
+            }
+            if specialist_finding.artifact_id:
+                supporting_artifacts.append({
+                    "id": specialist_finding.artifact_id,
+                    "artifact_type": "tool_artifact",
+                    "label": specialist_finding.tool or "Artifact",
+                    "execution_id": specialist_finding.execution_id,
+                    "sha256_hash": sf_hash
+                })
+            if specialist_finding.evidence_id:
+                ev = db.query(EvidenceItem).filter(
+                    EvidenceItem.id == specialist_finding.evidence_id,
+                    EvidenceItem.case_id == case_id
+                ).first()
+                if ev:
+                    supporting_evidence.append({
+                        "id": ev.id,
+                        "name": ev.name,
+                        "evidence_type": ev.evidence_type,
+                        "sha256_hash": ev.sha256_hash,
+                        "status": ev.status
+                    })
+
         return ClaimProvenanceResponse(
             case_id=case_id,
-            target_type="FINDING" if finding else "AI_REASONING",
+            target_type="FINDING" if (finding or specialist_finding) else "AI_REASONING",
             target_id=target_id,
             statement_id=None,
             claim_summary=claim_summary,
@@ -669,8 +746,15 @@ class InvestigatorReviewService:
             ).first()
             if finding and finding.supporting_evidence_ids:
                 evidence_id = finding.supporting_evidence_ids[0]
-            elif case.evidence_items:
-                evidence_id = case.evidence_items[0].id
+            else:
+                sf = db.query(Finding).filter(
+                    Finding.id == payload.target_id,
+                    Finding.case_id == case.id
+                ).first()
+                if sf and sf.evidence_id:
+                    evidence_id = sf.evidence_id
+                elif case.evidence_items:
+                    evidence_id = case.evidence_items[0].id
 
         if not evidence_id:
             raise HTTPException(

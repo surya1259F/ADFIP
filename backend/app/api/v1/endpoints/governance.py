@@ -23,7 +23,7 @@ from backend.app.schemas.schemas import (
     GovernanceApprovalRequest,
     GovernanceRejectionRequest,
     EvidenceVerifyRequest,
-    EvidenceVerificationResponse,
+    GovernanceVerificationResponse,
     GovernanceAuditEventResponse
 )
 from backend.app.services.authorization import get_authorized_case
@@ -181,7 +181,7 @@ def reject_governance_decision(
 
 @router.post(
     "/cases/{case_id}/governance/verify",
-    response_model=EvidenceVerificationResponse,
+    response_model=GovernanceVerificationResponse,
     status_code=status.HTTP_201_CREATED
 )
 def verify_evidence_or_artifact(
@@ -210,7 +210,7 @@ def verify_evidence_or_artifact(
 
 @router.get(
     "/cases/{case_id}/governance/verifications",
-    response_model=List[EvidenceVerificationResponse],
+    response_model=List[GovernanceVerificationResponse],
     status_code=status.HTTP_200_OK
 )
 def list_verifications(
@@ -234,7 +234,7 @@ def list_verifications(
 
 @router.get(
     "/cases/{case_id}/governance/verifications/{verification_id}",
-    response_model=EvidenceVerificationResponse,
+    response_model=GovernanceVerificationResponse,
     status_code=status.HTTP_200_OK
 )
 def get_verification_details(

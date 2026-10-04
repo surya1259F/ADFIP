@@ -36,4 +36,14 @@ export const casesService = {
     const res = await apiClient.post(`/cases/${caseId}/plan/execute`);
     return res.data;
   },
+
+  getPlan: async (caseId: string): Promise<any> => {
+    const res = await apiClient.get(`/cases/${caseId}/plan`);
+    return res.data;
+  },
+
+  generatePlan: async (caseId: string): Promise<any> => {
+    const res = await apiClient.post(`/cases/${caseId}/plan`);
+    return res.data;
+  },
 };

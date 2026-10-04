@@ -43,13 +43,14 @@ class DiskAgent(Agent):
             "disk_image", "file", "filesystem_image", "document", "archive",
             "text", "generic_binary", "malware_sample", "browser_db", "browser_artifact",
             "sqlite_database", "event_log", "windows_event_log", "pe_executable",
-            "elf_executable", "macho_executable", "unknown"
+            "elf_executable", "macho_executable", "image", "raw_image", "png", "jpeg",
+            "jpg", "bmp", "tiff", "gif", "webp", "unknown"
         ]
 
     def plan(self, evidence_item: Dict[str, Any]) -> List[Dict[str, Any]]:
         ev_name = evidence_item.get("name", "evidence")
         ev_type = str(evidence_item.get("evidence_type", "")).lower()
-        if ev_type in ["file", "document", "archive"]:
+        if ev_type in ["file", "document", "archive", "image", "raw_image", "png", "jpeg", "jpg", "bmp", "tiff", "gif", "webp"]:
             return [
                 {
                     "step_id": "disk-exif-01",
@@ -258,7 +259,7 @@ class DiskAgent(Agent):
         is_metadata_action = (
             action == "metadata_extraction"
             or tool_req == "ExifTool"
-            or (ev_type in ["file", "document", "archive"] and action != "filesystem_structure_extraction")
+            or (ev_type.lower() in ["file", "document", "archive", "image", "raw_image", "png", "jpeg", "jpg", "bmp", "tiff", "gif", "webp"] and action != "filesystem_structure_extraction")
         )
 
         if is_metadata_action:

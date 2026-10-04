@@ -655,17 +655,73 @@ def list_case_executions_compat(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    from backend.app.models.models import ToolExecution, ForensicExecution
+    from backend.app.models.models import ToolExecution, ForensicExecution, ExecutionArtifact, Finding
     case = get_authorized_case(case_id, db, current_user)
+
+    results = []
+
+    # Map ForensicExecution records
     fe_list = (
         db.query(ForensicExecution)
         .filter(ForensicExecution.case_id == case.id)
         .order_by(ForensicExecution.created_at.desc())
         .all()
     )
-    if fe_list:
-        return fe_list
-    return db.query(ToolExecution).filter(ToolExecution.case_id == case.id).all()
+    for fe in fe_list:
+        art_count = db.query(ExecutionArtifact).filter(ExecutionArtifact.execution_id == fe.id).count()
+        f_count = db.query(Finding).filter(Finding.execution_id == fe.id).count()
+        status_norm = getattr(fe, "execution_status", "COMPLETED")
+        results.append({
+            "id": fe.id,
+            "case_id": fe.case_id,
+            "evidence_id": fe.evidence_id,
+            "agent": "ForensicEngine",
+            "tool": fe.tool_id,
+            "status": status_norm,
+            "progress": 100 if status_norm == "COMPLETED" else (0 if status_norm in ["QUEUED", "STARTING"] else 50),
+            "started_at": fe.started_at.isoformat() if hasattr(fe, "started_at") and fe.started_at else (fe.created_at.isoformat() if hasattr(fe, "created_at") and fe.created_at else None),
+            "completed_at": fe.completed_at.isoformat() if hasattr(fe, "completed_at") and fe.completed_at else None,
+            "duration_ms": getattr(fe, "execution_time_ms", None),
+            "error": getattr(fe, "failure_reason", None) or getattr(fe, "error_message", None),
+            "artifacts_count": art_count,
+            "findings_count": f_count,
+            "metadata": fe.resource_allocation or {}
+        })
+
+    # Map ToolExecution records
+    te_list = (
+        db.query(ToolExecution)
+        .filter(ToolExecution.case_id == case.id)
+        .order_by(ToolExecution.created_at.desc())
+        .all()
+    )
+    for te in te_list:
+        if any(r["id"] == te.id for r in results):
+            continue
+        tool_raw = str(te.tool_id or "")
+        agent_name = "DiskAgent" if any(k in tool_raw.lower() for k in ["fls", "sleuth", "tsk", "exif"]) else ("MalwareAgent" if "yara" in tool_raw.lower() else ("LogAgent" if "evtx" in tool_raw.lower() else ("MemoryAgent" if "vol" in tool_raw.lower() else "ForensicAgent")))
+        tool_display = "ExifTool" if "exif" in tool_raw.lower() else ("SleuthKit" if any(k in tool_raw.lower() for k in ["fls", "sleuth", "tsk"]) else ("YARA" if "yara" in tool_raw.lower() else ("python-evtx" if "evtx" in tool_raw.lower() else ("Volatility 3" if "vol" in tool_raw.lower() else tool_raw))))
+        art_count = db.query(ExecutionArtifact).filter(ExecutionArtifact.execution_id == te.id).count()
+        f_count = db.query(Finding).filter(Finding.execution_id == te.id).count()
+        status_norm = te.status or "COMPLETED"
+        results.append({
+            "id": te.id,
+            "case_id": te.case_id,
+            "evidence_id": te.evidence_id,
+            "agent": agent_name,
+            "tool": tool_display,
+            "status": status_norm,
+            "progress": 100 if status_norm == "COMPLETED" else (0 if status_norm in ["QUEUED", "STARTING"] else 50),
+            "started_at": te.started_at.isoformat() if te.started_at else (te.created_at.isoformat() if te.created_at else None),
+            "completed_at": te.completed_at.isoformat() if te.completed_at else None,
+            "duration_ms": te.execution_time_ms,
+            "error": te.error_message,
+            "artifacts_count": art_count,
+            "findings_count": f_count,
+            "metadata": {"command_args": te.command_args}
+        })
+
+    return results
 
 
 @router.get("/{case_id}/executions/{execution_id}")
@@ -692,6 +748,92 @@ def get_case_execution_compat(
     if not exec_rec:
         raise HTTPException(status_code=404, detail="Execution record not found.")
     return exec_rec
+
+
+@router.post("/{case_id}/plan")
+def create_case_plan_compat(
+    case_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    case = get_authorized_case(case_id, db, current_user)
+    from backend.app.services.case_closure import check_case_not_closed
+    check_case_not_closed(case)
+
+    from backend.app.api.endpoints.investigations import planner_service
+    from backend.app.models.models import InvestigationPlan, EvidenceItem
+
+    evidence_items = db.query(EvidenceItem).filter(EvidenceItem.case_id == case.id).all()
+    ev_dicts = [
+        {
+            "id": e.id,
+            "name": e.name,
+            "evidence_type": e.evidence_type,
+            "source_kind": getattr(e, "source_kind", None),
+            "size_bytes": e.size_bytes,
+        }
+        for e in evidence_items
+    ]
+    plan_dict = planner_service.plan(investigation_id=case.id, evidence_items=ev_dicts)
+
+    old_plans = db.query(InvestigationPlan).filter(InvestigationPlan.case_id == case.id).all()
+    for op in old_plans:
+        op.is_active = False
+
+    new_plan = InvestigationPlan(
+        case_id=case.id,
+        status="PLANNED",
+        strategy_summary=plan_dict.get("strategy_summary"),
+        tasks=plan_dict.get("tasks", []),
+        is_active=True,
+        version=(max([p.version for p in old_plans], default=0) + 1)
+    )
+    db.add(new_plan)
+    db.commit()
+    db.refresh(new_plan)
+
+    return {
+        "id": new_plan.id,
+        "case_id": new_plan.case_id,
+        "strategy_summary": new_plan.strategy_summary,
+        "tasks": new_plan.tasks or [],
+        "total_tasks": len(new_plan.tasks or []),
+        "status": new_plan.status,
+        "version": new_plan.version,
+        "created_at": new_plan.created_at.isoformat() if new_plan.created_at else None,
+        "completed_at": new_plan.completed_at.isoformat() if new_plan.completed_at else None,
+    }
+
+
+@router.get("/{case_id}/plan")
+def get_case_plan_compat(
+    case_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    case = get_authorized_case(case_id, db, current_user)
+    from backend.app.models.models import InvestigationPlan
+
+    plan = (
+        db.query(InvestigationPlan)
+        .filter(InvestigationPlan.case_id == case.id, InvestigationPlan.is_active == True)
+        .order_by(InvestigationPlan.created_at.desc())
+        .first()
+    )
+    if not plan:
+        return create_case_plan_compat(case_id=case_id, db=db, current_user=current_user)
+
+    return {
+        "id": plan.id,
+        "case_id": plan.case_id,
+        "strategy_summary": plan.strategy_summary,
+        "tasks": plan.tasks or [],
+        "total_tasks": len(plan.tasks or []),
+        "status": plan.status,
+        "version": plan.version,
+        "created_at": plan.created_at.isoformat() if plan.created_at else None,
+        "completed_at": plan.completed_at.isoformat() if plan.completed_at else None,
+    }
 
 
 @router.post("/{case_id}/plan/execute")

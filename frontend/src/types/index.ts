@@ -194,23 +194,23 @@ export interface EvidenceIntelligence {
   partitions?: unknown[];
   indicators?: unknown[];
   profile?: Record<string, unknown>;
-  source_kind: string;
-  evidence_type: string;
+  source_kind?: string;
+  evidence_type?: string;
   evidence_subtype?: string;
-  detected_format: string;
-  detected_mime: string;
-  confidence: number;
-  filesystem_type: string;
-  platform_hint: string;
-  size_bytes: number;
-  characteristics: string[];
-  detection_methods: Record<string, any>[];
-  recommended_analysis_families: AnalysisFamilyRecommendation[];
-  recommended_tools: ToolRecommendation[];
-  resource_profile: ResourceProfile;
-  limitations: string[];
-  engine_version: string;
-  generated_at: string;
+  detected_format?: string;
+  detected_mime?: string;
+  confidence?: number;
+  filesystem_type?: string;
+  platform_hint?: string;
+  size_bytes?: number;
+  characteristics?: string[];
+  detection_methods?: Record<string, any>[];
+  recommended_analysis_families?: AnalysisFamilyRecommendation[];
+  recommended_tools?: ToolRecommendation[];
+  resource_profile?: ResourceProfile;
+  limitations?: string[];
+  engine_version?: string;
+  generated_at?: string;
 }
 
 export interface EvidenceTag {

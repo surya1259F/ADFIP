@@ -90,6 +90,10 @@ class EvidenceIntelligencePayload(BaseModel):
     recommended_tools: List[ToolRecommendation] = Field(default_factory=list)
     resource_profile: ResourceProfile
     limitations: List[str] = Field(default_factory=list)
+    mime_type: Optional[str] = None
+    file_signature: Optional[str] = None
+    entropy: Optional[float] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
     engine_version: str = ENGINE_VERSION
     generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -103,6 +107,10 @@ class EvidenceIntelligencePayload(BaseModel):
             self.evidence_subtype = self.subtype
         elif not self.subtype and self.evidence_subtype:
             self.subtype = self.evidence_subtype
+        if not self.mime_type and self.detected_mime:
+            self.mime_type = self.detected_mime
+        if not self.file_signature and self.detected_format:
+            self.file_signature = self.detected_format
         return self
 
 class EvidenceIntelligenceEngine:
@@ -279,24 +287,6 @@ class EvidenceIntelligenceEngine:
         # Generic Binary Stream (No matching header or extension)
         signals.append({"method": "header_scan", "signal": "No recognized magic signature or extension match", "confidence": 0.2})
         return "UNKNOWN", "UNKNOWN", None, "UNKNOWN_BINARY_STREAM", 0.2, signals
-
-    @classmethod
-    def analyze_evidence(cls, evidence_id: str, evidence_name: str, file_path: str) -> EvidenceIntelligencePayload:
-        p = Path(file_path).resolve()
-        return cls._analyze_evidence_legacy(evidence_id, evidence_name, p)
-
-    @classmethod
-    def _analyze_evidence_legacy(cls, evidence_id: str, evidence_name: str, p: Path) -> EvidenceIntelligencePayload:
-        source_kind, classification, subtype, detected_format, conf_num, detection_methods = cls.inspect_magic_header(p)
-        return cls._build_evidence_payload(evidence_id, evidence_name, p, source_kind, classification, subtype, detected_format, conf_num, detection_methods)
-
-    @classmethod
-    def _build_evidence_payload(cls, evidence_id: str, evidence_name: str, p: Path, source_kind: str, classification: str, subtype: Optional[str], detected_format: str, conf_num: float, detection_methods: List[Dict[str, Any]]) -> EvidenceIntelligencePayload:
-        return cls._analyze_evidence_payload(evidence_id, evidence_name, p, source_kind, classification, subtype, detected_format, conf_num, detection_methods)
-
-    @classmethod
-    def _analyze_evidence_payload(cls, evidence_id: str, evidence_name: str, p: Path, source_kind: str, classification: str, subtype: Optional[str], detected_format: str, conf_num: float, detection_methods: List[Dict[str, Any]]) -> EvidenceIntelligencePayload:
-        return cls.analyze_evidence(evidence_id, evidence_name, str(p))
 
     @classmethod
     def inspect_full_profile(cls, file_path: Path, classification: str, subtype: Optional[str], detected_format: str, confidence_num: float) -> Tuple[
@@ -501,6 +491,21 @@ class EvidenceIntelligenceEngine:
             tags.append(EvidenceTag(tag=classification.lower(), category="format", basis=f"Format detection: {detected_format}"))
         if subtype:
             tags.append(EvidenceTag(tag=subtype.lower(), category="subtype", basis=f"Subtype: {subtype}"))
+
+        entropy_val = None
+        if header_bytes:
+            import math
+            prob = [header_bytes.count(b) / len(header_bytes) for b in set(header_bytes)]
+            entropy_val = round(-sum(p * math.log2(p) for p in prob), 4)
+
+        metadata = {
+            "size_bytes": size_bytes,
+            "extension": ext,
+            "detected_mime": detected_mime,
+            "detected_format": detected_format,
+            "classification": classification,
+            "entropy": entropy_val,
+        }
 
         return (
             classification_status,
@@ -767,6 +772,10 @@ class EvidenceIntelligenceEngine:
             "classification_basis": classification_basis,
             "detected_format": detected_format,
             "detected_mime": detected_mime,
+            "mime_type": detected_mime,
+            "file_signature": detected_format,
+            "entropy": metadata.get("entropy") if isinstance(metadata, dict) else None,
+            "metadata": metadata,
             "confidence": conf_num,
             "platform_hint": platform_hint,
             "platform_basis": platform_basis,
@@ -951,5 +960,7 @@ class EvidenceIntelligenceEngine:
             recommended_tools=recommended_tools,
             resource_profile=res_profile,
             limitations=limitations,
+            metadata=metadata,
+            entropy=metadata.get("entropy") if isinstance(metadata, dict) else None,
             engine_version=ENGINE_VERSION
         )

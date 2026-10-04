@@ -86,7 +86,7 @@ export const ExecutionPage: React.FC = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-slate-800">
-                    {ex.agent || ex.tool || 'Forensic Pipeline'}
+                    {ex.agent ? (ex.tool ? `${ex.agent} — ${ex.tool}` : ex.agent) : (ex.tool || 'Forensic Pipeline')}
                   </p>
                   <p className="font-mono text-[10px] text-slate-400">
                     {ex.id.slice(0, 8)}
@@ -175,13 +175,28 @@ export const ExecutionPage: React.FC = () => {
                     {ex.id.slice(0, 8)}
                   </td>
                   <td className="px-4 py-2.5 text-slate-700">
-                    {ex.agent || ex.tool || '—'}
+                    <span className="font-medium">{ex.agent || ex.tool || '—'}</span>
+                    {ex.agent && ex.tool && (
+                      <span className="text-[10px] text-slate-400 font-mono block">
+                        Tool: {ex.tool}
+                      </span>
+                    )}
+                    {ex.error && (
+                      <span className="text-[10px] text-red-600 block mt-0.5 max-w-md truncate" title={ex.error}>
+                        Error: {ex.error}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-2.5">
                     <StatusBadge status={ex.status} />
                   </td>
                   <td className="px-4 py-2.5 text-slate-500">
                     {ex.started_at ? formatTimestamp(ex.started_at) : '—'}
+                    {ex.duration_ms != null && (
+                      <span className="text-[10px] text-slate-400 block font-mono">
+                        {(ex.duration_ms / 1000).toFixed(1)}s
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-2.5 text-slate-600">
                     {ex.artifacts_count ?? '—'}

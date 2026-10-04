@@ -52,12 +52,14 @@ from backend.app.models.models import (
     ForensicExecution,
     ToolExecution,
     ExecutionOutput,
+    ExecutionArtifact,
     StructuredArtifact,
     NormalizedArtifact,
     TimelineEvent,
     ArtifactRelationship,
     ForensicCorrelationGroup,
     DeterministicFinding,
+    Finding,
     AIReasoningRecord,
     InvestigatorReviewRecord,
     Report,
@@ -279,21 +281,26 @@ class FinalForensicReportService:
             for lex in legacy_execs:
                 tool_executions.append({
                     "id": lex.id,
-                    "tool_name": lex.tool_name,
+                    "tool_name": lex.tool_id or "specialist_tool",
                     "tool_version": None,
-                    "capability": lex.tool_name,
+                    "capability": lex.tool_id or "analysis",
                     "status": lex.status,
-                    "exit_code": 0 if lex.status == "SUCCESS" else 1,
+                    "exit_code": lex.exit_code if lex.exit_code is not None else (0 if lex.status in ["SUCCESS", "COMPLETED"] else 1),
                     "started_at": lex.started_at.isoformat() if lex.started_at else None,
                     "completed_at": lex.completed_at.isoformat() if lex.completed_at else None,
                     "parameters": lex.command_args or {},
                     "output_hashes": []
                 })
 
-        # 6. Section 6: Artifacts (Structured & Normalized)
+        # 6. Section 6: Artifacts (Structured, Execution & Normalized)
         structured_arts = (
             db.query(StructuredArtifact)
             .filter(StructuredArtifact.case_id == case.id)
+            .all()
+        )
+        exec_arts = (
+            db.query(ExecutionArtifact)
+            .filter(ExecutionArtifact.case_id == case.id)
             .all()
         )
         normalized_arts = (
@@ -302,19 +309,32 @@ class FinalForensicReportService:
             .all()
         )
 
+        structured_sample = [
+            {
+                "id": a.id,
+                "artifact_type": a.artifact_type,
+                "source_reference": a.source_reference,
+                "execution_id": a.execution_id,
+                "sha256_hash": a.sha256_hash
+            }
+            for a in structured_arts[:50]
+        ]
+        for ea in exec_arts[:50]:
+            if any(s["id"] == ea.id for s in structured_sample):
+                continue
+            ea_hash = hashlib.sha256(f"{ea.id}:{ea.artifact_type}".encode()).hexdigest()
+            structured_sample.append({
+                "id": ea.id,
+                "artifact_type": ea.artifact_type,
+                "source_reference": ea.source_reference or ea.path or "tool_artifact",
+                "execution_id": ea.execution_id,
+                "sha256_hash": ea_hash
+            })
+
         artifacts = {
-            "structured_count": len(structured_arts),
+            "structured_count": len(structured_arts) + len(exec_arts),
             "normalized_count": len(normalized_arts),
-            "structured_sample": [
-                {
-                    "id": a.id,
-                    "artifact_type": a.artifact_type,
-                    "source_reference": a.source_reference,
-                    "execution_id": a.execution_id,
-                    "sha256_hash": a.sha256_hash
-                }
-                for a in structured_arts[:50]
-            ],
+            "structured_sample": structured_sample,
             "normalized_sample": [
                 {
                     "id": n.id,
@@ -427,10 +447,15 @@ class FinalForensicReportService:
             ]
         }
 
-        # 9. Section 9: Findings (Deterministic + Governed AI Reasoning)
+        # 9. Section 9: Findings (Deterministic + Specialist Tools + Governed AI Reasoning)
         deterministic_findings = (
             db.query(DeterministicFinding)
             .filter(DeterministicFinding.case_id == case.id)
+            .all()
+        )
+        specialist_findings = (
+            db.query(Finding)
+            .filter(Finding.case_id == case.id)
             .all()
         )
         ai_reasoning_records = (
@@ -470,6 +495,37 @@ class FinalForensicReportService:
                 "investigator_rationale": inv_rationale,
                 "sha256_hash": df.sha256_hash,
                 "created_at": df.created_at.isoformat() if df.created_at else None
+            })
+
+        for sf in specialist_findings:
+            if any(f["id"] == sf.id for f in findings_list):
+                continue
+            is_grounded = bool(sf.evidence_id or sf.artifact_id or sf.evidence_reference)
+            ver_status = sf.verification_status or ("VERIFIED" if is_grounded else "UNVERIFIED")
+
+            revs = decisions_by_target.get(sf.id, [])
+            latest_rev = revs[-1] if revs else None
+            inv_decision = latest_rev.decision if latest_rev else "PENDING_REVIEW"
+            inv_rationale = latest_rev.comment if latest_rev else None
+
+            sf_hash = hashlib.sha256(f"{sf.id}:{sf.title}".encode()).hexdigest()
+            findings_list.append({
+                "id": sf.id,
+                "type": "SPECIALIST_FINDING",
+                "title": sf.title,
+                "finding_type": sf.finding_type or "specialist_finding",
+                "severity": sf.severity or "MEDIUM",
+                "confidence": sf.confidence if sf.confidence is not None else 0.85,
+                "classification": sf.classification or "FACT",
+                "supporting_evidence_ids": [sf.evidence_id] if sf.evidence_id else [],
+                "supporting_artifact_ids": [sf.artifact_id] if sf.artifact_id else [],
+                "mitre_techniques": [],
+                "verification_status": ver_status,
+                "is_grounded": is_grounded,
+                "investigator_decision": inv_decision,
+                "investigator_rationale": inv_rationale,
+                "sha256_hash": sf_hash,
+                "created_at": sf.created_at.isoformat() if sf.created_at else None
             })
 
         # Include AI Reasoning statements with strict FACT / INFERENCE / UNVERIFIED classification
@@ -515,10 +571,11 @@ class FinalForensicReportService:
                     "created_at": air.created_at.isoformat() if air.created_at else None
                 })
 
+        total_deterministic_or_specialist = len(deterministic_findings) + len(specialist_findings)
         findings_section = {
             "total_findings": len(findings_list),
-            "deterministic_count": len(deterministic_findings),
-            "ai_reasoning_claims_count": len(findings_list) - len(deterministic_findings),
+            "deterministic_count": total_deterministic_or_specialist,
+            "ai_reasoning_claims_count": len(findings_list) - total_deterministic_or_specialist,
             "items": findings_list
         }
 

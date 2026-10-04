@@ -1914,7 +1914,7 @@ class EvidenceVerifyRequest(BaseModel):
     notes: Optional[str] = None
 
 
-class EvidenceVerificationResponse(BaseModel):
+class GovernanceVerificationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
@@ -1932,6 +1932,10 @@ class EvidenceVerificationResponse(BaseModel):
     provenance: Dict[str, Any] = Field(default_factory=dict)
     timestamp: datetime
     sha256_hash: str
+
+
+# Backward compatibility alias
+EvidenceVerificationRecordResponse = GovernanceVerificationResponse
 
 
 class GovernanceAuditEventResponse(BaseModel):
