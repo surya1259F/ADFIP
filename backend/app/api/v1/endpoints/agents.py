@@ -41,6 +41,35 @@ router = APIRouter()
 
 
 @router.get(
+    "/agents",
+    response_model=List[Dict[str, Any]],
+    status_code=status.HTTP_200_OK
+)
+def list_global_specialist_agents(
+    enabled_only: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Returns all real registered specialist analysis agents and their capabilities.
+    """
+    agents = SpecialistAgentService.list_agents(db=db, enabled_only=enabled_only)
+    res = []
+    for a in agents:
+        res.append({
+            "id": a.id,
+            "name": a.name,
+            "domain": a.agent_type,
+            "status": a.lifecycle_status or "READY",
+            "capabilities": a.supported_analysis_capabilities,
+            "description": a.description,
+            "execution_mode": "Deterministic",
+            "is_deterministic": True
+        })
+    return res
+
+
+@router.get(
     "/cases/{case_id}/agents",
     response_model=List[SpecialistAgentResponse],
     status_code=status.HTTP_200_OK

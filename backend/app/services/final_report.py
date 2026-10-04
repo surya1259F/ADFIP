@@ -716,16 +716,35 @@ class FinalForensicReportService:
         gen_by = report_meta.get("generated_by") or "NOT_RECORDED"
         report_hash = report_meta.get("report_hash", "PENDING_HASH")
 
+        is_working = bool(
+            report_meta.get("is_working_export", False)
+            or (report_meta.get("options") or {}).get("working_export", False)
+        )
+        status_label = "WORKING EXPORT — NOT FINAL" if is_working else "OFFICIAL_FINAL"
+        report_title_header = "# ADFIP WORKING INVESTIGATION EXPORT (NOT FINAL)" if is_working else "# ADFIR OFFICIAL FINAL FORENSIC REPORT"
+
         lines = [
-            "# ADFIR OFFICIAL FINAL FORENSIC REPORT",
+            report_title_header,
             f"**Case Reference:** {case_info.get('case_number', 'N/A')} — {case_info.get('name', 'N/A')}  ",
-            f"**Report Version:** v{ver} | **Status:** OFFICIAL_FINAL | **Integrity:** {report_meta.get('integrity_status') or 'UNKNOWN'}  ",
+            f"**Report Version:** v{ver} | **Status:** {status_label} | **Integrity:** {report_meta.get('integrity_status') or 'UNKNOWN'}  ",
             f"**Lead Investigator:** {gen_by}  ",
             f"**Generated Date:** {gen_at}  ",
             f"**Canonical SHA-256 Hash:** `{report_hash}`  ",
             "",
             "---",
             "",
+        ]
+        if is_working:
+            lines.extend([
+                "> [!WARNING] WORKING EXPORT — NOT FINAL",
+                "> This document is a preliminary working export for operational investigative review.",
+                "> It has NOT passed full authoritative forensic readiness gates and is NOT certified as an official final forensic report.",
+                "",
+                "---",
+                "",
+            ])
+
+        lines.extend([
             "## SECTION 1: CASE INFORMATION",
             f"- **Case ID:** `{case_info.get('case_id')}`",
             f"- **Investigation Objective:** {case_info.get('objective')}",
@@ -733,7 +752,7 @@ class FinalForensicReportService:
             f"- **Current Case Status:** {case_info.get('status')}",
             f"- **Created At:** {case_info.get('created_at')}",
             "- **Authorized Case Investigators:**",
-        ]
+        ])
         for m in case_info.get("members", []):
             lines.append(f"  - {m.get('name')} ({m.get('email')}) — Role: `{m.get('role')}`")
 
@@ -897,6 +916,25 @@ class FinalForensicReportService:
         from backend.app.services.case_closure import check_case_not_closed
         check_case_not_closed(case)
 
+        is_working_export = bool(request_data.options.get("working_export", False)) if request_data.options else False
+        enforce_readiness = bool(request_data.options.get("enforce_readiness", False)) if request_data.options else False
+
+        # Strictly enforce the 14 forensic readiness gates when requested for OFFICIAL_FINAL reports
+        if enforce_readiness and not is_working_export:
+            from backend.app.services.report_readiness import ReportReadinessService
+            readiness = ReportReadinessService.evaluate(db=db, case=case, current_user=user)
+            if not readiness.ready:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={
+                        "code": "REPORT_NOT_READY",
+                        "message": "Report generation blocked by mandatory forensic readiness gates.",
+                        "passed_gates": readiness.passed_gates,
+                        "total_gates": readiness.total_gates,
+                        "blocking_reasons": [r.model_dump() for r in readiness.blocking_reasons]
+                    }
+                )
+
         # 1. Determine next version number for this case
         max_ver = db.query(func.max(Report.version)).filter(Report.case_id == case.id).scalar()
         next_ver = (max_ver or 0) + 1
@@ -920,13 +958,19 @@ class FinalForensicReportService:
             "integrity_status": integrity_status,
             "report_hash": canonical_hash,
             "methodology_notes": request_data.methodology_notes or "Deterministic multi-agent forensic verification pipeline",
+            "is_working_export": is_working_export,
             "options": request_data.options
         }
 
         # 5. Render markdown
         markdown_text = cls._render_markdown(sections, report_meta)
 
-        title = request_data.title or f"Final Forensic Report v{next_ver} — {case.name}"
+        default_title = (
+            f"Working Investigation Export v{next_ver} — {case.name}"
+            if is_working_export
+            else f"Final Forensic Report v{next_ver} — {case.name}"
+        )
+        title = request_data.title or default_title
         reviewed_count = sum(
             1
             for item in sections["findings"]["items"]
@@ -934,7 +978,7 @@ class FinalForensicReportService:
         )
 
         exec_summary = request_data.executive_summary_override or (
-            f"Final Forensic Report v{next_ver} for Case {case.case_number} ({case.name}). "
+            f"{'Working Investigation Export' if is_working_export else 'Final Forensic Report'} v{next_ver} for Case {case.case_number} ({case.name}). "
             f"Evaluated {len(sections['evidence_inventory'])} evidence container(s) across "
             f"{len(sections['tool_executions'])} recorded tool execution(s). "
             f"Recorded {len(sections['findings']['items'])} finding/claim item(s), "
@@ -987,7 +1031,7 @@ class FinalForensicReportService:
             evidence_count=len(sections["evidence_inventory"]),
             full_report_markdown=markdown_text,
             report_hash=canonical_hash,
-            status="OFFICIAL_FINAL",
+            status="WORKING_EXPORT" if is_working_export else "OFFICIAL_FINAL",
             sections=sections,
             provenance=provenance,
             report_metadata=report_meta,
@@ -1005,13 +1049,19 @@ class FinalForensicReportService:
         db.refresh(report)
 
         # 8. Log audit trail
+        audit_event_type = "WORKING_REPORT_EXPORTED" if is_working_export else "FINAL_REPORT_GENERATED"
+        audit_details = (
+            f"Exported Working Investigation v{report.version} (hash: {report.report_hash[:16]}...) with {report.findings_count} findings."
+            if is_working_export
+            else f"Synthesized Final Forensic Report v{report.version} (hash: {report.report_hash[:16]}...) with {report.findings_count} findings."
+        )
         log_audit_event(
             db=db,
             case_id=case.id,
             actor_id=user.id,
             actor_name=user.name or user.email,
-            event_type="FINAL_REPORT_GENERATED",
-            details=f"Synthesized Final Forensic Report v{report.version} (hash: {report.report_hash[:16]}...) with {report.findings_count} findings."
+            event_type=audit_event_type,
+            details=audit_details
         )
 
         return report

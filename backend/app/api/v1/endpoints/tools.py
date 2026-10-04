@@ -6,7 +6,8 @@ from forensic_tools.registry import tool_registry
 
 router = APIRouter()
 
-@router.get("/tools", response_model=List[ToolDefinitionResponse])
+@router.get("", response_model=List[ToolDefinitionResponse])
+@router.get("/", response_model=List[ToolDefinitionResponse])
 def list_registered_tools():
     """
     Returns the real registered forensic tool definitions and their live availability.

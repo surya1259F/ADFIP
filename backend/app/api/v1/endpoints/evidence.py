@@ -243,11 +243,16 @@ def verify_evidence(
         )
         return EvidenceVerificationResponse(
             evidence_id=evidence.id,
+            evidence_name=evidence.name,
             integrity_status="MISSING",
             expected_sha256=evidence.sha256,
             current_sha256="",
+            match=False,
+            vault_path=target_path,
+            vault_exists=False,
             read_only_verified=False,
             verified_at=datetime.now(timezone.utc),
+            verification_stage="CURRENT_PRESERVATION_CHECK",
             message=f"Evidence file missing from storage path: {target_path}"
         )
 
@@ -272,7 +277,7 @@ def verify_evidence(
             destination_path=target_path,
             sha256=current_sha256
         )
-        msg = f"Evidence integrity verified successfully. SHA-256: {current_sha256}"
+        msg = "Current SHA-256 of the preserved vault copy matches the SHA-256 recorded during evidence acquisition."
     else:
         evidence.integrity_status = "INTEGRITY_MISMATCH"
         evidence.status = "INTEGRITY_WARNING"
@@ -289,15 +294,20 @@ def verify_evidence(
             destination_path=target_path,
             sha256=current_sha256
         )
-        msg = f"CRITICAL: Evidence hash mismatch! Baseline: {evidence.sha256}, Current: {current_sha256}"
+        msg = f"CRITICAL: Cryptographic SHA-256 mismatch detected! Acquisition: {evidence.sha256}, Current Vault: {current_sha256}"
 
     return EvidenceVerificationResponse(
         evidence_id=evidence.id,
+        evidence_name=evidence.name,
         integrity_status=evidence.integrity_status,
         expected_sha256=evidence.sha256,
         current_sha256=current_sha256,
+        match=is_valid,
+        vault_path=target_path,
+        vault_exists=True,
         read_only_verified=ro_verified,
         verified_at=datetime.now(timezone.utc),
+        verification_stage="CURRENT_PRESERVATION_CHECK",
         message=msg
     )
 

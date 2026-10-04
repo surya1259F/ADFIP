@@ -275,7 +275,16 @@ class EvidenceIntelligenceEngine:
             signals.append({"method": "filename_extension", "signal": f"Log extension {ext}", "confidence": 0.7})
             return "EVENT_LOG", "LOG", "text_log", "PLAINTEXT_LOG", 0.7, signals
 
-        # Check if printable text file
+        # Check if YARA rule file
+        if ext in [".yar", ".yara"] or (b"rule " in header_bytes and b"condition" in header_bytes):
+            signals.append({"method": "yara_syntax_analysis", "signal": "YARA Rule Structure & Directives", "confidence": 1.0})
+            return "FILE", "YARA_RULE", "yara", "YARA_RULE_FILE", 1.0, signals
+
+        # Suspicious Binary / Test Marker Payload (e.g., .bin with suspicious marker or malware indicator)
+        if ext in [".bin", ".dat", ".payload"] and ("yara" in name or "malware" in name or "suspicious" in name or b"YARA_MARKER" in header_bytes):
+            signals.append({"method": "binary_heuristic_marker", "signal": "Suspicious Payload / Binary Test Marker Detected", "confidence": 0.9})
+            return "MALWARE_SAMPLE", "SUSPICIOUS_BINARY", "binary", "GENERIC_SUSPICIOUS_BINARY", 0.9, signals
+
         # Printable Text Check
         sample = header_bytes[:512]
         if sample:
@@ -580,9 +589,11 @@ class EvidenceIntelligenceEngine:
             tool_candidates.append(("sleuthkit", "SleuthKit (fls)", "File system structures and volume analysis."))
         elif classification in ["MEMORY_DUMP", "MINIDUMP"]:
             tool_candidates.append(("volatility3", "Volatility 3", "Memory forensics process enumeration and artifact extraction."))
-        elif classification in ["PE_EXECUTABLE", "ELF_EXECUTABLE", "MACHO_EXECUTABLE"]:
+        elif classification in ["PE_EXECUTABLE", "ELF_EXECUTABLE", "MACHO_EXECUTABLE", "SUSPICIOUS_BINARY", "MALWARE_SAMPLE"]:
             tool_candidates.append(("yara", "YARA Pattern Matcher", "Malware signature rules scanning."))
             tool_candidates.append(("exiftool", "ExifTool", "Binary metadata and header extraction."))
+        elif classification == "YARA_RULE":
+            tool_candidates.append(("yara", "YARA Pattern Matcher", "YARA rule inspection and signature syntax validation."))
         elif classification == "WINDOWS_EVENT_LOG":
             tool_candidates.append(("python-evtx", "python-evtx Log Parser", "Windows Event Log record parsing."))
         elif classification in ["IMAGE", "DOCUMENT", "ARCHIVE", "TEXT", "GENERIC_BINARY"]:

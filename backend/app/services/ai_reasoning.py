@@ -363,6 +363,38 @@ class AIReasoningService:
             has_key=bool(api_key_plain)
         )
 
+    @classmethod
+    async def list_models(
+        cls,
+        db: Session,
+        user: User,
+        provider: Optional[str] = None,
+        case_id: Optional[str] = None
+    ) -> List[str]:
+        """
+        Dynamically discovers and lists supported models for the provider.
+        Safely uses configured encrypted credentials without leaking them.
+        """
+        cfg = cls.get_provider_config(db, user, case_id)
+        effective_provider = (provider or (cfg.provider if cfg else "gemini")).lower().strip()
+        api_key_plain = decrypt_credential(cfg.api_key_encrypted) if cfg and cfg.api_key_encrypted else None
+        endpoint_url = cfg.endpoint if cfg else None
+
+        try:
+            adapter = get_ai_adapter(effective_provider)
+            return await adapter.list_models(api_key=api_key_plain, base_url=endpoint_url)
+        except Exception as e:
+            logger.warning(f"Error listing models for provider '{effective_provider}': {ProviderError._sanitize(str(e))}")
+            if effective_provider in ("gemini", "google"):
+                return ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+            elif effective_provider == "openai":
+                return ["gpt-4o", "gpt-4o-mini", "o3-mini"]
+            elif effective_provider == "anthropic":
+                return ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"]
+            elif effective_provider == "local_openai":
+                return ["llama3", "mistral", "phi3"]
+            return ["adfir-deterministic-engine"]
+
     # -------------------------------------------------------------------------
     # 2. CONTEXT EXTRACTION & STRICT EGRESS SANITIZATION
     # -------------------------------------------------------------------------

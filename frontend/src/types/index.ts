@@ -566,11 +566,20 @@ export interface UserProfile {
   name: string;
   organization: string;
   badge_id?: string | null;
+  badge_number?: string | null;
+  avatar_url?: string | null;
   role: string;
   is_active: boolean;
   created_at: string;
   roles?: string[];
   permissions?: string[];
+}
+
+export interface UserProfileUpdateRequest {
+  name?: string;
+  badge_id?: string;
+  badge_number?: string;
+  avatar_url?: string;
 }
 
 export interface UserLoginRequest {
@@ -1022,6 +1031,34 @@ export interface ForensicReportProvenanceResponse {
   graph: Record<string, any>;
   node_counts: Record<string, number>;
   report_hash: string;
+}
+
+export interface BlockingReason {
+  code: string;
+  description: string;
+  count?: number;
+  references?: string[];
+}
+
+export interface ReadinessGateResult {
+  gate_number: number;
+  code: string;
+  name: string;
+  passed: boolean;
+  description: string;
+  blocking_reason?: BlockingReason;
+}
+
+export interface CaseReadinessReport {
+  case_id: string;
+  ready: boolean;
+  status: string; // READY | BLOCKED
+  code: string; // REPORT_READY | REPORT_NOT_READY
+  passed_gates: number;
+  total_gates: number;
+  blocking_reasons: BlockingReason[];
+  gates: ReadinessGateResult[];
+  evaluated_at: string;
 }
 
 

@@ -23,6 +23,7 @@ from backend.app.api.v1.endpoints import (
     strategy,
     system,
     timeline,
+    tools,
     users,
 )
 
@@ -163,3 +164,11 @@ api_router.include_router(
     prefix="/cases",
     tags=["Recovery"],
 )
+
+# Forensic tool registry
+api_router.include_router(
+    tools.router,
+    prefix="/tools",
+    tags=["Tools"],
+)
+

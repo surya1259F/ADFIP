@@ -31,6 +31,7 @@ class User(Base):
     name = Column(String, nullable=False)
     organization = Column(String, default="Digital Forensics Unit", nullable=False)
     badge_id = Column(String, nullable=True)
+    avatar_url = Column(String, nullable=True)
     role = Column(String, default="INVESTIGATOR", nullable=False) # ADMIN, INVESTIGATOR, ANALYST, VIEWER
     is_active = Column(Boolean, default=True, nullable=False)
     password_hash = Column(String, nullable=True)

@@ -12,10 +12,12 @@ from backend.app.schemas.schemas import (
     ForensicReportVersionItem,
     ForensicReportGenerateRequest,
     ForensicReportIntegrityResponse,
-    ForensicReportProvenanceResponse
+    ForensicReportProvenanceResponse,
+    CaseReadinessReport
 )
 from backend.app.services.authorization import get_authorized_case
 from backend.app.services.final_report import FinalForensicReportService
+from backend.app.services.report_readiness import ReportReadinessService
 from agents.report.report_synthesizer import ReportSynthesizer
 
 router = APIRouter()
@@ -241,6 +243,30 @@ def api_generate_case_report_v2(
     return handle_generate_report(case_id, request_data, db, current_user)
 
 
+@case_reports_router.get("/cases/{case_id}/reports/readiness", response_model=CaseReadinessReport)
+def api_get_case_report_readiness(
+    case_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    case = get_authorized_case(case_id, db, current_user)
+    return ReportReadinessService.evaluate(db=db, case=case, current_user=current_user)
+
+
+@case_reports_router.post("/cases/{case_id}/reports/working-export", response_model=ForensicReportResponse)
+def api_generate_case_working_export(
+    case_id: str,
+    request_data: Optional[ForensicReportGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    req = request_data or ForensicReportGenerateRequest()
+    if not req.options:
+        req.options = {}
+    req.options["working_export"] = True
+    return handle_generate_report(case_id, req, db, current_user)
+
+
 @case_reports_router.get("/cases/{case_id}/reports", response_model=List[ForensicReportVersionItem])
 def api_list_case_reports(
     case_id: str,
@@ -312,6 +338,30 @@ def alias_generate_case_report(
     current_user: User = Depends(get_current_active_user)
 ):
     return handle_generate_report(case_id, request_data, db, current_user)
+
+
+@router.get("/{case_id}/readiness", response_model=CaseReadinessReport)
+def alias_get_case_report_readiness(
+    case_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    case = get_authorized_case(case_id, db, current_user)
+    return ReportReadinessService.evaluate(db=db, case=case, current_user=current_user)
+
+
+@router.post("/{case_id}/working-export", response_model=ForensicReportResponse)
+def alias_generate_case_working_export(
+    case_id: str,
+    request_data: Optional[ForensicReportGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    req = request_data or ForensicReportGenerateRequest()
+    if not req.options:
+        req.options = {}
+    req.options["working_export"] = True
+    return handle_generate_report(case_id, req, db, current_user)
 
 
 @router.get("/{case_id}/versions", response_model=List[ForensicReportVersionItem])

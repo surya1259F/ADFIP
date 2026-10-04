@@ -10,6 +10,7 @@ interface AuthState {
   user: UserProfile | null;
   token: string | null;
   login: (token: string, user: UserProfile) => void;
+  updateUser: (user: UserProfile) => void;
   logout: () => Promise<void>;
   restore: () => Promise<void>;
   handleUnauthorized: () => void;
@@ -23,6 +24,10 @@ export const useAuthStore = create<AuthState>((set) => ({
   login: (token: string, user: UserProfile) => {
     sessionStorage.setItem('adfip_token', token);
     set({ status: 'AUTHENTICATED', token, user });
+  },
+
+  updateUser: (user: UserProfile) => {
+    set({ user });
   },
 
   logout: async () => {

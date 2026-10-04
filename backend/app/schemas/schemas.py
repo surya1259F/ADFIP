@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, model_validator, computed_field
 
@@ -257,12 +257,19 @@ class EvidenceResponse(BaseModel):
         return self
 
 class EvidenceVerificationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     evidence_id: str
+    evidence_name: Optional[str] = None
     integrity_status: str
     expected_sha256: str
     current_sha256: str
-    read_only_verified: bool
+    match: bool = False
+    vault_path: Optional[str] = None
+    vault_exists: bool = False
+    read_only_verified: bool = False
     verified_at: datetime
+    verification_stage: str = "CURRENT_PRESERVATION_CHECK"
     message: str
 
 class EvidenceAcquisitionCreateRequest(BaseModel):
@@ -472,9 +479,16 @@ class ToolDefinitionResponse(BaseModel):
     name: str
     version: Optional[str] = None
     executable_path: str
+    path: Optional[str] = None
+    installed: bool = False
+    available: bool = False
+    is_available: bool
+    is_library_adapter: bool = False
+    capabilities: List[str] = Field(default_factory=list)
+    evidence_types: List[str] = Field(default_factory=list)
     supported_evidence: List[str] = Field(default_factory=list)
     capabilities_json: Dict[str, Any] = Field(default_factory=dict)
-    is_available: bool
+    status: str = "REGISTERED"
 
 class ToolExecutionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -928,6 +942,8 @@ class UserAdminUpdateRequest(BaseModel):
 class UserProfileUpdateRequest(BaseModel):
     name: Optional[str] = None
     badge_id: Optional[str] = None
+    badge_number: Optional[str] = None
+    avatar_url: Optional[str] = None
 
 
 class UserResponse(BaseModel):
@@ -938,10 +954,20 @@ class UserResponse(BaseModel):
     name: str
     organization: str
     badge_id: Optional[str] = None
+    badge_number: Optional[str] = None
+    avatar_url: Optional[str] = None
     role: str
     is_active: bool
     created_at: datetime
     last_login_at: Optional[datetime] = None
+
+    @model_validator(mode="after")
+    def sync_badge_number(self):
+        if not self.badge_number and self.badge_id:
+            self.badge_number = self.badge_id
+        elif not self.badge_id and self.badge_number:
+            self.badge_id = self.badge_number
+        return self
 
     @computed_field
     @property
@@ -2169,6 +2195,9 @@ class ReviewItemsResponse(BaseModel):
     deterministic_findings: List[Dict[str, Any]] = Field(default_factory=list)
     ai_reasoning_records: List[Dict[str, Any]] = Field(default_factory=list)
     existing_reviews: List[InvestigatorReviewResponse] = Field(default_factory=list)
+    total_reviewable_claims: int = 0
+    pending_claims_count: int = 0
+    reviewed_claims_count: int = 0
     summary: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -2280,6 +2309,34 @@ class ForensicReportProvenanceResponse(BaseModel):
     graph: Dict[str, Any] = Field(default_factory=dict)
     node_counts: Dict[str, int] = Field(default_factory=dict)
     report_hash: str
+
+
+class BlockingReason(BaseModel):
+    code: str
+    description: str
+    count: Optional[int] = None
+    references: List[str] = Field(default_factory=list)
+
+
+class ReadinessGateResult(BaseModel):
+    gate_number: int
+    code: str
+    name: str
+    passed: bool
+    description: str
+    blocking_reason: Optional[BlockingReason] = None
+
+
+class CaseReadinessReport(BaseModel):
+    case_id: str
+    ready: bool
+    status: str  # READY | BLOCKED
+    code: str  # REPORT_READY | REPORT_NOT_READY
+    passed_gates: int
+    total_gates: int = 14
+    blocking_reasons: List[BlockingReason] = Field(default_factory=list)
+    gates: List[ReadinessGateResult] = Field(default_factory=list)
+    evaluated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 # =============================================================================

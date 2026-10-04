@@ -116,6 +116,13 @@ class BaseAIAdapter(ABC):
     async def generate(self, req: ProviderRequest) -> ProviderResponse:
         pass
 
+    async def list_models(
+        self,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None
+    ) -> List[str]:
+        return [self.default_model]
+
 
 class OpenAIAdapter(BaseAIAdapter):
     DEFAULT_BASE_URL = "https://api.openai.com/v1"
@@ -389,7 +396,13 @@ class GeminiAdapter(BaseAIAdapter):
     @staticmethod
     def _categorize_http_status(status_code: int, response_text: str = "") -> str:
         text_lower = response_text.lower()
-        if status_code in (401, 403) or "api_key_invalid" in text_lower or "api key not valid" in text_lower or "unauthenticated" in text_lower or "permission_denied" in text_lower:
+        if (
+            status_code in (401, 403)
+            or "api_key_invalid" in text_lower
+            or "api key not valid" in text_lower
+            or "unauthenticated" in text_lower
+            or "permission_denied" in text_lower
+        ):
             return "AUTHENTICATION_ERROR"
         if status_code == 404 or "not found" in text_lower or "is not supported for generatecontent" in text_lower:
             return "MODEL_UNAVAILABLE"
@@ -411,6 +424,38 @@ class GeminiAdapter(BaseAIAdapter):
         if name.startswith("models/"):
             return name[7:]
         return name
+
+    async def list_models(
+        self,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None
+    ) -> List[str]:
+        fallback_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+        if not api_key:
+            return fallback_models
+        target_url = (base_url or self.DEFAULT_BASE_URL).rstrip("/")
+        try:
+            self._validate_https_url(target_url, is_local=False)
+            headers = {"x-goog-api-key": api_key}
+            async with self._get_client() as client:
+                res = await client.get(f"{target_url}/models", headers=headers)
+                if res.status_code == 200:
+                    data = res.json()
+                    models_raw = data.get("models", [])
+                    discovered = []
+                    for m in models_raw:
+                        methods = m.get("supportedGenerationMethods", [])
+                        if "generateContent" in methods:
+                            clean_name = m.get("name", "").replace("models/", "")
+                            if clean_name and not clean_name.endswith("-tuning") and not clean_name.startswith("text-embedding"):
+                                discovered.append(clean_name)
+                    return discovered if discovered else fallback_models
+                else:
+                    logger.warning(f"Could not fetch Gemini models (HTTP {res.status_code}): {ProviderError._sanitize(res.text)}")
+                    return fallback_models
+        except Exception as e:
+            logger.warning(f"Gemini list_models error: {ProviderError._sanitize(str(e))}")
+            return fallback_models
 
     async def test_connection(
         self,

@@ -32,6 +32,7 @@ async def lifespan(app: FastAPI):
     settings.CASES_DIR.mkdir(parents=True, exist_ok=True)
     settings.REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     settings.LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    (settings.DATA_DIR / "avatars").mkdir(parents=True, exist_ok=True)
 
     # Run Alembic migrations
     from backend.app.core.migrations import run_db_migrations
@@ -40,15 +41,22 @@ async def lifespan(app: FastAPI):
     logging.getLogger("uvicorn.error").setLevel(logging.INFO)
     logging.getLogger("uvicorn.access").setLevel(logging.INFO)
 
-    # Ensure RevokedToken and OAuth tables exist (created if missing, safe on existing DBs)
+    # Ensure RevokedToken, OAuth tables, and required user columns exist
     try:
         from backend.app.models.models import RevokedToken, UserExternalIdentity, OAuthState, OAuthExchangeCode
         RevokedToken.__table__.create(bind=engine, checkfirst=True)
         UserExternalIdentity.__table__.create(bind=engine, checkfirst=True)
         OAuthState.__table__.create(bind=engine, checkfirst=True)
         OAuthExchangeCode.__table__.create(bind=engine, checkfirst=True)
+
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            user_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(users)"))]
+            if "avatar_url" not in user_cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN avatar_url VARCHAR"))
+                conn.commit()
     except Exception as exc:
-        logger.warning(f"Could not ensure auth tables: {exc}")
+        logger.warning(f"Could not ensure auth tables/columns: {exc}")
 
 
     yield

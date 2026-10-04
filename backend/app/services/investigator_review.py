@@ -223,32 +223,80 @@ class InvestigatorReviewService:
                 "created_at": ar.created_at.isoformat() if ar.created_at else None
             })
 
-        # 4. Existing Reviews
+        # 4. Existing Reviews & Latest Decision Grouping
         reviews_query = db.query(InvestigatorReviewRecord).filter(
             InvestigatorReviewRecord.case_id == case.id
         ).order_by(InvestigatorReviewRecord.created_at.desc()).all()
 
         reviews_list = [InvestigatorReviewResponse.model_validate(r) for r in reviews_query]
 
-        # 5. Summary Statistics
-        decisions_count = {
+        # Extract latest decision per unique target
+        latest_review_per_target: Dict[str, InvestigatorReviewRecord] = {}
+        for r in reviews_query:
+            if r.target_id not in latest_review_per_target:
+                latest_review_per_target[r.target_id] = r
+
+        # Attach latest review state to each finding item
+        for f_item in findings_items:
+            latest = latest_review_per_target.get(f_item["id"])
+            f_item["latest_decision"] = latest.decision if latest else None
+            f_item["latest_review_id"] = latest.id if latest else None
+            f_item["latest_review_comment"] = latest.comment if latest else None
+            f_item["latest_reviewed_at"] = latest.created_at.isoformat() if latest else None
+            f_item["is_reviewed"] = bool(latest)
+
+        # Attach latest review state to each AI reasoning item
+        for ar_item in ai_items:
+            latest = latest_review_per_target.get(ar_item["id"])
+            ar_item["latest_decision"] = latest.decision if latest else None
+            ar_item["is_reviewed"] = bool(latest)
+
+        # 5. Strict Unique Summary Statistics
+        finding_ids = {f["id"] for f in findings_items}
+        reviewed_finding_ids = {
+            r.target_id for r in reviews_query
+            if r.target_type == "FINDING" and r.target_id in finding_ids
+        }
+        reviewed_findings_count = len(reviewed_finding_ids)
+        pending_findings_count = max(0, len(finding_ids) - reviewed_findings_count)
+
+        ai_ids = {ar["id"] for ar in ai_items}
+        reviewed_ai_ids = {
+            r.target_id for r in reviews_query
+            if r.target_type == "AI_REASONING" and r.target_id in ai_ids
+        }
+        reviewed_ai_count = len(reviewed_ai_ids)
+        pending_ai_count = max(0, len(ai_ids) - reviewed_ai_count)
+
+        total_reviewable = len(finding_ids) + len(ai_ids)
+        total_reviewed = reviewed_findings_count + reviewed_ai_count
+        total_pending = pending_findings_count + pending_ai_count
+
+        # Decision breakdown per unique target's latest review
+        unique_decisions_count = {
             "ACCEPT": 0,
             "CHALLENGE": 0,
             "REJECT": 0,
             "REQUEST_MORE_EVIDENCE": 0
         }
-        for r in reviews_query:
-            if r.decision in decisions_count:
-                decisions_count[r.decision] += 1
+        for target_id, r in latest_review_per_target.items():
+            if r.decision in unique_decisions_count:
+                unique_decisions_count[r.decision] += 1
 
         summary = {
             "total_evidence_items": len(evidence_items),
             "total_findings": len(findings_items),
             "total_ai_reasoning_records": len(ai_items),
             "total_reviews": len(reviews_query),
-            "decisions_breakdown": decisions_count,
-            "pending_review_findings": max(0, len(findings_items) - len([r for r in reviews_query if r.target_type == "FINDING"])),
-            "pending_review_ai_claims": max(0, len(ai_items) - len([r for r in reviews_query if r.target_type == "AI_REASONING"]))
+            "unique_reviewed_findings": reviewed_findings_count,
+            "reviewed_findings": reviewed_findings_count,
+            "pending_review_findings": pending_findings_count,
+            "unique_reviewed_ai_claims": reviewed_ai_count,
+            "pending_review_ai_claims": pending_ai_count,
+            "total_reviewable_claims": total_reviewable,
+            "pending_claims_count": total_pending,
+            "reviewed_claims_count": total_reviewed,
+            "decisions_breakdown": unique_decisions_count,
         }
 
         return ReviewItemsResponse(
@@ -257,6 +305,9 @@ class InvestigatorReviewService:
             deterministic_findings=findings_items,
             ai_reasoning_records=ai_items,
             existing_reviews=reviews_list,
+            total_reviewable_claims=total_reviewable,
+            pending_claims_count=total_pending,
+            reviewed_claims_count=total_reviewed,
             summary=summary
         )
 

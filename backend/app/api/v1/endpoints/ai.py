@@ -177,6 +177,19 @@ def get_provider_status(
     }
 
 
+@router.get("/provider/models", response_model=List[str])
+@router.get("/ai/provider/models", response_model=List[str])
+async def get_provider_models(
+    provider: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Discovers and lists supported models for the AI provider dynamically.
+    """
+    return await AIReasoningService.list_models(db, current_user, provider=provider)
+
+
 @router.post("/provider/test-connection", response_model=AIProviderConnectionTestResponse)
 @router.post("/ai/provider/test-connection", response_model=AIProviderConnectionTestResponse)
 async def test_provider_connection_endpoint(

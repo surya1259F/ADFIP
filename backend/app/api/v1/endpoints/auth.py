@@ -2,8 +2,9 @@ import html
 import urllib.parse
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import HTMLResponse
+from pathlib import Path
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status, UploadFile, File
+from fastapi.responses import HTMLResponse, FileResponse
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import settings
@@ -186,8 +187,12 @@ def update_current_user_profile(
             )
         current_user.name = clean_name
 
-    if req.badge_id is not None:
-        current_user.badge_id = req.badge_id.strip() if req.badge_id else None
+    badge_val = req.badge_number if req.badge_number is not None else req.badge_id
+    if badge_val is not None:
+        current_user.badge_id = badge_val.strip() if badge_val else None
+
+    if req.avatar_url is not None:
+        current_user.avatar_url = req.avatar_url.strip() if req.avatar_url else None
 
     db.commit()
     db.refresh(current_user)
@@ -199,6 +204,134 @@ def update_current_user_profile(
         actor_name=current_user.name,
         event_type="USER_PROFILE_UPDATED",
         details=f"User '{current_user.email}' updated profile.",
+    )
+
+    return current_user
+
+
+@router.post("/profile/avatar", response_model=UserResponse)
+async def upload_user_avatar(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Uploads a new avatar image for the investigator (max 2MB, PNG/JPEG/WEBP).
+    """
+    allowed_types = {"image/png": "png", "image/jpeg": "jpg", "image/jpg": "jpg", "image/webp": "webp"}
+    content_type = (file.content_type or "").lower().strip()
+    if content_type not in allowed_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid image format. Allowed formats are PNG, JPEG, and WebP."
+        )
+
+    content = await file.read()
+    if len(content) > 2 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Avatar image size exceeds the maximum limit of 2MB."
+        )
+
+    ext = allowed_types[content_type]
+    avatar_dir = settings.DATA_DIR / "avatars"
+    avatar_dir.mkdir(parents=True, exist_ok=True)
+
+    for old_ext in ("png", "jpg", "jpeg", "webp"):
+        old_file = avatar_dir / f"{current_user.id}.{old_ext}"
+        if old_file.exists():
+            try:
+                old_file.unlink()
+            except Exception:
+                pass
+
+    avatar_path = avatar_dir / f"{current_user.id}.{ext}"
+    with open(avatar_path, "wb") as f:
+        f.write(content)
+
+    timestamp = int(datetime.now(timezone.utc).timestamp())
+    current_user.avatar_url = f"/api/v1/auth/profile/avatar?t={timestamp}"
+    db.commit()
+    db.refresh(current_user)
+
+    log_audit_event(
+        db=db,
+        case_id=None,
+        actor_id=current_user.id,
+        actor_name=current_user.name,
+        event_type="USER_AVATAR_UPDATED",
+        details=f"User '{current_user.email}' updated avatar image."
+    )
+
+    return current_user
+
+
+@router.get("/profile/avatar")
+def get_user_avatar(
+    current_user: Optional[User] = Depends(get_current_user_optional)
+):
+    """
+    Retrieves the current investigator's avatar image.
+    """
+    if not current_user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated.")
+
+    avatar_dir = settings.DATA_DIR / "avatars"
+    for ext in ("png", "jpg", "jpeg", "webp"):
+        file_path = avatar_dir / f"{current_user.id}.{ext}"
+        if file_path.exists():
+            media_type = "image/png" if ext == "png" else "image/webp" if ext == "webp" else "image/jpeg"
+            return FileResponse(path=str(file_path), media_type=media_type)
+
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Avatar image not found.")
+
+
+@router.get("/users/{user_id}/avatar")
+def get_user_avatar_by_id(
+    user_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Retrieves avatar image for a given user ID.
+    """
+    avatar_dir = settings.DATA_DIR / "avatars"
+    for ext in ("png", "jpg", "jpeg", "webp"):
+        file_path = avatar_dir / f"{user_id}.{ext}"
+        if file_path.exists():
+            media_type = "image/png" if ext == "png" else "image/webp" if ext == "webp" else "image/jpeg"
+            return FileResponse(path=str(file_path), media_type=media_type)
+
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Avatar image not found.")
+
+
+@router.delete("/profile/avatar", response_model=UserResponse)
+def delete_user_avatar(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Deletes the current investigator's avatar image.
+    """
+    avatar_dir = settings.DATA_DIR / "avatars"
+    for ext in ("png", "jpg", "jpeg", "webp"):
+        file_path = avatar_dir / f"{current_user.id}.{ext}"
+        if file_path.exists():
+            try:
+                file_path.unlink()
+            except Exception:
+                pass
+
+    current_user.avatar_url = None
+    db.commit()
+    db.refresh(current_user)
+
+    log_audit_event(
+        db=db,
+        case_id=None,
+        actor_id=current_user.id,
+        actor_name=current_user.name,
+        event_type="USER_AVATAR_DELETED",
+        details=f"User '{current_user.email}' removed avatar image."
     )
 
     return current_user

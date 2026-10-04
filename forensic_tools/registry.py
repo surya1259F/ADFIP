@@ -279,7 +279,7 @@ class PlatformAwareToolRegistry:
             path=exif_path,
             version=exif_ver,
             is_available=exif_path is not None,
-            supported_evidence_types=["file", "document", "archive"],
+            supported_evidence_types=["file", "document", "archive", "image", "audio", "video", "metadata"],
             capabilities=["metadata_extraction"],
             description="Read and parse metadata in digital images, documents, and files."
         )

@@ -165,8 +165,14 @@ class InvestigationPlanner:
                         f"Evidence '{ev_name}' ({ev_type}): python-evtx parser is {status_reason}. Cannot plan event log analysis. Requires specialist manual triage."
                     )
 
-            # 4. Executable / Malware Evidence -> YARA -> signature_scan
-            elif ev_type in ["executable", "suspicious_file", "malware", "pe_executable", "elf_executable"] or src_kind == "malware_sample":
+            # 4. Executable / Malware / Suspicious Binary Evidence -> YARA -> signature_scan
+            elif (
+                ev_type in ["executable", "suspicious_file", "malware", "pe_executable", "elf_executable", "suspicious_binary", "yara_rule"]
+                or src_kind in ["malware_sample"]
+                or "yara" in ev_name.lower()
+                or "malware" in ev_name.lower()
+                or "payload" in ev_name.lower()
+            ):
                 yara = self.registry.get_tool("yara")
                 req_cap = "signature_scan"
                 if yara and yara.is_available and yara.has_capability(req_cap):
@@ -200,7 +206,7 @@ class InvestigationPlanner:
                         f"Evidence '{ev_name}' ({ev_type}): YARA tool is {status_reason}. Cannot plan signature scanning. Requires specialist manual triage."
                     )
 
-            # 5. File / Document / Archive / Text / Generic Binary Metadata Evidence -> ExifTool -> metadata_extraction
+            # 5. File / Document / Archive / Image / Metadata Evidence -> ExifTool -> metadata_extraction
             elif ev_type in ["file", "document", "archive", "text", "generic_binary", "unknown", "image", "raw_image", "png", "jpeg", "jpg", "bmp", "tiff", "gif", "webp", "browser_artifact", "sqlite_database"] or src_kind in ["file", "archive", "browser_db", "image", "unknown"]:
                 exif = self.registry.get_tool("exiftool")
                 req_cap = "metadata_extraction"
@@ -239,7 +245,7 @@ class InvestigationPlanner:
             else:
                 summary_points.append(
                     f"Evidence '{ev_name}' classified as '{ev_type or 'unclassified'}': "
-                    f"No registered forensic tool capability available. Requires specialist manual triage."
+                    f"NO_COMPATIBLE_TOOL — No registered forensic tool capability available. Requires specialist manual triage."
                 )
 
         for t in tasks:

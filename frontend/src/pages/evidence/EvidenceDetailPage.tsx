@@ -81,14 +81,14 @@ export const EvidenceDetailPage: React.FC = () => {
           <h1 className="text-xl font-bold text-slate-900">{ev.name}</h1>
         </div>
         <Button
-          variant={alreadyVerified ? 'secondary' : 'primary'}
+          variant="primary"
           size="sm"
           icon={<ShieldCheck className="w-3.5 h-3.5" />}
           onClick={() => verifyMutation.mutate()}
-          disabled={alreadyVerified || verifyMutation.isPending}
+          disabled={verifyMutation.isPending}
           loading={verifyMutation.isPending}
         >
-          {alreadyVerified ? 'Integrity Verified' : 'Verify Integrity'}
+          {alreadyVerified ? 'Re-verify Vault Integrity' : 'Verify Integrity'}
         </Button>
       </div>
 
@@ -102,12 +102,12 @@ export const EvidenceDetailPage: React.FC = () => {
         </div>
       )}
 
-      {verifyMutation.isSuccess && !alreadyVerified && (
+      {(verifyMutation.isSuccess || alreadyVerified) && (
         <div className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded p-3 flex items-start gap-2">
           <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
           <div>
-            <p className="font-semibold text-emerald-800">Integrity Verified</p>
-            <p className="mt-0.5">Cryptographic SHA-256 integrity match confirmed against preserved vault image.</p>
+            <p className="font-semibold text-emerald-800">Preserved Vault Integrity Verified</p>
+            <p className="mt-0.5">Current SHA-256 of the preserved vault copy matches the SHA-256 recorded during evidence acquisition.</p>
           </div>
         </div>
       )}

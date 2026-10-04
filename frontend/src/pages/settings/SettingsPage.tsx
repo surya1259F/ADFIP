@@ -13,6 +13,8 @@ import {
   ExternalLink,
   RefreshCw,
   Radio,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { SectionHeader } from '../../components/ui/SectionHeader';
@@ -21,6 +23,7 @@ import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
 import { Badge } from '../../components/ui/Badge';
 import { useAuthStore } from '../../stores/authStore';
+import { useUIStore } from '../../stores/uiStore';
 import { aiService, type AIProviderConfigRequest } from '../../services/ai';
 import { normalizeError } from '../../services/client';
 
@@ -36,6 +39,7 @@ const PROVIDER_OPTIONS = [
 
 const MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = {
   gemini: [
+    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (Recommended)' },
     { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash (Fast Reasoning)' },
     { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro (Large Context & Deep Analysis)' },
   ],
@@ -99,6 +103,8 @@ const FORENSIC_AGENTS = [
 
 export const SettingsPage: React.FC = () => {
   const { user } = useAuthStore();
+  const theme = useUIStore((s) => s.theme);
+  const setTheme = useUIStore((s) => s.setTheme);
   const qc = useQueryClient();
   const [activeTab, setActiveTab] = useState<SettingsTab>('account');
 
@@ -576,6 +582,41 @@ export const SettingsPage: React.FC = () => {
               <p>
                 • <strong>No Plaintext Storage:</strong> ADFIP never writes user passwords or raw API keys to persistent local storage, IndexedDB, cookies, or debug logs.
               </p>
+            </div>
+          </Card>
+
+          <Card className="bg-white border-stone-200 space-y-4">
+            <SectionHeader
+              title="Appearance & Theme"
+              description="Customize workstation visual theme for long forensic examination sessions."
+              size="sm"
+            />
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setTheme('light')}
+                className={`flex-1 p-3 rounded-lg border text-xs font-medium flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  theme === 'light'
+                    ? 'bg-stone-100 border-slate-700 text-slate-900 font-semibold ring-1 ring-slate-700'
+                    : 'bg-white border-stone-200 text-slate-600 hover:bg-stone-50'
+                }`}
+              >
+                <Sun className="w-4 h-4 text-amber-500 shrink-0" />
+                <span>Light Theme (Standard Cream / Glass)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setTheme('dark')}
+                className={`flex-1 p-3 rounded-lg border text-xs font-medium flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  theme === 'dark'
+                    ? 'bg-slate-800 border-slate-600 text-white font-semibold ring-1 ring-slate-400'
+                    : 'bg-white border-stone-200 text-slate-600 hover:bg-stone-50'
+                }`}
+              >
+                <Moon className="w-4 h-4 text-slate-400 shrink-0" />
+                <span>Dark Theme (Night / Low Light)</span>
+              </button>
             </div>
           </Card>
         </div>

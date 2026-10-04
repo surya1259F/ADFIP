@@ -66,6 +66,9 @@ const ReviewFindingRow: React.FC<{
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['cases', caseId, 'review'] });
+      qc.invalidateQueries({ queryKey: ['cases', caseId, 'findings'] });
+      qc.invalidateQueries({ queryKey: ['cases', caseId, 'reports'] });
+      qc.invalidateQueries({ queryKey: ['cases', caseId] });
       setReviewOpen(false);
       setComment('');
       setErr(null);

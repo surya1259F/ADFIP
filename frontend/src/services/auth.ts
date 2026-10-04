@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import type { UserProfile, TokenResponse, UserLoginRequest, UserRegisterRequest } from '../types';
+import type { UserProfile, TokenResponse, UserLoginRequest, UserRegisterRequest, UserProfileUpdateRequest } from '../types';
 
 export interface GoogleStatusResponse {
   google_configured: boolean;
@@ -37,6 +37,25 @@ export const authService = {
   me: async (token?: string): Promise<UserProfile> => {
     const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
     const res = await apiClient.get<UserProfile>('/auth/me', { headers });
+    return res.data;
+  },
+
+  updateProfile: async (data: UserProfileUpdateRequest): Promise<UserProfile> => {
+    const res = await apiClient.patch<UserProfile>('/auth/profile', data);
+    return res.data;
+  },
+
+  uploadAvatar: async (file: File): Promise<UserProfile> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await apiClient.post<UserProfile>('/auth/profile/avatar', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return res.data;
+  },
+
+  deleteAvatar: async (): Promise<UserProfile> => {
+    const res = await apiClient.delete<UserProfile>('/auth/profile/avatar');
     return res.data;
   },
 

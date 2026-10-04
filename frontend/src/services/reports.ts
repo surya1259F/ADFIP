@@ -1,7 +1,18 @@
 import { apiClient } from './client';
-import type { ForensicReportResponse, ForensicReportVersionItem, ForensicReportGenerateRequest, ForensicReportIntegrityResponse } from '../types';
+import type {
+  ForensicReportResponse,
+  ForensicReportVersionItem,
+  ForensicReportGenerateRequest,
+  ForensicReportIntegrityResponse,
+  CaseReadinessReport
+} from '../types';
 
 export const reportsService = {
+  getReadiness: async (caseId: string): Promise<CaseReadinessReport> => {
+    const res = await apiClient.get<CaseReadinessReport>(`/cases/${caseId}/reports/readiness`);
+    return res.data;
+  },
+
   list: async (caseId: string): Promise<ForensicReportVersionItem[]> => {
     const res = await apiClient.get<ForensicReportVersionItem[]>(`/cases/${caseId}/reports`);
     return res.data;
@@ -19,6 +30,11 @@ export const reportsService = {
 
   generate: async (caseId: string, data?: ForensicReportGenerateRequest): Promise<ForensicReportResponse> => {
     const res = await apiClient.post<ForensicReportResponse>(`/cases/${caseId}/reports/generate`, data || {});
+    return res.data;
+  },
+
+  generateWorkingExport: async (caseId: string, data?: ForensicReportGenerateRequest): Promise<ForensicReportResponse> => {
+    const res = await apiClient.post<ForensicReportResponse>(`/cases/${caseId}/reports/working-export`, data || {});
     return res.data;
   },
 
