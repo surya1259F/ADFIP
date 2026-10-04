@@ -376,3 +376,48 @@ def test_22_timeout_values_are_bounded():
     assert DEFAULT_TIMEOUT.read == 15.0
     assert DEFAULT_TIMEOUT.write == 5.0
 
+
+@pytest.mark.asyncio
+async def test_23_gemini_model_mapping_and_test_connection():
+    called_urls = []
+    def handler(request: httpx.Request):
+        called_urls.append(str(request.url))
+        assert request.headers["x-goog-api-key"] == MOCK_SECRET_KEY
+        return httpx.Response(200, json={
+            "candidates": [{"content": {"parts": [{"text": "pong"}]}}]
+        })
+
+    adapter = GeminiAdapter(transport=httpx.MockTransport(handler))
+    # Test connection with deprecated gemini-2.0-flash maps to gemini-1.5-flash
+    res = await adapter.test_connection(api_key=MOCK_SECRET_KEY, model="gemini-2.0-flash")
+    assert res.success is True
+    assert "gemini-1.5-flash" in res.status_message
+    assert any("models/gemini-1.5-flash:generateContent" in u for u in called_urls)
+
+
+@pytest.mark.asyncio
+async def test_24_gemini_error_categorization():
+    # 404 Model Unavailable
+    def handler_404(request: httpx.Request):
+        return httpx.Response(404, json={"error": {"code": 404, "message": "models/gemini-2.0-flash is not found for generateContent"}})
+
+    adapter = GeminiAdapter(transport=httpx.MockTransport(handler_404))
+    res = await adapter.test_connection(api_key=MOCK_SECRET_KEY, model="gemini-1.5-flash")
+    assert res.success is False
+    assert "[MODEL_UNAVAILABLE]" in res.status_message
+
+    # 429 Quota Exceeded
+    def handler_429(request: httpx.Request):
+        return httpx.Response(429, json={"error": {"code": 429, "message": "Resource exhausted: quota exceeded"}})
+
+    adapter_quota = GeminiAdapter(transport=httpx.MockTransport(handler_429))
+    res_quota = await adapter_quota.test_connection(api_key=MOCK_SECRET_KEY, model="gemini-1.5-flash")
+    assert res_quota.success is False
+    assert "[RATE_LIMIT / QUOTA_ERROR]" in res_quota.status_message
+
+    # Missing Key -> Configuration Error
+    res_nokey = await adapter.test_connection(api_key=None)
+    assert res_nokey.success is False
+    assert "[CONFIGURATION_ERROR]" in res_nokey.status_message
+
+

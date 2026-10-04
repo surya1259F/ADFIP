@@ -1,7 +1,7 @@
 import React from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ShieldCheck, Clock } from 'lucide-react';
+import { ShieldCheck, Clock, AlertCircle } from 'lucide-react';
 import { evidenceService } from '../../services/evidence';
 import { normalizeError } from '../../services/client';
 import { Card } from '../../components/ui/Card';
@@ -93,15 +93,23 @@ export const EvidenceDetailPage: React.FC = () => {
       </div>
 
       {verifyMutation.isError && (
-        <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">
-          {normalizeError(verifyMutation.error)}
-        </p>
+        <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-3 flex items-start gap-2">
+          <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="font-semibold text-red-800">Forensic Integrity Verification Error</p>
+            <p className="mt-0.5">{normalizeError(verifyMutation.error)}</p>
+          </div>
+        </div>
       )}
 
       {verifyMutation.isSuccess && !alreadyVerified && (
-        <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded p-2">
-          Integrity verification submitted successfully.
-        </p>
+        <div className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded p-3 flex items-start gap-2">
+          <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold text-emerald-800">Integrity Verified</p>
+            <p className="mt-0.5">Cryptographic SHA-256 integrity match confirmed against preserved vault image.</p>
+          </div>
+        </div>
       )}
 
       {/* Identity */}

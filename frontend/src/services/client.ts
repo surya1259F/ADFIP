@@ -63,10 +63,26 @@ apiClient.interceptors.response.use(
 
 export function normalizeError(error: unknown): string {
   if (axios.isAxiosError(error)) {
-    const detail = (error.response?.data as Record<string, unknown>)?.detail;
-    if (typeof detail === 'string') return detail;
-    if (Array.isArray(detail)) return detail.map((d: unknown) => (d as Record<string, unknown>)?.msg || String(d)).join(', ');
-    return error.message || 'An error occurred';
+    const data = error.response?.data as Record<string, unknown> | undefined;
+    const detail = data?.detail;
+    const reqId = (data?.request_id as string) || (error.response?.headers?.['x-request-id'] as string) || (error.response?.headers?.['x-correlation-id'] as string);
+    const statusCode = error.response?.status;
+    let baseMsg = 'An error occurred';
+
+    if (typeof detail === 'string') {
+      baseMsg = detail;
+    } else if (Array.isArray(detail)) {
+      baseMsg = detail.map((d: unknown) => (d as Record<string, unknown>)?.msg || String(d)).join(', ');
+    } else if (error.message) {
+      baseMsg = error.message;
+    }
+
+    if (reqId) {
+      return `${baseMsg} (Request ID: ${reqId}${statusCode ? `, HTTP ${statusCode}` : ''})`;
+    } else if (statusCode) {
+      return `${baseMsg} (HTTP ${statusCode})`;
+    }
+    return baseMsg;
   }
   if (error instanceof Error) return error.message;
   return 'An unknown error occurred';

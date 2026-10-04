@@ -107,7 +107,8 @@ class BaseAIAdapter(ABC):
     async def test_connection(
         self,
         api_key: Optional[str] = None,
-        base_url: Optional[str] = None
+        base_url: Optional[str] = None,
+        model: Optional[str] = None
     ) -> ConnectionTestResult:
         pass
 
@@ -126,7 +127,8 @@ class OpenAIAdapter(BaseAIAdapter):
     async def test_connection(
         self,
         api_key: Optional[str] = None,
-        base_url: Optional[str] = None
+        base_url: Optional[str] = None,
+        model: Optional[str] = None
     ) -> ConnectionTestResult:
         if not api_key:
             return ConnectionTestResult(
@@ -253,7 +255,8 @@ class AnthropicAdapter(BaseAIAdapter):
     async def test_connection(
         self,
         api_key: Optional[str] = None,
-        base_url: Optional[str] = None
+        base_url: Optional[str] = None,
+        model: Optional[str] = None
     ) -> ConnectionTestResult:
         if not api_key:
             return ConnectionTestResult(
@@ -383,21 +386,49 @@ class GeminiAdapter(BaseAIAdapter):
     def __init__(self, transport: Optional[httpx.AsyncBaseTransport] = None):
         super().__init__(ProviderId.GEMINI, self.DEFAULT_MODEL, transport)
 
+    @staticmethod
+    def _categorize_http_status(status_code: int, response_text: str = "") -> str:
+        text_lower = response_text.lower()
+        if status_code in (401, 403) or "api_key_invalid" in text_lower or "api key not valid" in text_lower or "unauthenticated" in text_lower or "permission_denied" in text_lower:
+            return "AUTHENTICATION_ERROR"
+        if status_code == 404 or "not found" in text_lower or "is not supported for generatecontent" in text_lower:
+            return "MODEL_UNAVAILABLE"
+        if status_code == 429 or "resource_exhausted" in text_lower or "quota" in text_lower or "rate limit" in text_lower:
+            return "RATE_LIMIT / QUOTA_ERROR"
+        if status_code == 400:
+            if "key" in text_lower or "credential" in text_lower:
+                return "AUTHENTICATION_ERROR"
+            return "CONFIGURATION_ERROR"
+        if status_code >= 500:
+            return "NETWORK_ERROR"
+        return "CONFIGURATION_ERROR"
+
+    @classmethod
+    def _normalize_model(cls, model_name: Optional[str]) -> str:
+        name = (model_name or cls.DEFAULT_MODEL).strip()
+        if name in ("gemini-2.0-flash", "models/gemini-2.0-flash", "gemini-2.0-flash-exp"):
+            return "gemini-1.5-flash"
+        if name.startswith("models/"):
+            return name[7:]
+        return name
+
     async def test_connection(
         self,
         api_key: Optional[str] = None,
-        base_url: Optional[str] = None
+        base_url: Optional[str] = None,
+        model: Optional[str] = None
     ) -> ConnectionTestResult:
         if not api_key:
             return ConnectionTestResult(
                 provider=self.provider_id,
                 success=False,
-                status_message="API key is required for Google Gemini provider connection test.",
+                status_message="[CONFIGURATION_ERROR] API key is required for Google Gemini provider connection test.",
                 has_key=False
             )
         target_url = (base_url or self.DEFAULT_BASE_URL).rstrip("/")
         self._validate_https_url(target_url, is_local=False)
 
+        model_name = self._normalize_model(model)
         headers = {
             "x-goog-api-key": api_key,
             "Content-Type": "application/json"
@@ -406,7 +437,7 @@ class GeminiAdapter(BaseAIAdapter):
         try:
             async with self._get_client() as client:
                 res = await client.post(
-                    f"{target_url}/models/{self.DEFAULT_MODEL}:generateContent",
+                    f"{target_url}/models/{model_name}:generateContent",
                     headers=headers,
                     json={"contents": [{"parts": [{"text": "ping"}]}]}
                 )
@@ -416,15 +447,16 @@ class GeminiAdapter(BaseAIAdapter):
                     return ConnectionTestResult(
                         provider=self.provider_id,
                         success=True,
-                        status_message="Google Gemini API connection verified successfully.",
+                        status_message=f"Google Gemini API connection verified successfully using {model_name}.",
                         latency_ms=latency,
                         has_key=True
                     )
                 else:
+                    category = self._categorize_http_status(res.status_code, res.text)
                     return ConnectionTestResult(
                         provider=self.provider_id,
                         success=False,
-                        status_message=f"Google Gemini API returned HTTP {res.status_code}",
+                        status_message=f"[{category}] Google Gemini API error (HTTP {res.status_code}): {ProviderError._sanitize(res.text)}",
                         latency_ms=latency,
                         has_key=True
                     )
@@ -432,20 +464,27 @@ class GeminiAdapter(BaseAIAdapter):
             return ConnectionTestResult(
                 provider=self.provider_id,
                 success=False,
-                status_message="Connection timed out connecting to Google Gemini API.",
+                status_message="[NETWORK_ERROR] Connection timed out connecting to Google Gemini API.",
+                has_key=True
+            )
+        except (httpx.ConnectError, httpx.NetworkError) as e:
+            return ConnectionTestResult(
+                provider=self.provider_id,
+                success=False,
+                status_message=f"[NETWORK_ERROR] Network connection failed: {ProviderError._sanitize(str(e))}",
                 has_key=True
             )
         except Exception as e:
             return ConnectionTestResult(
                 provider=self.provider_id,
                 success=False,
-                status_message=ProviderError._sanitize(str(e)),
+                status_message=f"[CONFIGURATION_ERROR] {ProviderError._sanitize(str(e))}",
                 has_key=True
             )
 
     async def generate(self, req: ProviderRequest) -> ProviderResponse:
         if not req.api_key:
-            raise ProviderError(self.provider_id, "API key is required for Google Gemini provider generation.")
+            raise ProviderError(self.provider_id, "[CONFIGURATION_ERROR] API key is required for Google Gemini provider generation.")
 
         target_url = (req.base_url or self.DEFAULT_BASE_URL).rstrip("/")
         self._validate_https_url(target_url, is_local=False)
@@ -455,7 +494,7 @@ class GeminiAdapter(BaseAIAdapter):
             "Content-Type": "application/json"
         }
 
-        model_name = req.model or self.DEFAULT_MODEL
+        model_name = self._normalize_model(req.model)
         payload: Dict[str, Any] = {
             "contents": [{"parts": [{"text": req.prompt}]}]
         }
@@ -470,9 +509,10 @@ class GeminiAdapter(BaseAIAdapter):
                     json=payload
                 )
                 if res.status_code != 200:
+                    category = self._categorize_http_status(res.status_code, res.text)
                     raise ProviderError(
                         self.provider_id,
-                        f"Google Gemini API error HTTP {res.status_code}: {res.text}",
+                        f"[{category}] Google Gemini API error HTTP {res.status_code}: {res.text}",
                         status_code=res.status_code
                     )
 
@@ -494,7 +534,7 @@ class GeminiAdapter(BaseAIAdapter):
                 )
 
         except httpx.TimeoutException:
-            raise ProviderError(self.provider_id, "Google Gemini API request timed out.")
+            raise ProviderError(self.provider_id, "[NETWORK_ERROR] Google Gemini API request timed out.")
         except json.JSONDecodeError:
             raise ProviderError(self.provider_id, "Google Gemini API returned malformed non-JSON response.")
         except ProviderError:
@@ -513,7 +553,8 @@ class LocalOpenAIAdapter(BaseAIAdapter):
     async def test_connection(
         self,
         api_key: Optional[str] = None,
-        base_url: Optional[str] = None
+        base_url: Optional[str] = None,
+        model: Optional[str] = None
     ) -> ConnectionTestResult:
         target_url = (base_url or self.DEFAULT_BASE_URL).rstrip("/")
         self._validate_https_url(target_url, is_local=True)
@@ -616,8 +657,11 @@ def get_ai_adapter(
     provider_id: str | ProviderId,
     transport: Optional[httpx.AsyncBaseTransport] = None
 ) -> BaseAIAdapter:
+    raw = str(provider_id.value if isinstance(provider_id, ProviderId) else provider_id).lower().strip()
+    if raw == "google":
+        raw = "gemini"
     try:
-        p_enum = ProviderId(str(provider_id).lower().strip()) if isinstance(provider_id, str) else provider_id
+        p_enum = ProviderId(raw)
     except ValueError:
         raise ProviderError(
             ProviderId.LOCAL_STUB,

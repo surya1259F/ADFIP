@@ -38,7 +38,6 @@ const MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = {
   gemini: [
     { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash (Fast Reasoning)' },
     { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro (Large Context & Deep Analysis)' },
-    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
   ],
   openai: [
     { value: 'gpt-4o-mini', label: 'GPT-4o Mini (Fast Reasoning)' },

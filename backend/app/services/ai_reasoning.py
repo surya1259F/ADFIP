@@ -319,17 +319,14 @@ class AIReasoningService:
         try:
             adapter = get_ai_adapter(provider_name)
             target_model = model_name or adapter.default_model
-            test_req = ProviderRequest(
-                provider=adapter.provider_id,
-                model=target_model,
-                prompt="ADFIR connectivity health check.",
+            conn_res = await adapter.test_connection(
                 api_key=api_key_plain,
-                base_url=endpoint_url
+                base_url=endpoint_url,
+                model=target_model
             )
-            res = await adapter.generate(test_req)
-            latency = round((time.time() - start_time) * 1000, 2)
-            success = True
-            status_msg = f"Connection verified. Generated response via {provider_name} ({target_model})."
+            latency = conn_res.latency_ms if conn_res.latency_ms is not None else round((time.time() - start_time) * 1000, 2)
+            success = conn_res.success
+            status_msg = conn_res.status_message
         except Exception as e:
             latency = round((time.time() - start_time) * 1000, 2)
             success = False

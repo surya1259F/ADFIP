@@ -214,6 +214,7 @@ def get_evidence_item(
     return evidence
 
 @router.post("/{evidence_id}/verify", response_model=EvidenceVerificationResponse)
+@router.post("/{evidence_id}/verify-integrity", response_model=EvidenceVerificationResponse)
 def verify_evidence(
     evidence_id: str,
     db: Session = Depends(get_db),

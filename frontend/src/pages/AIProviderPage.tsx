@@ -39,9 +39,8 @@ export const AIProviderPage: React.FC = () => {
       { id: 'claude-3-opus', label: 'Claude 3 Opus (Deep Analysis)' }
     ],
     google: [
-      { id: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro (Large Context)' },
-      { id: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash (Fast)' },
-      { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' }
+      { id: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash (Fast Reasoning)' },
+      { id: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro (Large Context & Deep Analysis)' }
     ],
     local_stub: [
       { id: 'adfir-deterministic-engine', label: 'Local Deterministic Template Engine (Default)' }

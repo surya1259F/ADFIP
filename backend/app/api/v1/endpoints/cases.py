@@ -20,6 +20,7 @@ from backend.app.schemas.schemas import (
     WorkspaceInitResponse,
     InvestigatorDecisionCreate,
     InvestigatorDecisionResponse,
+    EvidenceVerificationResponse,
 )
 from backend.app.services.authorization import (
     get_authorized_case,
@@ -546,6 +547,30 @@ async def intake_case_evidence(
     )
 
 
+@router.post("/{case_id}/evidence/{evidence_id}/verify", response_model=EvidenceVerificationResponse)
+@router.post("/{case_id}/evidence/{evidence_id}/verify-integrity", response_model=EvidenceVerificationResponse)
+def verify_case_evidence_endpoint(
+    case_id: str,
+    evidence_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    case = get_authorized_case(case_id, db, current_user)
+    from backend.app.api.v1.endpoints.evidence import verify_evidence
+    return verify_evidence(evidence_id=evidence_id, db=db, current_user=current_user)
+
+
+@router.post("/{case_id}/verify")
+def verify_case_findings_endpoint(
+    case_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    case = get_authorized_case(case_id, db, current_user)
+    from backend.app.api.v1.endpoints.investigation import verify_case_findings
+    return verify_case_findings(case_id=case_id, db=db, current_user=current_user)
+
+
 @router.post("/{case_id}/close", response_model=CaseClosureResponse)
 def close_case_endpoint(
     case_id: str,
@@ -600,6 +625,7 @@ def archive_case_endpoint(
 # -----------------------------------------------------------------------------
 
 @router.post("/{case_id}/decisions", response_model=InvestigatorDecisionResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/{case_id}/decision", response_model=InvestigatorDecisionResponse, status_code=status.HTTP_201_CREATED)
 def record_case_decision_compat(
     case_id: str,
     dec_in: InvestigatorDecisionCreate,

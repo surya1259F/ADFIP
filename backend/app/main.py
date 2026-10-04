@@ -1,4 +1,5 @@
 import logging
+import uuid
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
@@ -86,8 +87,19 @@ app.add_middleware(
     allow_origins=get_allowed_origins(),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-    allow_headers=["Authorization", "Content-Type", "X-ADFIR-Bootstrap-Secret", "Accept"],
+    allow_headers=["Authorization", "Content-Type", "X-ADFIR-Bootstrap-Secret", "Accept", "X-Request-ID", "X-Correlation-ID"],
+    expose_headers=["X-Request-ID", "X-Correlation-ID"],
 )
+
+# Request Correlation ID Middleware
+@app.middleware("http")
+async def correlation_id_middleware(request: Request, call_next):
+    req_id = request.headers.get("X-Request-ID") or request.headers.get("X-Correlation-ID") or str(uuid.uuid4())
+    request.state.request_id = req_id
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = req_id
+    response.headers["X-Correlation-ID"] = req_id
+    return response
 
 # Desktop Bootstrap Secret Trust Boundary Middleware
 @app.middleware("http")
@@ -112,14 +124,19 @@ from fastapi.exceptions import RequestValidationError
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    logger.warning(f"Validation error on {request.method} {request.url.path}: {str(exc)}")
+    req_id = getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    logger.warning(f"[Request-ID: {req_id}] Validation error on {request.method} {request.url.path}: {str(exc)}")
     origin = request.headers.get("origin")
-    resp_headers = {}
+    resp_headers = {
+        "X-Request-ID": req_id,
+        "X-Correlation-ID": req_id,
+    }
     if origin and (origin in get_allowed_origins()):
         resp_headers["Access-Control-Allow-Origin"] = origin
         resp_headers["Access-Control-Allow-Credentials"] = "true"
         resp_headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
-        resp_headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, X-ADFIR-Bootstrap-Secret, Accept"
+        resp_headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, X-ADFIR-Bootstrap-Secret, Accept, X-Request-ID, X-Correlation-ID"
+        resp_headers["Access-Control-Expose-Headers"] = "X-Request-ID, X-Correlation-ID"
     safe_errors = []
     for err in exc.errors():
         safe_err = dict(err)
@@ -128,23 +145,32 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         safe_errors.append(safe_err)
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": safe_errors},
+        content={"detail": safe_errors, "request_id": req_id},
         headers=resp_headers
     )
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Internal Exception on {request.method} {request.url.path}: {str(exc)}", exc_info=True)
+    req_id = getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    logger.error(f"[Request-ID: {req_id}] Internal Exception on {request.method} {request.url.path}: {str(exc)}", exc_info=True)
     origin = request.headers.get("origin")
-    resp_headers = {}
+    resp_headers = {
+        "X-Request-ID": req_id,
+        "X-Correlation-ID": req_id,
+    }
     if origin and (origin in get_allowed_origins()):
         resp_headers["Access-Control-Allow-Origin"] = origin
         resp_headers["Access-Control-Allow-Credentials"] = "true"
         resp_headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
-        resp_headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, X-ADFIR-Bootstrap-Secret, Accept"
+        resp_headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, X-ADFIR-Bootstrap-Secret, Accept, X-Request-ID, X-Correlation-ID"
+        resp_headers["Access-Control-Expose-Headers"] = "X-Request-ID, X-Correlation-ID"
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"detail": "An internal error occurred during forensic processing. Please contact your system administrator."},
+        content={
+            "detail": "An internal error occurred during forensic processing. Please contact your system administrator.",
+            "request_id": req_id,
+            "path": request.url.path,
+        },
         headers=resp_headers
     )
 

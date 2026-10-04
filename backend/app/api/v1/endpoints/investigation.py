@@ -186,6 +186,7 @@ def correlate_case_evidence(
     return {"case_id": case.id, "correlated_events": correlated_events}
 
 @router.post("/verify/{case_id}")
+@router.post("/{case_id}/verify")
 def verify_case_findings(
     case_id: str,
     db: Session = Depends(get_db),
