@@ -600,11 +600,11 @@ def verify_evidence_integrity(
     if not evidence:
         raise HTTPException(status_code=404, detail=f"Evidence item {evidence_id} not found in case {id}")
 
-    target_path = evidence.storage_path or evidence.original_path
+    target_path = evidence.storage_path
     if not target_path or not os.path.exists(target_path):
         evidence.integrity_status = "MISSING"
         evidence.status = "INTEGRITY_WARNING"
-        evidence.error_message = f"Preserved evidence file not found at path: {target_path}"
+        evidence.error_message = f"Preserved evidence file not found in vault at path: {target_path or 'NOT_STAGED_IN_VAULT'}"
         db.commit()
         record_custody_event(
             db=db,
@@ -613,7 +613,7 @@ def verify_evidence_integrity(
             event_type="INTEGRITY_MISMATCH",
             actor=current_user.name or current_user.email,
             actor_id=current_user.id,
-            description=f"CRITICAL: Evidence file missing from storage path: {target_path}",
+            description=f"CRITICAL: Evidence file missing from vault storage path: {target_path or 'NOT_STAGED_IN_VAULT'}",
             sha256=evidence.sha256
         )
         return EvidenceVerificationResponse(
@@ -621,9 +621,11 @@ def verify_evidence_integrity(
             integrity_status="MISSING",
             expected_sha256=evidence.sha256,
             current_sha256="",
+            acquisition_sha256=evidence.sha256,
+            preserved_vault_sha256="",
             read_only_verified=False,
             verified_at=datetime.now(timezone.utc),
-            message=f"Preserved evidence file missing from storage: {target_path}"
+            message=f"Preserved evidence file missing from vault storage: {target_path or 'NOT_STAGED_IN_VAULT'}"
         )
 
     # Calculate current streaming SHA-256 hash

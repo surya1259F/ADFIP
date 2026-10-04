@@ -608,7 +608,8 @@ class InvestigationOrchestrationService:
             # -------------------------------------------------------------
             elif stage == "FINAL_REPORT":
                 report_req = ForensicReportGenerateRequest(
-                    title=f"Final Forensic Report — Case {case.case_number}"
+                    title=f"Final Forensic Report — Case {case.case_number}",
+                    options={"working_export": True}
                 )
                 rep = FinalForensicReportService.generate_report(
                     case_id=case.id,

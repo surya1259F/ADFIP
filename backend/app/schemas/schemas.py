@@ -270,6 +270,10 @@ class EvidenceVerificationResponse(BaseModel):
     read_only_verified: bool = False
     verified_at: datetime
     verification_stage: str = "CURRENT_PRESERVATION_CHECK"
+    acquisition_sha256: Optional[str] = None
+    preserved_vault_sha256: Optional[str] = None
+    pre_analysis_sha256: Optional[str] = None
+    post_analysis_sha256: Optional[str] = None
     message: str
 
 class EvidenceAcquisitionCreateRequest(BaseModel):

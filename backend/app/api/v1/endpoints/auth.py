@@ -233,7 +233,30 @@ async def upload_user_avatar(
             detail="Avatar image size exceeds the maximum limit of 2MB."
         )
 
-    ext = allowed_types[content_type]
+    # Magic bytes verification for forensic-grade image validation
+    # Reject executables immediately
+    if content.startswith(b"\x7fELF") or content.startswith(b"MZ") or content.startswith(b"#!"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Executable content is prohibited as avatar image."
+        )
+
+    # Verify real image file signatures
+    detected_format = None
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        detected_format = "png"
+    elif content.startswith(b"\xff\xd8\xff"):
+        detected_format = "jpg"
+    elif len(content) >= 12 and content.startswith(b"RIFF") and content[8:12] == b"WEBP":
+        detected_format = "webp"
+
+    if not detected_format:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid image content: file signature does not match valid PNG, JPEG, or WebP format."
+        )
+
+    ext = detected_format
     avatar_dir = settings.DATA_DIR / "avatars"
     avatar_dir.mkdir(parents=True, exist_ok=True)
 

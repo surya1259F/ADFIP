@@ -42,6 +42,7 @@ def auto_authenticate_tests(request):
         "test_ai_reasoning",
         "test_investigator_review",
         "test_final_forensic_report",
+        "test_report_readiness",
         "test_audit_hash_chain",
         "test_investigation_orchestration",
         "test_recovery_and_case_closure",

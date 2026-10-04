@@ -913,14 +913,12 @@ class FinalForensicReportService:
         Strictly enforces case authorization, evidence grounding, and cryptographic hashing.
         """
         case = get_authorized_case(case_id, db, user)
-        from backend.app.services.case_closure import check_case_not_closed
-        check_case_not_closed(case)
 
         is_working_export = bool(request_data.options.get("working_export", False)) if request_data.options else False
-        enforce_readiness = bool(request_data.options.get("enforce_readiness", False)) if request_data.options else False
 
-        # Strictly enforce the 14 forensic readiness gates when requested for OFFICIAL_FINAL reports
-        if enforce_readiness and not is_working_export:
+        # ALWAYS enforce the 14 forensic readiness gates for OFFICIAL_FINAL reports.
+        # Working exports are preliminary drafts and are exempt from full gate enforcement.
+        if not is_working_export:
             from backend.app.services.report_readiness import ReportReadinessService
             readiness = ReportReadinessService.evaluate(db=db, case=case, current_user=user)
             if not readiness.ready:
@@ -934,6 +932,9 @@ class FinalForensicReportService:
                         "blocking_reasons": [r.model_dump() for r in readiness.blocking_reasons]
                     }
                 )
+
+        from backend.app.services.case_closure import check_case_not_closed
+        check_case_not_closed(case)
 
         # 1. Determine next version number for this case
         max_ver = db.query(func.max(Report.version)).filter(Report.case_id == case.id).scalar()

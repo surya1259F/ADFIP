@@ -225,11 +225,13 @@ def verify_evidence(
         raise HTTPException(status_code=404, detail=f"Evidence item {evidence_id} not found")
     case = get_authorized_case(evidence.case_id, db, current_user)
 
-    target_path = evidence.storage_path or evidence.original_path
+    # Preservation verification MUST verify the managed vault copy (storage_path).
+    # Never fall back to original_path for preservation integrity checks.
+    target_path = evidence.storage_path
     if not target_path or not os.path.exists(target_path):
         evidence.integrity_status = "MISSING"
         evidence.status = "INTEGRITY_WARNING"
-        evidence.error_message = f"Preserved file missing at path: {target_path}"
+        evidence.error_message = f"Preserved vault file missing at path: {target_path or 'NOT_STAGED_IN_VAULT'}"
         db.commit()
         record_custody_event(
             db=db,
@@ -238,7 +240,7 @@ def verify_evidence(
             event_type="INTEGRITY_MISMATCH",
             actor=current_user.name or current_user.email,
             actor_id=current_user.id,
-            description=f"CRITICAL: Evidence file missing from storage path: {target_path}",
+            description=f"CRITICAL: Preserved evidence file missing from vault storage path: {target_path or 'NOT_STAGED_IN_VAULT'}",
             sha256=evidence.sha256
         )
         return EvidenceVerificationResponse(
@@ -247,13 +249,15 @@ def verify_evidence(
             integrity_status="MISSING",
             expected_sha256=evidence.sha256,
             current_sha256="",
+            acquisition_sha256=evidence.sha256,
+            preserved_vault_sha256="",
             match=False,
             vault_path=target_path,
             vault_exists=False,
             read_only_verified=False,
             verified_at=datetime.now(timezone.utc),
             verification_stage="CURRENT_PRESERVATION_CHECK",
-            message=f"Evidence file missing from storage path: {target_path}"
+            message=f"Preserved evidence file missing from vault storage: {target_path or 'NOT_STAGED_IN_VAULT'}"
         )
 
     from backend.app.services.integrity import calculate_sha256
@@ -273,7 +277,7 @@ def verify_evidence(
             event_type="INTEGRITY_VERIFIED",
             actor=current_user.name or current_user.email,
             actor_id=current_user.id,
-            description=f"Cryptographic SHA-256 integrity re-verified for '{evidence.name}' (SHA-256: {current_sha256})",
+            description=f"Cryptographic SHA-256 byte-stream re-verified for vault copy of '{evidence.name}' (SHA-256: {current_sha256})",
             destination_path=target_path,
             sha256=current_sha256
         )
@@ -281,7 +285,7 @@ def verify_evidence(
     else:
         evidence.integrity_status = "INTEGRITY_MISMATCH"
         evidence.status = "INTEGRITY_WARNING"
-        evidence.error_message = f"Integrity mismatch detected! Baseline SHA-256: {evidence.sha256}, Current: {current_sha256}"
+        evidence.error_message = f"Integrity mismatch detected! Acquisition SHA-256: {evidence.sha256}, Current Vault SHA-256: {current_sha256}"
         db.commit()
         record_custody_event(
             db=db,
@@ -290,7 +294,7 @@ def verify_evidence(
             event_type="INTEGRITY_MISMATCH",
             actor=current_user.name or current_user.email,
             actor_id=current_user.id,
-            description=f"CRITICAL: Cryptographic SHA-256 mismatch for '{evidence.name}'! Baseline: {evidence.sha256}, Current: {current_sha256}",
+            description=f"CRITICAL: Cryptographic SHA-256 mismatch for vault copy of '{evidence.name}'! Acquisition: {evidence.sha256}, Vault: {current_sha256}",
             destination_path=target_path,
             sha256=current_sha256
         )
@@ -302,6 +306,8 @@ def verify_evidence(
         integrity_status=evidence.integrity_status,
         expected_sha256=evidence.sha256,
         current_sha256=current_sha256,
+        acquisition_sha256=evidence.sha256,
+        preserved_vault_sha256=current_sha256,
         match=is_valid,
         vault_path=target_path,
         vault_exists=True,

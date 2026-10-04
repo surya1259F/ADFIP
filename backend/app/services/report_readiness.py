@@ -7,10 +7,15 @@ and machine-readable blocking reasons.
 """
 
 from typing import Dict, Any, List, Optional
+import hashlib
+import os
+import logging
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+
+logger = logging.getLogger(__name__)
 
 from backend.app.models.models import (
     Case,
@@ -23,6 +28,7 @@ from backend.app.models.models import (
     InvestigatorReviewRecord,
     InvestigatorDecision,
     CorrelationGroup,
+    ForensicCorrelationGroup,
     AuditEvent,
     User
 )
@@ -197,35 +203,96 @@ class ReportReadinessService:
             blocking_reason=g8_reason
         ))
 
-        # Gate 9: Output integrity verified
-        g9_passed = True
+        # Gate 9: Output integrity — real byte-level SHA-256 re-verification
+        all_outputs = db.query(ExecutionOutput).filter(ExecutionOutput.case_id == case.id).all()
+        g9_integrity_warning_refs: List[str] = []
+        g9_missing_refs: List[str] = []
+        for out in all_outputs:
+            stored_hash = (out.sha256_hash or "").lower().strip()
+            storage_path = out.storage_path or ""
+            if not stored_hash:
+                # No hash recorded — cannot verify; flag as warning
+                g9_integrity_warning_refs.append(out.id)
+                continue
+            if not storage_path or not os.path.isfile(storage_path):
+                g9_missing_refs.append(out.id)
+                continue
+            try:
+                h = hashlib.sha256()
+                with open(storage_path, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(65536), b""):
+                        h.update(chunk)
+                computed = h.hexdigest().lower()
+                if computed != stored_hash:
+                    g9_integrity_warning_refs.append(out.id)
+            except OSError as exc:
+                logger.warning("Gate 9: cannot read output %s: %s", out.id, exc)
+                g9_missing_refs.append(out.id)
+
+        g9_passed = (len(g9_integrity_warning_refs) == 0) and (len(g9_missing_refs) == 0)
         g9_reason = None
+        if not g9_passed:
+            parts = []
+            if g9_integrity_warning_refs:
+                parts.append(f"{len(g9_integrity_warning_refs)} output(s) failed SHA-256 re-verification (INTEGRITY_WARNING)")
+            if g9_missing_refs:
+                parts.append(f"{len(g9_missing_refs)} output(s) are missing from storage (MISSING)")
+            g9_reason = BlockingReason(
+                code="EXECUTION_OUTPUT_INTEGRITY_FAILURE",
+                description="; ".join(parts),
+                count=len(g9_integrity_warning_refs) + len(g9_missing_refs),
+                references=(g9_integrity_warning_refs + g9_missing_refs)[:20]
+            )
+            blocking_reasons.append(g9_reason)
         gates.append(ReadinessGateResult(
             gate_number=9,
             code="EXECUTION_OUTPUT_INTEGRITY",
             name="Output Integrity Checksum",
             passed=g9_passed,
-            description="Cryptographic SHA-256 checksums verified for recorded tool execution outputs.",
+            description="Cryptographic SHA-256 checksums re-verified byte-for-byte against stored execution outputs.",
             blocking_reason=g9_reason
         ))
 
-        # Gate 10: Findings are grounded
+        # Gate 10: Findings grounded — real provenance tracing
         findings_query = db.query(Finding).filter(Finding.case_id == case.id).all()
         deterministic_query = db.query(DeterministicFinding).filter(DeterministicFinding.case_id == case.id).all()
         all_finding_ids = set()
+        ungrounded_finding_ids: List[str] = []
+
         for f in findings_query:
             all_finding_ids.add(f.id)
+            # A Finding must have at least one provenance anchor
+            has_evidence = bool(f.evidence_id)
+            has_execution = bool(f.execution_id)
+            has_artifact = bool(f.artifact_id)
+            if not (has_evidence or has_execution or has_artifact):
+                ungrounded_finding_ids.append(f.id)
+
         for df in deterministic_query:
             all_finding_ids.add(df.id)
+            # A DeterministicFinding claiming factual support must have supporting evidence or artifacts
+            has_ev = bool(df.supporting_evidence_ids)
+            has_art = bool(df.supporting_artifact_ids)
+            if not (has_ev or has_art):
+                if df.verification_status != "UNVERIFIED":
+                    ungrounded_finding_ids.append(df.id)
 
-        g10_passed = True
+        g10_passed = len(ungrounded_finding_ids) == 0
         g10_reason = None
+        if not g10_passed:
+            g10_reason = BlockingReason(
+                code="FINDINGS_UNGROUNDED",
+                description=f"{len(ungrounded_finding_ids)} finding(s) lack required provenance anchors (evidence_id, execution_id, or artifact_id).",
+                count=len(ungrounded_finding_ids),
+                references=ungrounded_finding_ids[:20]
+            )
+            blocking_reasons.append(g10_reason)
         gates.append(ReadinessGateResult(
             gate_number=10,
             code="FINDINGS_GROUNDED",
             name="Evidence Grounding Verification",
             passed=g10_passed,
-            description="Forensic findings must be grounded in underlying evidence and artifacts.",
+            description="All forensic findings must be grounded in underlying evidence, execution, or artifact provenance.",
             blocking_reason=g10_reason
         ))
 
@@ -256,15 +323,39 @@ class ReportReadinessService:
             blocking_reason=g11_reason
         ))
 
-        # Gate 12: Correlation / Verification completed
-        g12_passed = True
+        # Gate 12: Correlation completed — verify actual persisted correlation results
+        # Correlation is REQUIRED when the case has any findings; NOT_REQUIRED when there are none.
+        corr_groups = db.query(ForensicCorrelationGroup).filter(
+            ForensicCorrelationGroup.case_id == case.id
+        ).all()
+        has_findings = bool(all_finding_ids)
+        corr_completed = len(corr_groups) > 0
+
+        if not has_findings:
+            # No findings → correlation not applicable
+            g12_passed = True
+            g12_detail = "NOT_REQUIRED — case has no forensic findings requiring correlation."
+        elif corr_completed:
+            g12_passed = True
+            g12_detail = f"REQUIRED_AND_COMPLETED — {len(corr_groups)} correlation group(s) persisted."
+        else:
+            g12_passed = False
+            g12_detail = "REQUIRED_BUT_MISSING — findings exist but no correlation run has produced persisted groups."
+
         g12_reason = None
+        if not g12_passed:
+            g12_reason = BlockingReason(
+                code="CORRELATION_NOT_COMPLETED",
+                description=g12_detail,
+                count=0
+            )
+            blocking_reasons.append(g12_reason)
         gates.append(ReadinessGateResult(
             gate_number=12,
             code="CORRELATION_COMPLETED",
             name="Artifact Correlation Gate",
             passed=g12_passed,
-            description="Cross-artifact timeline and relationship correlation checked.",
+            description="Cross-artifact timeline and relationship correlation must be executed and persisted before report generation.",
             blocking_reason=g12_reason
         ))
 

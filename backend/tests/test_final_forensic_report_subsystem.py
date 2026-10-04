@@ -20,6 +20,7 @@ import os
 import json
 import uuid
 import hashlib
+import tempfile
 from datetime import datetime, timezone
 from typing import Dict, Any
 
@@ -36,6 +37,7 @@ from backend.app.models.models import (
     User,
     EvidenceItem,
     ChainOfCustodyEvent,
+    InvestigationPlan,
     ForensicExecution,
     ExecutionOutput,
     StructuredArtifact,
@@ -46,6 +48,7 @@ from backend.app.models.models import (
     DeterministicFinding,
     AIReasoningRecord,
     InvestigatorReviewRecord,
+    InvestigatorDecision,
     Report,
     AuditEvent
 )
@@ -115,8 +118,15 @@ def get_auth_headers(user: User) -> dict:
 
 def populate_case_forensic_pipeline(db, case, user) -> Dict[str, Any]:
     """Populates structured evidence, executions, artifacts, timeline, correlations, findings, reasoning, and reviews."""
+    tmp_dir = tempfile.gettempdir()
+
     # 1. Evidence Item
-    ev_hash = "a" * 64
+    ev_path = os.path.join(tmp_dir, f"server_disk_{uuid.uuid4().hex[:8]}.raw")
+    ev_bytes = b"SERVER_DISK_IMAGE_RAW_CONTENT_FOR_READINESS"
+    with open(ev_path, "wb") as f:
+        f.write(ev_bytes)
+    ev_hash = hashlib.sha256(ev_bytes).hexdigest()
+
     ev = EvidenceItem(
         id=str(uuid.uuid4()),
         case_id=case.id,
@@ -124,14 +134,30 @@ def populate_case_forensic_pipeline(db, case, user) -> Dict[str, Any]:
         name="server_disk_image.raw",
         evidence_type="disk_image",
         source_kind="DISK_IMAGE",
-        original_path="/raw/server_disk_image.raw",
-        storage_path="/vault/secure/server_disk_image.raw",
+        original_path=ev_path,
+        storage_path=ev_path,
         sha256_hash=ev_hash,
-        size_bytes=524288,
+        sha256=ev_hash,
+        size_bytes=len(ev_bytes),
         status="ACQUIRED",
+        integrity_status="VERIFIED",
+        intelligence_json={"mime_type": "application/x-raw-disk-image", "format": "raw"},
+        metadata_json={"source": "test_disk"},
         read_only_verified=True
     )
     db.add(ev)
+    db.commit()
+
+    # Strategy plan (Gate 6)
+    plan = InvestigationPlan(
+        id=str(uuid.uuid4()),
+        case_id=case.id,
+        title="Automated Forensic Strategy Plan",
+        strategy_summary="Deterministic analysis plan",
+        tasks=[{"task_id": "T1", "tool": "sleuthkit", "status": "COMPLETED"}],
+        status="COMPLETED"
+    )
+    db.add(plan)
     db.commit()
 
     # Chain of Custody
@@ -163,12 +189,19 @@ def populate_case_forensic_pipeline(db, case, user) -> Dict[str, Any]:
         validated_argv=["/usr/bin/fls", "-r", ev.original_path],
         host_platform="Linux",
         host_architecture="x86_64",
-        workspace_path="/tmp/workspace",
+        workspace_path=tmp_dir,
         execution_status="COMPLETED",
+        status="COMPLETED",
         exit_code=0
     )
     db.add(fe)
     db.commit()
+
+    out_file = os.path.join(tmp_dir, f"fls_output_{uuid.uuid4().hex[:8]}.json")
+    out_bytes = b'{"files": ["/etc/cron.d/persistence_job"]}'
+    with open(out_file, "wb") as f:
+        f.write(out_bytes)
+    h_out = hashlib.sha256(out_bytes).hexdigest()
 
     exo = ExecutionOutput(
         id=str(uuid.uuid4()),
@@ -180,8 +213,9 @@ def populate_case_forensic_pipeline(db, case, user) -> Dict[str, Any]:
         output_type="TOOL_OUTPUT",
         filename="fls_output.json",
         relative_path="outputs/fls_output.json",
-        storage_path="/tmp/fls_output.json",
-        sha256_hash="b" * 64
+        storage_path=out_file,
+        sha256_hash=h_out,
+        size_bytes=len(out_bytes)
     )
     db.add(exo)
     db.commit()
@@ -391,6 +425,33 @@ def populate_case_forensic_pipeline(db, case, user) -> Dict[str, Any]:
         sha256_hash="22" * 32
     )
     db.add(rev_reject)
+
+    rev_ungrounded = InvestigatorReviewRecord(
+        id=str(uuid.uuid4()),
+        case_id=case.id,
+        investigator_id=user.id,
+        investigator_name=user.name,
+        target_type="FINDING",
+        target_id=finding_ungrounded.id,
+        decision="CHALLENGE",
+        comment="Ungrounded claim challenged due to absence of corroborating network telemetry.",
+        supporting_references=[],
+        resulting_workflow_action="CHALLENGED_CLAIM",
+        sha256_hash="33" * 32
+    )
+    db.add(rev_ungrounded)
+
+    # 9. Investigator Final Authorization Decision (Gate 14)
+    dec = InvestigatorDecision(
+        id=str(uuid.uuid4()),
+        case_id=case.id,
+        investigator_id=user.id,
+        investigator_name=user.name,
+        decision="CONFIRM",
+        rationale="Forensic examination conclusions confirmed by primary investigator.",
+        timestamp=datetime.now(timezone.utc)
+    )
+    db.add(dec)
     db.commit()
 
     return {

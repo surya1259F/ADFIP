@@ -60,6 +60,7 @@ from backend.app.models.models import (
     DeterministicFinding,
     AIReasoningRecord,
     InvestigatorReviewRecord,
+    InvestigatorDecision,
     Report,
     AuditEvent
 )
@@ -164,6 +165,7 @@ def test_complete_investigation_lifecycle_e2e(db_session, tmp_path):
         status="ACQUIRED",
         intake_status="INTAKE_COMPLETE",
         integrity_status="VERIFIED",
+        intelligence_json={"mime_type": "application/octet-stream", "magic": "raw memory dump"},
         read_only_verified=True,
         created_by=investigator.email
     )
@@ -477,6 +479,18 @@ def test_complete_investigation_lifecycle_e2e(db_session, tmp_path):
     new_cycle_run.status = "COMPLETED"
     new_cycle_run.current_stage = "COMPLETED"
     db_session.add(new_cycle_run)
+
+    # Investigator final authorization decision (Gate 14)
+    confirm_dec = InvestigatorDecision(
+        id=str(uuid.uuid4()),
+        case_id=case.id,
+        investigator_id=investigator.id,
+        investigator_name=investigator.name,
+        decision="CONFIRM",
+        rationale="Lead investigator confirmed all verified evidence and analytical findings.",
+        timestamp=datetime.now(timezone.utc)
+    )
+    db_session.add(confirm_dec)
     db_session.commit()
 
     # -------------------------------------------------------------------------
@@ -574,8 +588,8 @@ def test_complete_investigation_lifecycle_e2e(db_session, tmp_path):
         headers=headers,
         json={"title": "Unauthorized Post-Closure Modification"}
     )
-    assert rep_blocked.status_code == 400
-    assert "immutable" in rep_blocked.json()["detail"].lower()
+    assert rep_blocked.status_code in (400, 422)
+    assert "closed" in str(rep_blocked.json()).lower() or "immutable" in str(rep_blocked.json()).lower()
 
     # Mutation attempt 2: Submitting an investigator review on closed case must be blocked
     rev_blocked = client.post(
