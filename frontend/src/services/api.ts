@@ -562,6 +562,13 @@ export const api = {
     return res.data;
   },
 
+  getAIProviderModels: async (provider?: string): Promise<string[]> => {
+    const res = await client.get<string[]>('/v1/ai/provider/models', {
+      params: provider ? { provider } : undefined,
+    });
+    return res.data;
+  },
+
   // Step 19 Investigator Review API Methods
   getReviewItems: async (caseId: string): Promise<ReviewItemsResponse> => {
     const res = await client.get<ReviewItemsResponse>(`/v1/cases/${caseId}/review/items`);

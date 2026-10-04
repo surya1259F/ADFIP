@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { PageContainer } from '../components/PageContainer';
 import { useInvestigationStore } from '../stores/investigationStore';
+import { api } from '../services/api';
 import {
   Key,
   ShieldAlert,
@@ -26,6 +27,7 @@ export const AIProviderPage: React.FC = () => {
   const [apiKey, setApiKey] = useState<string>('');
   const [baseUrl, setBaseUrl] = useState<string>('');
   const [saveStatusMsg, setSaveStatusMsg] = useState<string>('');
+  const [dynamicModels, setDynamicModels] = useState<string[]>([]);
 
   const modelOptions = {
     openai: [
@@ -39,13 +41,40 @@ export const AIProviderPage: React.FC = () => {
       { id: 'claude-3-opus', label: 'Claude 3 Opus (Deep Analysis)' }
     ],
     google: [
-      { id: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash (Fast Reasoning)' },
+      { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (Recommended)' },
+      { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (Fast Reasoning)' },
+      { id: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash (Legacy Fast)' },
       { id: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro (Large Context & Deep Analysis)' }
     ],
     local_stub: [
       { id: 'adfir-deterministic-engine', label: 'Local Deterministic Template Engine (Default)' }
     ]
   };
+
+  useEffect(() => {
+    let active = true;
+    const fetchModels = async () => {
+      try {
+        const models = await api.getAIProviderModels(provider);
+        if (active && models && models.length > 0) {
+          setDynamicModels(models);
+        } else if (active) {
+          setDynamicModels([]);
+        }
+      } catch {
+        if (active) setDynamicModels([]);
+      }
+    };
+    fetchModels();
+    return () => { active = false; };
+  }, [provider]);
+
+  const activeModelOptions = useMemo(() => {
+    if (dynamicModels.length > 0) {
+      return dynamicModels.map((m) => ({ id: m, label: m }));
+    }
+    return modelOptions[provider as keyof typeof modelOptions] || [];
+  }, [dynamicModels, provider]);
 
   const handleTestConnection = async () => {
     if (aiProviderTestLoading) return;
@@ -184,7 +213,7 @@ export const AIProviderPage: React.FC = () => {
               onChange={(e) => setModel(e.target.value)}
               className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
             >
-              {(modelOptions[provider as keyof typeof modelOptions] || []).map((m) => (
+              {activeModelOptions.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.label}
                 </option>

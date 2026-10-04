@@ -47,6 +47,7 @@ export interface AIProviderConnectionTestResponse {
   success: boolean;
   status_message: string;
   latency_ms?: number | null;
+  error_code?: string | null;
   has_key: boolean;
 }
 
@@ -75,6 +76,13 @@ export const aiService = {
 
   getStatus: async (): Promise<AIProviderStatusResponse> => {
     const res = await apiClient.get<AIProviderStatusResponse>('/ai/provider/status');
+    return res.data;
+  },
+
+  getModels: async (provider?: string): Promise<string[]> => {
+    const res = await apiClient.get<string[]>('/ai/provider/models', {
+      params: provider ? { provider } : undefined,
+    });
     return res.data;
   },
 

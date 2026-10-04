@@ -2047,6 +2047,7 @@ class AIProviderConnectionTestResponse(BaseModel):
     model: str
     success: bool
     status_message: str
+    error_code: Optional[str] = None
     latency_ms: Optional[float] = None
     has_key: bool = False
 

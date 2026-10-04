@@ -123,8 +123,13 @@ class Settings(BaseSettings):
     # LLM Settings (Provider Abstraction)
     DEFAULT_LLM_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-2.5-flash"
     OPENROUTER_API_KEY: str = ""
     LOCAL_LLM_ENDPOINT: str = ""
+
+    @property
+    def IS_GEMINI_CONFIGURED(self) -> bool:
+        return bool(self.GEMINI_API_KEY and self.GEMINI_API_KEY.strip())
     
     # Authentication & Session Security
     JWT_SECRET_KEY: str = ""

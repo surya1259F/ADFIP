@@ -300,6 +300,14 @@ class AIReasoningService:
                 model_name = cfg.model
                 api_key_plain = decrypt_credential(cfg.api_key_encrypted)
                 endpoint_url = cfg.endpoint
+            elif settings.GEMINI_API_KEY:
+                provider_name = settings.DEFAULT_LLM_PROVIDER
+                model_name = getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash")
+                api_key_plain = settings.GEMINI_API_KEY
+                endpoint_url = None
+
+        if not api_key_plain and provider_name in ("gemini", "google") and settings.GEMINI_API_KEY:
+            api_key_plain = settings.GEMINI_API_KEY
 
         if provider_name in ("local_stub", "none"):
             return AIProviderConnectionTestResponse(
@@ -307,6 +315,7 @@ class AIReasoningService:
                 model=model_name,
                 success=True,
                 status_message="Local deterministic reasoning engine is operational.",
+                error_code="SUCCESS",
                 latency_ms=1.5,
                 has_key=bool(api_key_plain)
             )
@@ -315,6 +324,7 @@ class AIReasoningService:
         success = False
         status_msg = ""
         latency = None
+        error_code_str = None
 
         try:
             adapter = get_ai_adapter(provider_name)
@@ -327,10 +337,13 @@ class AIReasoningService:
             latency = conn_res.latency_ms if conn_res.latency_ms is not None else round((time.time() - start_time) * 1000, 2)
             success = conn_res.success
             status_msg = conn_res.status_message
+            if conn_res.error_code:
+                error_code_str = conn_res.error_code.value
         except Exception as e:
             latency = round((time.time() - start_time) * 1000, 2)
             success = False
-            status_msg = f"Connection test failed: {ProviderError._sanitize(str(e))}"
+            status_msg = f"[CONFIGURATION_ERROR] Connection test failed: {ProviderError._sanitize(str(e))}"
+            error_code_str = "CONFIGURATION_ERROR"
 
         # Update health status if config exists
         cfg = cls.get_provider_config(db, user, case_id)
@@ -359,6 +372,7 @@ class AIReasoningService:
             model=model_name,
             success=success,
             status_message=status_msg,
+            error_code=error_code_str,
             latency_ms=latency,
             has_key=bool(api_key_plain)
         )
@@ -376,17 +390,25 @@ class AIReasoningService:
         Safely uses configured encrypted credentials without leaking them.
         """
         cfg = cls.get_provider_config(db, user, case_id)
-        effective_provider = (provider or (cfg.provider if cfg else "gemini")).lower().strip()
+        effective_provider = (provider or (cfg.provider if cfg else settings.DEFAULT_LLM_PROVIDER)).lower().strip()
         api_key_plain = decrypt_credential(cfg.api_key_encrypted) if cfg and cfg.api_key_encrypted else None
+        if not api_key_plain and effective_provider in ("gemini", "google") and settings.GEMINI_API_KEY:
+            api_key_plain = settings.GEMINI_API_KEY
         endpoint_url = cfg.endpoint if cfg else None
 
+        adapter = get_ai_adapter(effective_provider)
         try:
-            adapter = get_ai_adapter(effective_provider)
             return await adapter.list_models(api_key=api_key_plain, base_url=endpoint_url)
+        except ProviderError as pe:
+            logger.warning(f"Provider error listing models for '{effective_provider}': {pe.message}")
+            raise HTTPException(
+                status_code=pe.status_code if pe.status_code and 400 <= pe.status_code < 500 else status.HTTP_502_BAD_GATEWAY,
+                detail=pe.message
+            )
         except Exception as e:
             logger.warning(f"Error listing models for provider '{effective_provider}': {ProviderError._sanitize(str(e))}")
             if effective_provider in ("gemini", "google"):
-                return ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+                return [getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash"), "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
             elif effective_provider == "openai":
                 return ["gpt-4o", "gpt-4o-mini", "o3-mini"]
             elif effective_provider == "anthropic":
@@ -669,17 +691,18 @@ class AIReasoningService:
 
         # 3. Determine Execution Mode (External LLM vs. Deterministic Fallback)
         provider_cfg = cls.get_provider_config(db, user, case.id)
-        target_provider = (request.provider or (provider_cfg.provider if provider_cfg else "local_stub")).lower().strip()
-        target_model = request.model or (provider_cfg.model if provider_cfg else "adfir-deterministic-engine")
+        target_provider = (request.provider or (provider_cfg.provider if provider_cfg else settings.DEFAULT_LLM_PROVIDER)).lower().strip()
+        target_model = request.model or (provider_cfg.model if provider_cfg else getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash"))
         api_key_plain = decrypt_credential(provider_cfg.api_key_encrypted) if provider_cfg else None
+        if not api_key_plain and target_provider in ("gemini", "google") and settings.GEMINI_API_KEY:
+            api_key_plain = settings.GEMINI_API_KEY
         endpoint_url = provider_cfg.endpoint if provider_cfg else None
 
         use_external = (
             request.allow_external_egress
-            and provider_cfg
-            and provider_cfg.is_enabled
             and target_provider not in ("local_stub", "none")
             and bool(api_key_plain)
+            and (provider_cfg.is_enabled if provider_cfg else True)
         )
 
         execution_mode = "EXTERNAL_LLM" if use_external else "DETERMINISTIC_FALLBACK"

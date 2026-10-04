@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -39,8 +39,9 @@ const PROVIDER_OPTIONS = [
 
 const MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = {
   gemini: [
-    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (Recommended)' },
-    { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash (Fast Reasoning)' },
+    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (Recommended)' },
+    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (Fast Reasoning)' },
+    { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash (Legacy Fast)' },
     { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro (Large Context & Deep Analysis)' },
   ],
   openai: [
@@ -110,7 +111,7 @@ export const SettingsPage: React.FC = () => {
 
   // AI Configuration State
   const [selectedProvider, setSelectedProvider] = useState<string>('gemini');
-  const [selectedModel, setSelectedModel] = useState<string>('gemini-1.5-flash');
+  const [selectedModel, setSelectedModel] = useState<string>('gemini-2.5-flash');
   const [endpoint, setEndpoint] = useState<string>('');
   const [apiKeyInput, setApiKeyInput] = useState<string>('');
   const [testResult, setTestResult] = useState<{
@@ -139,6 +140,30 @@ export const SettingsPage: React.FC = () => {
     queryFn: aiService.getStatus,
     retry: false,
   });
+
+  const {
+    data: dynamicModels,
+  } = useQuery({
+    queryKey: ['ai-provider-models', selectedProvider],
+    queryFn: () => aiService.getModels(selectedProvider),
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  const currentModelOptions = useMemo(() => {
+    if (dynamicModels && dynamicModels.length > 0) {
+      return dynamicModels.map((m) => ({ value: m, label: m }));
+    }
+    return MODEL_OPTIONS[selectedProvider] || [];
+  }, [dynamicModels, selectedProvider]);
+
+  useEffect(() => {
+    if (aiConfig) {
+      if (aiConfig.provider) setSelectedProvider(aiConfig.provider);
+      if (aiConfig.model) setSelectedModel(aiConfig.model);
+      if (aiConfig.endpoint) setEndpoint(aiConfig.endpoint);
+    }
+  }, [aiConfig]);
 
   // Mutations
   const testMutation = useMutation({
@@ -399,7 +424,7 @@ export const SettingsPage: React.FC = () => {
                   label="Model"
                   value={selectedModel}
                   onChange={(e) => setSelectedModel(e.target.value)}
-                  options={MODEL_OPTIONS[selectedProvider] || []}
+                  options={currentModelOptions}
                 />
               </div>
 

@@ -17,6 +17,7 @@ from backend.app.models.models import (
     ToolExecution,
     InvestigatorDecision
 )
+from backend.app.core.config import settings
 from backend.app.services.ai_provider import (
     ProviderId,
     ProviderRequest,
@@ -390,12 +391,13 @@ async def run_copilot_query(
             f"INVESTIGATOR QUERY: {query}\n"
         )
 
+        effective_key = api_key or (settings.GEMINI_API_KEY if p_clean in ("gemini", "google") and settings.GEMINI_API_KEY else None)
         req = ProviderRequest(
             provider=adapter.provider_id,
             model=target_model,
             prompt=user_prompt,
             system_prompt=system_prompt,
-            api_key=api_key,
+            api_key=effective_key,
             base_url=base_url
         )
 
@@ -480,12 +482,13 @@ async def explain_case_finding(
             f"MITRE ATT&CK: {', '.join(mitre_techs)}\n"
         )
 
+        effective_key = api_key or (settings.GEMINI_API_KEY if p_clean in ("gemini", "google") and settings.GEMINI_API_KEY else None)
         req = ProviderRequest(
             provider=adapter.provider_id,
             model=target_model,
             prompt=user_prompt,
             system_prompt=system_prompt,
-            api_key=api_key,
+            api_key=effective_key,
             base_url=base_url
         )
 

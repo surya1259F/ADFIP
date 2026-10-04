@@ -17,6 +17,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from backend.app.core.config import settings
 from backend.app.core.database import get_db
 from backend.app.core.security import get_current_active_user
 from backend.app.models.models import User, AIReasoningRecord
@@ -114,6 +115,21 @@ def get_provider_config(
     """
     rec = AIReasoningService.get_provider_config(db, current_user)
     if not rec:
+        if settings.IS_GEMINI_CONFIGURED:
+            return AIProviderConfigResponse(
+                id="env-configured",
+                provider=settings.DEFAULT_LLM_PROVIDER,
+                model=getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash"),
+                endpoint=None,
+                has_api_key=True,
+                masked_api_key="[Configured via .env]",
+                is_enabled=True,
+                status="CONFIGURED",
+                last_tested_at=None,
+                last_test_status=None,
+                created_at=None,
+                updated_at=None
+            )
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No AI provider configured.")
     return AIProviderConfigResponse(
         id=rec.id,
@@ -157,6 +173,17 @@ def get_provider_status(
     """
     rec = AIReasoningService.get_provider_config(db, current_user)
     if not rec:
+        if settings.IS_GEMINI_CONFIGURED:
+            return {
+                "status": "CONFIGURED",
+                "provider": settings.DEFAULT_LLM_PROVIDER,
+                "model": getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash"),
+                "is_enabled": True,
+                "has_api_key": True,
+                "last_tested_at": None,
+                "last_test_status": None,
+                "fallback_available": True
+            }
         return {
             "status": "UNCONFIGURED",
             "provider": "local_stub",
@@ -223,16 +250,26 @@ async def provider_test_endpoint(
         try:
             adapter = get_ai_adapter(p_clean)
             target_model = request.model or adapter.default_model
+            effective_key = request.api_key
+            effective_base_url = request.base_url
+            if not effective_key:
+                cfg = AIReasoningService.get_provider_config(db, current_user)
+                if cfg and cfg.provider == p_clean and cfg.api_key_encrypted:
+                    effective_key = decrypt_credential(cfg.api_key_encrypted)
+                    effective_base_url = effective_base_url or cfg.endpoint
+                elif p_clean in ("gemini", "google") and settings.GEMINI_API_KEY:
+                    effective_key = settings.GEMINI_API_KEY
+
             test_req = ProviderRequest(
                 provider=adapter.provider_id,
                 model=target_model,
-                prompt="ADFIR connectivity test check.",
-                api_key=request.api_key,
-                base_url=request.base_url
+                prompt="ADFIP connectivity test check. Respond with OK.",
+                api_key=effective_key,
+                base_url=effective_base_url
             )
             resp = await adapter.generate(test_req)
             status_str = "SUCCESS"
-            details_str = f"Provider connection verified. Response generated successfully."
+            details_str = f"Provider connection verified. Response generated successfully using {target_model}."
             model_str = target_model
         except Exception as e:
             status_str = "FAILED"

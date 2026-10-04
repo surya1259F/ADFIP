@@ -7,6 +7,7 @@ from backend.app.services.ai_provider import (
     ProviderRequest,
     ProviderResponse,
     ProviderError,
+    AIErrorCode,
     OpenAIAdapter,
     AnthropicAdapter,
     GeminiAdapter,
@@ -388,22 +389,24 @@ async def test_23_gemini_model_mapping_and_test_connection():
         })
 
     adapter = GeminiAdapter(transport=httpx.MockTransport(handler))
-    # Test connection with deprecated gemini-2.0-flash maps to gemini-1.5-flash
+    # Test connection preserves selected model name without artificial downgrade
     res = await adapter.test_connection(api_key=MOCK_SECRET_KEY, model="gemini-2.0-flash")
     assert res.success is True
-    assert "gemini-1.5-flash" in res.status_message
-    assert any("models/gemini-1.5-flash:generateContent" in u for u in called_urls)
+    assert "gemini-2.0-flash" in res.status_message
+    assert any("models/gemini-2.0-flash:generateContent" in u for u in called_urls)
+    assert res.error_code == AIErrorCode.SUCCESS
 
 
 @pytest.mark.asyncio
 async def test_24_gemini_error_categorization():
     # 404 Model Unavailable
     def handler_404(request: httpx.Request):
-        return httpx.Response(404, json={"error": {"code": 404, "message": "models/gemini-2.0-flash is not found for generateContent"}})
+        return httpx.Response(404, json={"error": {"code": 404, "message": "models/gemini-not-found is not found for generateContent"}})
 
     adapter = GeminiAdapter(transport=httpx.MockTransport(handler_404))
-    res = await adapter.test_connection(api_key=MOCK_SECRET_KEY, model="gemini-1.5-flash")
+    res = await adapter.test_connection(api_key=MOCK_SECRET_KEY, model="gemini-not-found")
     assert res.success is False
+    assert res.error_code == AIErrorCode.MODEL_UNAVAILABLE
     assert "[MODEL_UNAVAILABLE]" in res.status_message
 
     # 429 Quota Exceeded
@@ -413,11 +416,140 @@ async def test_24_gemini_error_categorization():
     adapter_quota = GeminiAdapter(transport=httpx.MockTransport(handler_429))
     res_quota = await adapter_quota.test_connection(api_key=MOCK_SECRET_KEY, model="gemini-1.5-flash")
     assert res_quota.success is False
-    assert "[RATE_LIMIT / QUOTA_ERROR]" in res_quota.status_message
+    assert res_quota.error_code == AIErrorCode.QUOTA_EXCEEDED
+    assert "[QUOTA_EXCEEDED]" in res_quota.status_message
 
     # Missing Key -> Configuration Error
     res_nokey = await adapter.test_connection(api_key=None)
     assert res_nokey.success is False
+    assert res_nokey.error_code == AIErrorCode.CONFIGURATION_ERROR
     assert "[CONFIGURATION_ERROR]" in res_nokey.status_message
 
 
+@pytest.mark.asyncio
+async def test_25_gemini_list_models_success():
+    def handler(request: httpx.Request):
+        assert request.headers["x-goog-api-key"] == MOCK_SECRET_KEY
+        return httpx.Response(200, json={
+            "models": [
+                {
+                    "name": "models/gemini-2.5-flash",
+                    "supportedGenerationMethods": ["generateContent"]
+                },
+                {
+                    "name": "models/gemini-2.0-flash",
+                    "supportedGenerationMethods": ["generateContent"]
+                },
+                {
+                    "name": "models/text-embedding-004",
+                    "supportedGenerationMethods": ["embedContent"]
+                }
+            ]
+        })
+
+    adapter = GeminiAdapter(transport=httpx.MockTransport(handler))
+    models = await adapter.list_models(api_key=MOCK_SECRET_KEY)
+    assert "gemini-2.5-flash" in models
+    assert "gemini-2.0-flash" in models
+    assert "text-embedding-004" not in models
+
+
+@pytest.mark.asyncio
+async def test_26_gemini_list_models_auth_failure():
+    def handler(request: httpx.Request):
+        return httpx.Response(400, json={"error": {"message": "API_KEY_INVALID"}})
+
+    adapter = GeminiAdapter(transport=httpx.MockTransport(handler))
+    with pytest.raises(ProviderError) as exc_info:
+        await adapter.list_models(api_key="bad-key")
+    assert exc_info.value.error_code == AIErrorCode.INVALID_API_KEY
+    assert "[INVALID_API_KEY]" in exc_info.value.message
+
+
+@pytest.mark.asyncio
+async def test_27_gemini_generate_success():
+    def handler(request: httpx.Request):
+        assert request.headers["x-goog-api-key"] == MOCK_SECRET_KEY
+        return httpx.Response(200, json={
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"text": "Ground truth forensic analysis of disk artifact."}],
+                        "role": "model"
+                    },
+                    "finishReason": "STOP"
+                }
+            ],
+            "usageMetadata": {
+                "promptTokenCount": 25,
+                "candidatesTokenCount": 15,
+                "totalTokenCount": 40
+            }
+        })
+
+    adapter = GeminiAdapter(transport=httpx.MockTransport(handler))
+    req = ProviderRequest(
+        provider=ProviderId.GEMINI,
+        model="gemini-2.5-flash",
+        prompt="Explain finding evidence.",
+        api_key=MOCK_SECRET_KEY
+    )
+    res = await adapter.generate(req)
+    assert res.provider == ProviderId.GEMINI
+    assert res.model == "gemini-2.5-flash"
+    assert "Ground truth forensic analysis" in res.content
+    assert res.usage["prompt_tokens"] == 25
+    assert res.usage["completion_tokens"] == 15
+    assert res.usage["total_tokens"] == 40
+
+
+@pytest.mark.asyncio
+async def test_28_gemini_generate_missing_key():
+    adapter = GeminiAdapter()
+    req = ProviderRequest(
+        provider=ProviderId.GEMINI,
+        model="gemini-2.5-flash",
+        prompt="Explain finding evidence.",
+        api_key=None
+    )
+    with pytest.raises(ProviderError) as exc_info:
+        await adapter.generate(req)
+    assert exc_info.value.error_code == AIErrorCode.CONFIGURATION_ERROR
+    assert "[CONFIGURATION_ERROR]" in exc_info.value.message
+
+
+@pytest.mark.asyncio
+async def test_29_gemini_rate_limit_handling():
+    def handler(request: httpx.Request):
+        return httpx.Response(429, json={"error": {"message": "Too Many Requests, please back off"}})
+
+    adapter = GeminiAdapter(transport=httpx.MockTransport(handler))
+    res = await adapter.test_connection(api_key=MOCK_SECRET_KEY, model="gemini-2.5-flash")
+    assert res.success is False
+    assert res.error_code == AIErrorCode.RATE_LIMITED
+    assert "[RATE_LIMITED]" in res.status_message
+
+
+@pytest.mark.asyncio
+async def test_30_gemini_no_fake_ai_fallback():
+    def handler(request: httpx.Request):
+        return httpx.Response(500, json={"error": {"message": "Internal error"}})
+
+    adapter = GeminiAdapter(transport=httpx.MockTransport(handler))
+    req = ProviderRequest(
+        provider=ProviderId.GEMINI,
+        model="gemini-2.5-flash",
+        prompt="Investigate memory image.",
+        api_key=MOCK_SECRET_KEY
+    )
+    with pytest.raises(ProviderError) as exc_info:
+        await adapter.generate(req)
+    assert exc_info.value.error_code == AIErrorCode.PROVIDER_UNREACHABLE
+    assert "Internal error" in exc_info.value.message
+
+
+def test_31_no_hardcoded_secrets_in_repo():
+    from backend.app.core.config import Settings
+    s = Settings()
+    # Ensure default is empty string or None, not a real key
+    assert not s.GEMINI_API_KEY or s.GEMINI_API_KEY == "" or not s.GEMINI_API_KEY.startswith("AIzaSy")

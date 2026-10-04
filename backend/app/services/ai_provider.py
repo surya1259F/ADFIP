@@ -8,6 +8,8 @@ import time
 from pydantic import BaseModel, Field, ConfigDict
 import httpx
 
+from backend.app.core.config import settings
+
 logger = logging.getLogger("ADFIR_AI_PROVIDER")
 
 DEFAULT_TIMEOUT = httpx.Timeout(15.0, connect=5.0, read=15.0, write=5.0)
@@ -21,12 +23,24 @@ class ProviderId(str, Enum):
     LOCAL_STUB = "local_stub"
 
 
+class AIErrorCode(str, Enum):
+    SUCCESS = "SUCCESS"
+    INVALID_API_KEY = "INVALID_API_KEY"
+    MODEL_UNAVAILABLE = "MODEL_UNAVAILABLE"
+    RATE_LIMITED = "RATE_LIMITED"
+    QUOTA_EXCEEDED = "QUOTA_EXCEEDED"
+    PROVIDER_UNREACHABLE = "PROVIDER_UNREACHABLE"
+    CONFIGURATION_ERROR = "CONFIGURATION_ERROR"
+    GENERATION_FAILED = "GENERATION_FAILED"
+
+
 class ConnectionTestResult(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     provider: ProviderId
     success: bool
     status_message: str
+    error_code: Optional[AIErrorCode] = None
     latency_ms: Optional[float] = None
     has_key: bool = False
 
@@ -59,12 +73,19 @@ class ProviderError(Exception):
     Sanitized provider exception.
     Guarantees API keys and Authorization headers are NEVER exposed in error message or str representation.
     """
-    def __init__(self, provider: ProviderId, message: str, status_code: Optional[int] = None):
+    def __init__(
+        self,
+        provider: ProviderId,
+        message: str,
+        status_code: Optional[int] = None,
+        error_code: Optional[AIErrorCode] = None
+    ):
         sanitized_msg = self._sanitize(message)
         super().__init__(sanitized_msg)
         self.provider = provider
         self.message = sanitized_msg
         self.status_code = status_code
+        self.error_code = error_code or AIErrorCode.GENERATION_FAILED
 
     @staticmethod
     def _sanitize(text: str) -> str:
@@ -74,6 +95,8 @@ class ProviderError(Exception):
         sanitized = re.sub(r'Bearer\s+[A-Za-z0-9_\-\.]+', 'Bearer [REDACTED]', sanitized, flags=re.IGNORECASE)
         sanitized = re.sub(r'x-api-key["\']?\s*[:=]\s*["\']?[A-Za-z0-9_\-\.]+', 'x-api-key: [REDACTED]', sanitized, flags=re.IGNORECASE)
         sanitized = re.sub(r'x-goog-api-key["\']?\s*[:=]\s*["\']?[A-Za-z0-9_\-\.]+', 'x-goog-api-key: [REDACTED]', sanitized, flags=re.IGNORECASE)
+        sanitized = re.sub(r'key=[A-Za-z0-9_\-\.]{10,}', 'key=[REDACTED]', sanitized, flags=re.IGNORECASE)
+        sanitized = re.sub(r'AIza[A-Za-z0-9_\-]{35}', '[REDACTED_GEMINI_KEY]', sanitized)
         sanitized = re.sub(r'sk-[A-Za-z0-9_-]{8,}', 'sk-[REDACTED]', sanitized)
         return sanitized
 
@@ -388,13 +411,14 @@ class AnthropicAdapter(BaseAIAdapter):
 
 class GeminiAdapter(BaseAIAdapter):
     DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
-    DEFAULT_MODEL = "gemini-1.5-flash"
+    DEFAULT_MODEL = "gemini-2.5-flash"
 
     def __init__(self, transport: Optional[httpx.AsyncBaseTransport] = None):
-        super().__init__(ProviderId.GEMINI, self.DEFAULT_MODEL, transport)
+        default_model = getattr(settings, "GEMINI_MODEL", self.DEFAULT_MODEL) or self.DEFAULT_MODEL
+        super().__init__(ProviderId.GEMINI, default_model, transport)
 
-    @staticmethod
-    def _categorize_http_status(status_code: int, response_text: str = "") -> str:
+    @classmethod
+    def _categorize_http_status(cls, status_code: int, response_text: str = "") -> AIErrorCode:
         text_lower = response_text.lower()
         if (
             status_code in (401, 403)
@@ -402,25 +426,47 @@ class GeminiAdapter(BaseAIAdapter):
             or "api key not valid" in text_lower
             or "unauthenticated" in text_lower
             or "permission_denied" in text_lower
+            or "permissiondenied" in text_lower
         ):
-            return "AUTHENTICATION_ERROR"
+            if "quota" in text_lower or "resource_exhausted" in text_lower:
+                return AIErrorCode.QUOTA_EXCEEDED
+            return AIErrorCode.INVALID_API_KEY
         if status_code == 404 or "not found" in text_lower or "is not supported for generatecontent" in text_lower:
-            return "MODEL_UNAVAILABLE"
-        if status_code == 429 or "resource_exhausted" in text_lower or "quota" in text_lower or "rate limit" in text_lower:
-            return "RATE_LIMIT / QUOTA_ERROR"
+            return AIErrorCode.MODEL_UNAVAILABLE
+        if status_code == 429:
+            if "quota" in text_lower or "resource_exhausted" in text_lower or "check quota" in text_lower:
+                return AIErrorCode.QUOTA_EXCEEDED
+            return AIErrorCode.RATE_LIMITED
+        if "resource_exhausted" in text_lower or "quota" in text_lower:
+            return AIErrorCode.QUOTA_EXCEEDED
         if status_code == 400:
-            if "key" in text_lower or "credential" in text_lower:
-                return "AUTHENTICATION_ERROR"
-            return "CONFIGURATION_ERROR"
-        if status_code >= 500:
-            return "NETWORK_ERROR"
-        return "CONFIGURATION_ERROR"
+            if "key" in text_lower or "credential" in text_lower or "api_key" in text_lower:
+                return AIErrorCode.INVALID_API_KEY
+            return AIErrorCode.CONFIGURATION_ERROR
+        if status_code in (500, 502, 503, 504):
+            return AIErrorCode.PROVIDER_UNREACHABLE
+        return AIErrorCode.CONFIGURATION_ERROR
+
+    @staticmethod
+    def _extract_error_detail(response_text: str) -> str:
+        if not response_text:
+            return "No response received from Google Gemini API."
+        try:
+            data = json.loads(response_text)
+            err = data.get("error", {})
+            if isinstance(err, dict):
+                msg = err.get("message")
+                if msg and isinstance(msg, str):
+                    return msg.strip()
+        except Exception:
+            pass
+        clean = ProviderError._sanitize(response_text).strip()
+        return clean[:200] if len(clean) > 200 else clean
 
     @classmethod
     def _normalize_model(cls, model_name: Optional[str]) -> str:
-        name = (model_name or cls.DEFAULT_MODEL).strip()
-        if name in ("gemini-2.0-flash", "models/gemini-2.0-flash", "gemini-2.0-flash-exp"):
-            return "gemini-1.5-flash"
+        fallback = getattr(settings, "GEMINI_MODEL", cls.DEFAULT_MODEL) or cls.DEFAULT_MODEL
+        name = (model_name or fallback).strip()
         if name.startswith("models/"):
             return name[7:]
         return name
@@ -430,13 +476,28 @@ class GeminiAdapter(BaseAIAdapter):
         api_key: Optional[str] = None,
         base_url: Optional[str] = None
     ) -> List[str]:
-        fallback_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
-        if not api_key:
-            return fallback_models
+        effective_key = api_key or (settings.GEMINI_API_KEY if settings.GEMINI_API_KEY else None)
+        fallback_models = [
+            getattr(settings, "GEMINI_MODEL", self.DEFAULT_MODEL),
+            "gemini-2.0-flash",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro"
+        ]
+        seen = set()
+        deduped_fallbacks = []
+        for m in fallback_models:
+            if m not in seen:
+                seen.add(m)
+                deduped_fallbacks.append(m)
+
+        if not effective_key:
+            return deduped_fallbacks
+
         target_url = (base_url or self.DEFAULT_BASE_URL).rstrip("/")
+        self._validate_https_url(target_url, is_local=False)
+        headers = {"x-goog-api-key": effective_key}
+
         try:
-            self._validate_https_url(target_url, is_local=False)
-            headers = {"x-goog-api-key": api_key}
             async with self._get_client() as client:
                 res = await client.get(f"{target_url}/models", headers=headers)
                 if res.status_code == 200:
@@ -449,13 +510,36 @@ class GeminiAdapter(BaseAIAdapter):
                             clean_name = m.get("name", "").replace("models/", "")
                             if clean_name and not clean_name.endswith("-tuning") and not clean_name.startswith("text-embedding"):
                                 discovered.append(clean_name)
-                    return discovered if discovered else fallback_models
+                    return discovered if discovered else deduped_fallbacks
                 else:
-                    logger.warning(f"Could not fetch Gemini models (HTTP {res.status_code}): {ProviderError._sanitize(res.text)}")
-                    return fallback_models
+                    category = self._categorize_http_status(res.status_code, res.text)
+                    detail = self._extract_error_detail(res.text)
+                    raise ProviderError(
+                        self.provider_id,
+                        f"[{category.value}] Google Gemini model discovery failed (HTTP {res.status_code}): {detail}",
+                        status_code=res.status_code,
+                        error_code=category
+                    )
+        except httpx.TimeoutException:
+            raise ProviderError(
+                self.provider_id,
+                f"[{AIErrorCode.PROVIDER_UNREACHABLE.value}] Timeout connecting to Google Gemini model discovery.",
+                error_code=AIErrorCode.PROVIDER_UNREACHABLE
+            )
+        except (httpx.ConnectError, httpx.NetworkError) as e:
+            raise ProviderError(
+                self.provider_id,
+                f"[{AIErrorCode.PROVIDER_UNREACHABLE.value}] Network connection failed during model discovery: {ProviderError._sanitize(str(e))}",
+                error_code=AIErrorCode.PROVIDER_UNREACHABLE
+            )
+        except ProviderError:
+            raise
         except Exception as e:
-            logger.warning(f"Gemini list_models error: {ProviderError._sanitize(str(e))}")
-            return fallback_models
+            raise ProviderError(
+                self.provider_id,
+                f"[{AIErrorCode.CONFIGURATION_ERROR.value}] Model discovery failed: {ProviderError._sanitize(str(e))}",
+                error_code=AIErrorCode.CONFIGURATION_ERROR
+            )
 
     async def test_connection(
         self,
@@ -463,11 +547,13 @@ class GeminiAdapter(BaseAIAdapter):
         base_url: Optional[str] = None,
         model: Optional[str] = None
     ) -> ConnectionTestResult:
-        if not api_key:
+        effective_key = api_key or (settings.GEMINI_API_KEY if settings.GEMINI_API_KEY else None)
+        if not effective_key:
             return ConnectionTestResult(
                 provider=self.provider_id,
                 success=False,
-                status_message="[CONFIGURATION_ERROR] API key is required for Google Gemini provider connection test.",
+                status_message=f"[{AIErrorCode.CONFIGURATION_ERROR.value}] API key is required for Google Gemini provider connection test.",
+                error_code=AIErrorCode.CONFIGURATION_ERROR,
                 has_key=False
             )
         target_url = (base_url or self.DEFAULT_BASE_URL).rstrip("/")
@@ -475,7 +561,7 @@ class GeminiAdapter(BaseAIAdapter):
 
         model_name = self._normalize_model(model)
         headers = {
-            "x-goog-api-key": api_key,
+            "x-goog-api-key": effective_key,
             "Content-Type": "application/json"
         }
         start_time = time.time()
@@ -484,7 +570,7 @@ class GeminiAdapter(BaseAIAdapter):
                 res = await client.post(
                     f"{target_url}/models/{model_name}:generateContent",
                     headers=headers,
-                    json={"contents": [{"parts": [{"text": "ping"}]}]}
+                    json={"contents": [{"parts": [{"text": "ADFIP connectivity test check. Respond with OK."}]}]}
                 )
                 latency = round((time.time() - start_time) * 1000, 2)
 
@@ -492,50 +578,67 @@ class GeminiAdapter(BaseAIAdapter):
                     return ConnectionTestResult(
                         provider=self.provider_id,
                         success=True,
-                        status_message=f"Google Gemini API connection verified successfully using {model_name}.",
+                        status_message=f"Google Gemini connection verified successfully using {model_name}.",
+                        error_code=AIErrorCode.SUCCESS,
                         latency_ms=latency,
                         has_key=True
                     )
                 else:
                     category = self._categorize_http_status(res.status_code, res.text)
+                    detail = self._extract_error_detail(res.text)
                     return ConnectionTestResult(
                         provider=self.provider_id,
                         success=False,
-                        status_message=f"[{category}] Google Gemini API error (HTTP {res.status_code}): {ProviderError._sanitize(res.text)}",
+                        status_message=f"[{category.value}] Google Gemini API error (HTTP {res.status_code}): {ProviderError._sanitize(detail)}",
+                        error_code=category,
                         latency_ms=latency,
                         has_key=True
                     )
         except httpx.TimeoutException:
+            latency = round((time.time() - start_time) * 1000, 2)
             return ConnectionTestResult(
                 provider=self.provider_id,
                 success=False,
-                status_message="[NETWORK_ERROR] Connection timed out connecting to Google Gemini API.",
+                status_message=f"[{AIErrorCode.PROVIDER_UNREACHABLE.value}] Connection timed out connecting to Google Gemini API.",
+                error_code=AIErrorCode.PROVIDER_UNREACHABLE,
+                latency_ms=latency,
                 has_key=True
             )
         except (httpx.ConnectError, httpx.NetworkError) as e:
+            latency = round((time.time() - start_time) * 1000, 2)
             return ConnectionTestResult(
                 provider=self.provider_id,
                 success=False,
-                status_message=f"[NETWORK_ERROR] Network connection failed: {ProviderError._sanitize(str(e))}",
+                status_message=f"[{AIErrorCode.PROVIDER_UNREACHABLE.value}] Network connection failed: {ProviderError._sanitize(str(e))}",
+                error_code=AIErrorCode.PROVIDER_UNREACHABLE,
+                latency_ms=latency,
                 has_key=True
             )
         except Exception as e:
+            latency = round((time.time() - start_time) * 1000, 2)
             return ConnectionTestResult(
                 provider=self.provider_id,
                 success=False,
-                status_message=f"[CONFIGURATION_ERROR] {ProviderError._sanitize(str(e))}",
+                status_message=f"[{AIErrorCode.CONFIGURATION_ERROR.value}] {ProviderError._sanitize(str(e))}",
+                error_code=AIErrorCode.CONFIGURATION_ERROR,
+                latency_ms=latency,
                 has_key=True
             )
 
     async def generate(self, req: ProviderRequest) -> ProviderResponse:
-        if not req.api_key:
-            raise ProviderError(self.provider_id, "[CONFIGURATION_ERROR] API key is required for Google Gemini provider generation.")
+        effective_key = req.api_key or (settings.GEMINI_API_KEY if settings.GEMINI_API_KEY else None)
+        if not effective_key:
+            raise ProviderError(
+                self.provider_id,
+                f"[{AIErrorCode.CONFIGURATION_ERROR.value}] API key is required for Google Gemini provider generation.",
+                error_code=AIErrorCode.CONFIGURATION_ERROR
+            )
 
         target_url = (req.base_url or self.DEFAULT_BASE_URL).rstrip("/")
         self._validate_https_url(target_url, is_local=False)
 
         headers = {
-            "x-goog-api-key": req.api_key,
+            "x-goog-api-key": effective_key,
             "Content-Type": "application/json"
         }
 
@@ -546,6 +649,14 @@ class GeminiAdapter(BaseAIAdapter):
         if req.system_prompt:
             payload["systemInstruction"] = {"parts": [{"text": req.system_prompt}]}
 
+        generation_config: Dict[str, Any] = {}
+        if req.temperature is not None:
+            generation_config["temperature"] = req.temperature
+        if req.max_tokens:
+            generation_config["maxOutputTokens"] = req.max_tokens
+        if generation_config:
+            payload["generationConfig"] = generation_config
+
         try:
             async with self._get_client() as client:
                 res = await client.post(
@@ -555,37 +666,69 @@ class GeminiAdapter(BaseAIAdapter):
                 )
                 if res.status_code != 200:
                     category = self._categorize_http_status(res.status_code, res.text)
+                    detail = self._extract_error_detail(res.text)
                     raise ProviderError(
                         self.provider_id,
-                        f"[{category}] Google Gemini API error HTTP {res.status_code}: {res.text}",
-                        status_code=res.status_code
+                        f"[{category.value}] Google Gemini API error HTTP {res.status_code}: {ProviderError._sanitize(detail)}",
+                        status_code=res.status_code,
+                        error_code=category
                     )
 
                 data = res.json()
                 if "candidates" not in data or not data["candidates"]:
-                    raise ProviderError(self.provider_id, "Google Gemini API returned malformed response: missing candidates.")
+                    raise ProviderError(
+                        self.provider_id,
+                        f"[{AIErrorCode.GENERATION_FAILED.value}] Google Gemini API returned malformed response: missing candidates.",
+                        error_code=AIErrorCode.GENERATION_FAILED
+                    )
 
                 candidate = data["candidates"][0]
                 parts = candidate.get("content", {}).get("parts", [])
                 text_content = "".join([p.get("text", "") for p in parts if isinstance(p, dict)])
 
-                usage = data.get("usageMetadata", {})
+                usage_raw = data.get("usageMetadata", {})
+                usage = None
+                if isinstance(usage_raw, dict) and usage_raw:
+                    usage = {
+                        "prompt_tokens": usage_raw.get("promptTokenCount", 0),
+                        "completion_tokens": usage_raw.get("candidatesTokenCount", 0),
+                        "total_tokens": usage_raw.get("totalTokenCount", 0),
+                        **usage_raw
+                    }
 
                 return ProviderResponse(
                     provider=self.provider_id,
                     model=model_name,
                     content=text_content,
-                    usage=usage if isinstance(usage, dict) else None
+                    usage=usage
                 )
 
         except httpx.TimeoutException:
-            raise ProviderError(self.provider_id, "[NETWORK_ERROR] Google Gemini API request timed out.")
+            raise ProviderError(
+                self.provider_id,
+                f"[{AIErrorCode.PROVIDER_UNREACHABLE.value}] Google Gemini API request timed out.",
+                error_code=AIErrorCode.PROVIDER_UNREACHABLE
+            )
+        except (httpx.ConnectError, httpx.NetworkError) as e:
+            raise ProviderError(
+                self.provider_id,
+                f"[{AIErrorCode.PROVIDER_UNREACHABLE.value}] Network connection failed: {ProviderError._sanitize(str(e))}",
+                error_code=AIErrorCode.PROVIDER_UNREACHABLE
+            )
         except json.JSONDecodeError:
-            raise ProviderError(self.provider_id, "Google Gemini API returned malformed non-JSON response.")
+            raise ProviderError(
+                self.provider_id,
+                f"[{AIErrorCode.GENERATION_FAILED.value}] Google Gemini API returned malformed non-JSON response.",
+                error_code=AIErrorCode.GENERATION_FAILED
+            )
         except ProviderError:
             raise
         except Exception as e:
-            raise ProviderError(self.provider_id, f"Google Gemini API execution error: {str(e)}")
+            raise ProviderError(
+                self.provider_id,
+                f"[{AIErrorCode.GENERATION_FAILED.value}] Google Gemini API execution error: {ProviderError._sanitize(str(e))}",
+                error_code=AIErrorCode.GENERATION_FAILED
+            )
 
 
 class LocalOpenAIAdapter(BaseAIAdapter):
