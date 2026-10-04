@@ -217,7 +217,7 @@ export const useInvestigationStore = create<InvestigationState>((set, get) => ({
       }
     } else {
       // Standalone browser / Vite development fallback ONLY
-      const devUrl = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:8000/api';
+      const devUrl = (import.meta as any).env?.VITE_API_BASE_URL || 'http://localhost:8001/api';
       setApiBaseUrl(devUrl);
       set({
         backendState: 'READY',

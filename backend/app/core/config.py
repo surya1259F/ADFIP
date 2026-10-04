@@ -19,6 +19,34 @@ def get_user_data_dir() -> Path:
             return Path(xdg_data) / "adfir"
         return Path.home() / ".local" / "share" / "adfir"
 
+def get_repo_root_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", sys.executable))
+    return Path(__file__).resolve().parent.parent.parent.parent
+
+BASE_DIR_PATH: Path = get_repo_root_dir()
+
+def _resolve_env_files() -> tuple[Path, ...]:
+    candidates: list[Path] = [
+        BASE_DIR_PATH / ".env",
+    ]
+    if getattr(sys, "frozen", False):
+        exe_env = Path(sys.executable).parent / ".env"
+        if exe_env not in candidates:
+            candidates.append(exe_env)
+
+    cwd_env = Path.cwd() / ".env"
+    if cwd_env not in candidates:
+        candidates.append(cwd_env)
+
+    custom_env = os.getenv("ADFIR_ENV_FILE") or os.getenv("ENV_FILE")
+    if custom_env:
+        custom_path = Path(custom_env).resolve()
+        if custom_path not in candidates:
+            candidates.append(custom_path)
+
+    return tuple(candidates)
+
 class Settings(BaseSettings):
     PROJECT_NAME: str = "ADFIR - Autonomous DFIR Platform"
     VERSION: str = "0.1.0"
@@ -30,7 +58,7 @@ class Settings(BaseSettings):
     ADFIR_INTERNAL_SECRET: Optional[str] = None
     
     # Base directory (repository or installation root)
-    BASE_DIR: Path = Path(sys._MEIPASS) if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent.parent.parent.parent
+    BASE_DIR: Path = BASE_DIR_PATH
 
     # Dynamic application data path properties
     @property
@@ -132,7 +160,9 @@ class Settings(BaseSettings):
 
     class Config:
         case_sensitive = True
-        env_file = ".env"
+        extra = "ignore"
+        env_file = _resolve_env_files()
+        env_file_encoding = "utf-8"
 
 settings = Settings()
 
@@ -151,7 +181,8 @@ def get_backend_port() -> int:
         return validate_port(port_env)
     if settings.ADFIR_PORT is not None:
         return validate_port(settings.ADFIR_PORT)
-    return 8000
+    return 8001
+
 
 # Dynamic secret key fallback: cryptographically random and securely persisted to data directory
 import secrets

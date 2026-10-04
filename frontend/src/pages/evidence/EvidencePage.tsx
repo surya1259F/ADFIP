@@ -9,6 +9,7 @@ import {
   AlertCircle,
   FileCheck,
 } from 'lucide-react';
+import { isTauri, invoke } from '@tauri-apps/api/core';
 import { evidenceService } from '../../services/evidence';
 import { normalizeError } from '../../services/client';
 import { Button } from '../../components/ui/Button';
@@ -92,6 +93,7 @@ interface SelectedFileInfo {
   size?: number;
   path: string;
   type: string;
+  file?: File;
 }
 
 const AddEvidenceDialog: React.FC<{
@@ -105,22 +107,24 @@ const AddEvidenceDialog: React.FC<{
   const [selectedFile, setSelectedFile] = useState<SelectedFileInfo | null>(null);
   const [evidenceType, setEvidenceType] = useState<string>('disk_image');
   const [notes, setNotes] = useState('');
-  const [manualPathOverride, setManualPathOverride] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const mutation = useMutation({
     mutationFn: () => {
-      const targetPath = manualPathOverride.trim();
-      const targetName = selectedFile?.name || targetPath.split(/[/\\]/).pop() || targetPath;
+      if (!selectedFile) {
+        throw new Error('Please select an evidence file using Browse Evidence.');
+      }
+      const targetPath = selectedFile.path || selectedFile.name;
 
       return evidenceService.intake(caseId, {
-        name: targetName,
+        name: selectedFile.name,
         file_path: targetPath,
         source_path: targetPath,
         evidence_type: evidenceType,
         notes: notes.trim() || undefined,
         case_id: caseId,
+        file: selectedFile.file,
       });
     },
     onSuccess: () => {
@@ -131,7 +135,7 @@ const AddEvidenceDialog: React.FC<{
     onError: (e) => {
       const msg = normalizeError(e);
       if (msg.includes('not found on disk') || msg.toLowerCase().includes('file not found')) {
-        setErr('The selected evidence file could not be found at the supplied path. Verify that the file exists and the path is accessible to the backend workstation.');
+        setErr('The selected evidence file could not be found or accessed by the backend workstation. Verify that the file exists and is accessible.');
       } else {
         setErr(msg);
       }
@@ -142,7 +146,6 @@ const AddEvidenceDialog: React.FC<{
     setSelectedFile(null);
     setEvidenceType('disk_image');
     setNotes('');
-    setManualPathOverride('');
     setErr(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -151,21 +154,42 @@ const AddEvidenceDialog: React.FC<{
 
   const handleFileChosen = (file: File) => {
     const detected = detectEvidenceType(file.name);
-    const nativePath = (file as any).path || '';
+    const nativePath = (file as any).path || (file as any).webkitRelativePath || '';
     setSelectedFile({
       name: file.name,
       size: file.size,
       path: nativePath,
       type: detected,
+      file: file,
     });
     setEvidenceType(detected);
-    if (nativePath) {
-      setManualPathOverride(nativePath);
-    }
     setErr(null);
   };
 
-  const handleNativeBrowse = () => {
+  const handleNativeBrowse = async () => {
+    if (isTauri()) {
+      try {
+        const selectedPath = await invoke<string | null>('select_evidence_file');
+        if (selectedPath) {
+          const fileName = selectedPath.split(/[/\\]/).pop() || selectedPath;
+          const detected = detectEvidenceType(fileName);
+          setSelectedFile({
+            name: fileName,
+            path: selectedPath,
+            type: detected,
+          });
+          setEvidenceType(detected);
+          setErr(null);
+          return;
+        } else {
+          // User dismissed/canceled the dialog
+          return;
+        }
+      } catch (e) {
+        console.warn('Native desktop file selection fallback:', e);
+      }
+    }
+    // Browser environment or fallback: trigger file input
     if (fileInputRef.current) {
       fileInputRef.current.click();
     }
@@ -190,17 +214,8 @@ const AddEvidenceDialog: React.FC<{
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const targetPath = manualPathOverride.trim();
-    if (!targetPath) {
-      if (selectedFile) {
-        setErr(`Please enter the complete host filesystem path for "${selectedFile.name}" (e.g., /path/to/${selectedFile.name}). In browser environments, full local paths must be specified.`);
-      } else {
-        setErr('Please select an evidence file or provide a source file path.');
-      }
-      return;
-    }
-    if (!targetPath.includes('/') && !targetPath.includes('\\')) {
-      setErr(`Please specify the full filesystem path on the host for "${targetPath}" (e.g., /path/to/${targetPath}).`);
+    if (!selectedFile) {
+      setErr('Please select an evidence file using "Browse Evidence" to proceed.');
       return;
     }
     mutation.mutate();
@@ -225,7 +240,7 @@ const AddEvidenceDialog: React.FC<{
           </div>
         )}
 
-        {/* Hidden HTML5 File Input for Browser / Native File Picker */}
+        {/* Hidden HTML5 File Input for Native File Picker */}
         <input
           ref={fileInputRef}
           type="file"
@@ -237,7 +252,7 @@ const AddEvidenceDialog: React.FC<{
           }}
         />
 
-        {/* Primary Interaction: Browse / Select Evidence Card */}
+        {/* Primary Interaction: Browse Evidence Entry Card */}
         <div
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
@@ -266,7 +281,7 @@ const AddEvidenceDialog: React.FC<{
             onClick={handleNativeBrowse}
             icon={<HardDrive className="w-3.5 h-3.5" />}
           >
-            Browse / Select Evidence
+            Browse Evidence
           </Button>
 
           <p className="text-[10px] text-slate-400 mt-2">
@@ -299,35 +314,37 @@ const AddEvidenceDialog: React.FC<{
                   : selectedFile.type.replace('_', ' ').toUpperCase()}
               </Badge>
             </div>
+
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500">Acquisition Status:</span>
+              <Badge tone="active">Ready for Acquisition</Badge>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <span className="text-slate-500">Integrity:</span>
+              <span className="text-slate-600 font-medium">Pending Acquisition (SHA-256)</span>
+            </div>
+
+            {selectedFile.path && (
+              <div className="flex items-center justify-between pt-1 border-t border-stone-200/40">
+                <span className="text-slate-400 text-[11px]">Source Location:</span>
+                <span className="font-mono text-[10px] text-slate-500 truncate max-w-[240px]" title={selectedFile.path}>
+                  {selectedFile.path}
+                </span>
+              </div>
+            )}
           </div>
         )}
 
         {/* Evidence Type Selection */}
         <Select
-          label="Evidence Type"
+          label="Evidence Classification"
           value={evidenceType}
           onChange={(e) => setEvidenceType(e.target.value)}
           options={EVIDENCE_TYPES}
         />
 
-        {/* Source Path Input (Populated by File Picker or Manual Absolute Path) */}
-        <Input
-          label="Source File Path"
-          value={manualPathOverride}
-          onChange={(e) => {
-            setManualPathOverride(e.target.value);
-            if (err) setErr(null);
-          }}
-          placeholder="/path/to/evidence/sample.docx or C:\Evidence\image.raw"
-          helper={
-            selectedFile && !selectedFile.path
-              ? `Web browser mode: enter the complete filesystem path on the host where "${selectedFile.name}" is located.`
-              : 'Absolute filesystem path accessible to the ADFIP backend workstation.'
-          }
-          required
-        />
-
-        {/* Optional Notes */}
+        {/* Optional Acquisition Notes */}
         <Input
           label="Acquisition Notes (Optional)"
           value={notes}
@@ -352,6 +369,7 @@ const AddEvidenceDialog: React.FC<{
             type="submit"
             variant="primary"
             size="sm"
+            disabled={!selectedFile || mutation.isPending}
             loading={mutation.isPending}
             icon={<FileCheck className="w-3.5 h-3.5" />}
           >
@@ -414,7 +432,7 @@ export const EvidencePage: React.FC = () => {
               icon={<HardDrive className="w-3.5 h-3.5" />}
               onClick={() => setAddOpen(true)}
             >
-              Browse / Select Evidence
+              Browse Evidence
             </Button>
           }
         />

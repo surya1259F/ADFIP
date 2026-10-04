@@ -429,8 +429,8 @@ impl BackendManager {
                 MAX_PORT_ATTEMPTS, last_err
             ))
         } else {
-            // Development Fallback Mode (Manually started uvicorn on port 8000)
-            let dev_port = 8000;
+            // Development Fallback Mode (Manually started uvicorn on port 8001)
+            let dev_port = 8001;
             let health_url = format!("http://127.0.0.1:{}/api/v1/system/health", dev_port);
             let client = reqwest::blocking::Client::builder()
                 .timeout(Duration::from_secs(1))
@@ -450,7 +450,7 @@ impl BackendManager {
                     bootstrap_secret: String::new(),
                 })
             } else {
-                Err("No packaged backend binary found and no development backend is listening on http://127.0.0.1:8000".to_string())
+                Err("No packaged backend binary found and no development backend is listening on http://127.0.0.1:8001".to_string())
             }
         }
     }
@@ -512,7 +512,7 @@ impl BackendManager {
                 return BackendStatus {
                     is_running: false,
                     is_packaged: false,
-                    port: 8000,
+                    port: 8001,
                     has_crashed: false,
                 }
             }
@@ -538,7 +538,7 @@ impl BackendManager {
             BackendStatus {
                 is_running: false,
                 is_packaged: false,
-                port: 8000,
+                port: 8001,
                 has_crashed: false,
             }
         }

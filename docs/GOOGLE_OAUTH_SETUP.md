@@ -41,16 +41,22 @@ This document outlines the step-by-step configuration required in the Google Clo
 5. **Authorized JavaScript origins**:
    * `http://localhost:5173` (Vite dev server)
    * `http://localhost:8000` (FastAPI backend)
+   * `http://localhost:8001` (FastAPI backend)
    * `http://127.0.0.1:5173`
+   * `http://127.0.0.1:8001`
+   * `http://localhost:8000` (Alternative/legacy development port)
    * `http://127.0.0.1:8000`
    * `tauri://localhost` (Tauri v2 desktop shell)
    * `http://tauri.localhost`
    * `https://tauri.localhost`
 6. **Authorized redirect URIs**:
    Add the canonical ADFIP backend callback endpoint:
+   * `http://localhost:8001/api/v1/auth/google/callback`
+   * `http://127.0.0.1:8001/api/v1/auth/google/callback`
    * `http://localhost:8000/api/v1/auth/google/callback`
    * `http://127.0.0.1:8000/api/v1/auth/google/callback`
    *(For remote or cloud production deployments, replace `localhost:8000` with your canonical backend authority, e.g. `https://adfip.agency.gov/api/v1/auth/google/callback`)*
+   *(For remote or cloud production deployments, replace `localhost:8001` with your canonical backend authority, e.g. `https://adfip.agency.gov/api/v1/auth/google/callback`)*
 7. Click **Create**.
 8. Copy the **Client ID** and **Client Secret**.
 
@@ -64,7 +70,7 @@ Add the Google OAuth credentials to your local or server `.env` file (located in
 # Google OAuth 2.0 Credentials
 GOOGLE_CLIENT_ID="<YOUR_CLIENT_ID>.apps.googleusercontent.com"
 GOOGLE_CLIENT_SECRET="<YOUR_CLIENT_SECRET>"
-GOOGLE_REDIRECT_URI="http://localhost:8000/api/v1/auth/google/callback"
+GOOGLE_REDIRECT_URI="http://localhost:8001/api/v1/auth/google/callback"
 ```
 
 > **Security Note:** Never commit `.env` or client secrets to version control. The repository ignores `.env` by default and provides safe placeholders in `.env.example`.

@@ -1,7 +1,7 @@
 import uuid
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 
 from backend.app.core.database import get_db
@@ -493,10 +493,20 @@ def update_case_permissions(
     return case.case_permissions
 
 
-@router.post("/{case_id}/evidence/intake", response_model=EvidenceResponse, status_code=status.HTTP_201_CREATED)
-def intake_case_evidence(
+@router.get("/{case_id}/evidence", response_model=List[EvidenceResponse])
+def get_case_evidence_items(
     case_id: str,
-    payload: Dict[str, Any],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    case = get_authorized_case(case_id, db, current_user)
+    return db.query(EvidenceItem).filter(EvidenceItem.case_id == case.id).all()
+
+
+@router.post("/{case_id}/evidence/intake", response_model=EvidenceResponse, status_code=status.HTTP_201_CREATED)
+async def intake_case_evidence(
+    case_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -504,14 +514,36 @@ def intake_case_evidence(
     from backend.app.services.case_closure import check_case_not_closed
     check_case_not_closed(case)
 
-    from backend.app.api.v1.endpoints.evidence import intake_evidence
-    from backend.app.schemas.schemas import EvidenceIntakeRequest
-    intake_req = EvidenceIntakeRequest(
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        file_upload = form.get("file")
+        file_stream = file_upload.file if hasattr(file_upload, "file") else None
+        filename = getattr(file_upload, "filename", None) or form.get("name")
+        source_path = form.get("file_path") or form.get("source_path") or form.get("path")
+        evidence_type = form.get("evidence_type")
+        notes = form.get("notes") or form.get("acquisition_notes")
+        name = form.get("name") or filename
+    else:
+        payload = await request.json()
+        file_stream = None
+        source_path = payload.get("file_path") or payload.get("path")
+        evidence_type = payload.get("evidence_type")
+        notes = payload.get("notes") or payload.get("acquisition_notes")
+        name = payload.get("name")
+        filename = name
+
+    from backend.app.api.v1.endpoints.evidence import process_evidence_intake
+    return process_evidence_intake(
+        db=db,
+        current_user=current_user,
         case_id=case.id,
-        file_path=payload.get("file_path") or payload.get("path"),
-        evidence_type=payload.get("evidence_type")
+        file_stream=file_stream,
+        filename=str(name or filename) if (name or filename) else None,
+        source_path=str(source_path) if source_path else None,
+        evidence_type=str(evidence_type) if evidence_type else None,
+        notes=str(notes) if notes else None,
     )
-    return intake_evidence(payload=intake_req, db=db, current_user=current_user)
 
 
 @router.post("/{case_id}/close", response_model=CaseClosureResponse)

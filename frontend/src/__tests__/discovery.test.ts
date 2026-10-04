@@ -60,7 +60,7 @@ export function runFrontendDiscoveryTests(): boolean {
   useInvestigationStore.getState().initializeBackend();
   const state = useInvestigationStore.getState();
   assertEqual(state.backendState, 'READY', 'initializeBackend must transition backendState to READY');
-  assertEqual(state.backendUrl, 'http://localhost:8000/api', 'Standalone browser dev mode initializes port 8000');
+  assertEqual(state.backendUrl, 'http://localhost:8001/api', 'Standalone browser dev mode initializes port 8001');
   console.log('✓ Step 2 Test 2: Discovery completes to state READY');
 
   // Step 2 Test 3 & 4: Network failure changes state to UNAVAILABLE without logging user out

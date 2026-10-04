@@ -1,6 +1,6 @@
 import axios, { type AxiosInstance, type AxiosError } from 'axios';
 
-const DEFAULT_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
+const DEFAULT_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001/api/v1';
 
 let currentBaseUrl = DEFAULT_BASE_URL;
 let unauthorizedHandler: (() => void) | null = null;
@@ -12,8 +12,12 @@ export const apiClient: AxiosInstance = axios.create({
 });
 
 export function setApiBaseUrl(url: string): void {
-  currentBaseUrl = url;
-  apiClient.defaults.baseURL = url;
+  let normalizedUrl = url.trim();
+  if (normalizedUrl.endsWith('/api')) {
+    normalizedUrl = `${normalizedUrl}/v1`;
+  }
+  currentBaseUrl = normalizedUrl;
+  apiClient.defaults.baseURL = normalizedUrl;
 }
 
 export function setUnauthorizedHandler(handler: () => void): void {
@@ -32,6 +36,9 @@ apiClient.interceptors.request.use((config) => {
   }
   if (currentBootstrapSecret) {
     config.headers['X-ADFIR-Bootstrap-Secret'] = currentBootstrapSecret;
+  }
+  if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+    delete config.headers['Content-Type'];
   }
   return config;
 });

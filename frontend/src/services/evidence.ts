@@ -8,6 +8,7 @@ export interface EvidenceIntakePayload {
   file_path?: string;
   notes?: string;
   case_id?: string;
+  file?: File;
   metadata?: Record<string, unknown>;
 }
 
@@ -23,6 +24,20 @@ export const evidenceService = {
   },
 
   intake: async (caseId: string, payload: EvidenceIntakePayload): Promise<Evidence> => {
+    if (payload.file) {
+      const formData = new FormData();
+      formData.append('file', payload.file, payload.name || payload.file.name);
+      formData.append('case_id', caseId);
+      if (payload.name) formData.append('name', payload.name);
+      if (payload.evidence_type) formData.append('evidence_type', payload.evidence_type);
+      if (payload.notes) formData.append('notes', payload.notes);
+      const targetPath = payload.file_path || payload.source_path;
+      if (targetPath) formData.append('source_path', targetPath);
+
+      const res = await apiClient.post<Evidence>(`/cases/${caseId}/evidence/intake`, formData);
+      return res.data;
+    }
+
     const targetPath = payload.file_path || payload.source_path || payload.name;
     const res = await apiClient.post<Evidence>(`/cases/${caseId}/evidence/intake`, {
       case_id: caseId,

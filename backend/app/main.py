@@ -73,6 +73,8 @@ def get_allowed_origins() -> list:
         "http://127.0.0.1:5173",
         "http://localhost:8000",
         "http://127.0.0.1:8000",
+        "http://localhost:8001",
+        "http://127.0.0.1:8001",
         "tauri://localhost",
         "http://tauri.localhost",
         "https://tauri.localhost",
@@ -128,6 +130,9 @@ from backend.app.api.v1.router import api_router
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(api_router, prefix="/api", include_in_schema=False)
 
+# Root level health routes for direct health verification
+app.include_router(health.router, tags=["Health"], include_in_schema=False)
+
 
 @app.get("/")
 def root():
@@ -137,6 +142,18 @@ def root():
         "version": settings.VERSION,
         "docs_url": "/api/docs"
     }
+
+
+from fastapi.openapi.docs import get_swagger_ui_html
+
+@app.get("/docs", include_in_schema=False)
+async def swagger_docs_alias():
+    return get_swagger_ui_html(
+        openapi_url="/api/openapi.json",
+        title=f"{settings.PROJECT_NAME} - Swagger UI",
+        swagger_js_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js",
+        swagger_css_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css",
+    )
 
 if __name__ == "__main__":
     import uvicorn

@@ -50,7 +50,7 @@ import type {
   ForensicReportProvenanceResponse
 } from '../types';
 
-let currentApiBase = 'http://localhost:8000/api';
+let currentApiBase = 'http://localhost:8001/api';
 
 export const validateDiscoveredBackendUrl = (urlStr: string, expectedPort?: number): boolean => {
   try {
@@ -59,7 +59,7 @@ export const validateDiscoveredBackendUrl = (urlStr: string, expectedPort?: numb
     if (parsed.hostname !== '127.0.0.1') return false;
     if (parsed.username !== '' || parsed.password !== '') return false;
     if (parsed.search !== '' || parsed.hash !== '') return false;
-    if (parsed.pathname !== '/api') return false;
+    if (parsed.pathname !== '/api' && parsed.pathname !== '/api/v1') return false;
 
     if (!parsed.port) return false;
     const portNum = parseInt(parsed.port, 10);
@@ -85,8 +85,11 @@ export const getAccessToken = (): string | null => {
   return currentToken;
 };
 
+import { setApiBaseUrl as setClientApiBaseUrl, setBootstrapSecret as setClientBootstrapSecret } from './client';
+
 export const setBootstrapSecret = (secret: string | null) => {
   currentBootstrapSecret = secret;
+  setClientBootstrapSecret(secret);
 };
 
 export const getBootstrapSecret = (): string | null => {
@@ -111,6 +114,7 @@ const client = axios.create({
 export const setApiBaseUrl = (url: string) => {
   currentApiBase = url;
   client.defaults.baseURL = url;
+  setClientApiBaseUrl(url);
 };
 
 export const getApiBaseUrl = (): string => {

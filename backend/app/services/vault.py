@@ -6,7 +6,7 @@ import stat
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, Optional, BinaryIO
 
 from backend.app.core.config import settings
 from backend.app.services.integrity import CHUNK_SIZE_8MB, calculate_sha256
@@ -233,4 +233,108 @@ def stage_evidence_to_vault(source_path: str, case_id: str, evidence_id: str) ->
         if temp_path.exists():
             temp_path.unlink(missing_ok=True)
         raise
+
+
+def stage_stream_to_vault(
+    file_stream: BinaryIO,
+    filename: str,
+    case_id: str,
+    evidence_id: str,
+    source_path: Optional[str] = None
+) -> VaultStagingResult:
+    """
+    Safely acquires an evidence byte stream into the case-scoped evidence vault:
+    1. Verifies filename and creates secure vault directory.
+    2. Writes incoming stream chunks to a temporary vault part file while computing acquisition SHA-256.
+    3. Flushes and syncs temporary destination file to disk.
+    4. Independently calculates SHA-256 by RE-READING the completed temporary vault file from disk.
+    5. Reconciles stream acquisition hash with independent vault disk hash.
+    6. Verifies byte count consistency.
+    7. Atomically renames part file to final vault destination.
+    8. Applies OS-level read-only permissions to the vault copy (chmod 0o444).
+    9. Verifies actual OS read-only status.
+    10. Rolls back and deletes any partial files on failure.
+    """
+    vault_dir = get_vault_dir(case_id, evidence_id)
+    vault_dir.mkdir(parents=True, exist_ok=True)
+
+    safe_name = sanitize_evidence_filename(filename)
+    target_path = vault_dir / safe_name
+    temp_path = vault_dir / f".tmp_{evidence_id}.part"
+
+    if temp_path.exists():
+        temp_path.unlink(missing_ok=True)
+
+    if target_path.exists():
+        remove_os_read_only(target_path)
+        target_path.unlink(missing_ok=True)
+
+    source_hasher = hashlib.sha256()
+    total_written = 0
+
+    try:
+        with open(temp_path, "wb") as f_dst:
+            while True:
+                chunk = file_stream.read(CHUNK_SIZE_8MB)
+                if not chunk:
+                    break
+                source_hasher.update(chunk)
+                f_dst.write(chunk)
+                total_written += len(chunk)
+            f_dst.flush()
+            os.fsync(f_dst.fileno())
+
+        if total_written == 0:
+            if temp_path.exists():
+                temp_path.unlink(missing_ok=True)
+            raise ValueError(f"Acquired evidence stream for '{filename}' is empty (0 bytes). Cannot register empty evidence.")
+
+        src_hash = source_hasher.hexdigest()
+
+        # Independently calculate SHA-256 by RE-READING the completed temporary vault file from disk
+        vault_hasher = hashlib.sha256()
+        vault_bytes_read = 0
+        with open(temp_path, "rb") as f_vault:
+            while chunk := f_vault.read(CHUNK_SIZE_8MB):
+                vault_hasher.update(chunk)
+                vault_bytes_read += len(chunk)
+
+        dst_hash = vault_hasher.hexdigest()
+
+        # Compare independent vault disk hash with source acquisition hash
+        if src_hash.lower() != dst_hash.lower():
+            if temp_path.exists():
+                temp_path.unlink(missing_ok=True)
+            raise IOError(
+                f"Cryptographic integrity verification failed during vault acquisition: "
+                f"stream acquisition SHA-256 ({src_hash}) does not match independent vault disk SHA-256 ({dst_hash})"
+            )
+
+        # Verify byte count
+        if total_written != vault_bytes_read:
+            if temp_path.exists():
+                temp_path.unlink(missing_ok=True)
+            raise IOError(f"Evidence copy truncated: Expected {total_written} bytes, re-read {vault_bytes_read} bytes.")
+
+        # Atomic move to final destination
+        temp_path.replace(target_path)
+
+        # Apply OS-level read-only protection
+        apply_os_read_only(target_path)
+        is_ro_verified = verify_os_read_only(target_path)
+
+        orig_display_path = str(source_path) if source_path and str(source_path).strip() else filename
+
+        return VaultStagingResult(
+            storage_path=str(target_path.resolve()),
+            original_path=orig_display_path,
+            sha256=dst_hash,
+            size_bytes=total_written,
+            read_only_verified=is_ro_verified
+        )
+    except Exception:
+        if temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+        raise
+
 

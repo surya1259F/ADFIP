@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { PageContainer } from '../components/PageContainer';
 import { EvidenceList } from '../components/EvidenceList';
 import { EvidenceDetail } from '../components/EvidenceDetail';
 import { ChainOfCustodyTimeline } from '../components/ChainOfCustodyTimeline';
 import { EmptyState } from '../components/EmptyState';
 import { useInvestigationStore } from '../stores/investigationStore';
-import { ShieldCheck, Plus, AlertCircle } from 'lucide-react';
+import { ShieldCheck, Plus, AlertCircle, HardDrive } from 'lucide-react';
 
 export const EvidencePage: React.FC = () => {
   const {
@@ -23,18 +23,31 @@ export const EvidencePage: React.FC = () => {
     error
   } = useInvestigationStore();
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [selectedFileName, setSelectedFileName] = useState('');
   const [filePath, setFilePath] = useState('');
   const [notes, setNotes] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      const nativePath = (file as any).path || (file as any).webkitRelativePath || file.name;
+      setFilePath(nativePath);
+      setSelectedFileName(file.name);
+    }
+  };
 
   const handleIntake = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!filePath || !activeInvestigation) return;
     try {
       await intakeEvidence(filePath, notes);
-      setSuccessMsg(`Verified & ingested: ${filePath}`);
+      setSuccessMsg(`Verified & ingested: ${selectedFileName || filePath}`);
       setFilePath('');
+      setSelectedFileName('');
       setNotes('');
+      if (fileInputRef.current) fileInputRef.current.value = '';
       setTimeout(() => setSuccessMsg(''), 4000);
     } catch {
       // Handled by store
@@ -119,16 +132,31 @@ export const EvidencePage: React.FC = () => {
             <Plus className="w-3.5 h-3.5 text-indigo-400" /> Ingest Evidence File
           </h3>
           <form onSubmit={handleIntake} className="space-y-3 text-xs">
-            <div>
-              <label className="block text-slate-400 mb-1 font-mono">Absolute File Path on Host</label>
-              <input
-                type="text"
-                required
-                placeholder="e.g. /data/evidence/security_events.evtx"
-                value={filePath}
-                onChange={(e) => setFilePath(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
-              />
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              onChange={handleFileChange}
+            />
+            <div className="space-y-1.5">
+              <label className="block text-slate-400 font-mono">Source Evidence Selection</label>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-mono text-xs border border-slate-700 transition-colors"
+                >
+                  <HardDrive className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Browse Evidence</span>
+                </button>
+                {selectedFileName ? (
+                  <span className="font-mono text-slate-300 text-xs truncate max-w-md">
+                    Selected: {selectedFileName}
+                  </span>
+                ) : (
+                  <span className="text-slate-500 text-xs">No evidence file selected</span>
+                )}
+              </div>
             </div>
             <div>
               <label className="block text-slate-400 mb-1 font-mono">Acquisition Notes</label>
@@ -143,8 +171,8 @@ export const EvidencePage: React.FC = () => {
             <div className="flex justify-end">
               <button
                 type="submit"
-                disabled={loading}
-                className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-mono font-medium shadow-md shadow-indigo-500/20"
+                disabled={loading || !filePath}
+                className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg font-mono font-medium shadow-md shadow-indigo-500/20"
               >
                 <ShieldCheck className="w-3.5 h-3.5" />
                 <span>Calculate SHA-256 & Ingest</span>

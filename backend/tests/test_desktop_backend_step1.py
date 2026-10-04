@@ -54,7 +54,9 @@ def test_reports_path_resolves_under_data_root(tmp_path, monkeypatch):
 
 def test_default_port_behavior(monkeypatch):
     monkeypatch.delenv("ADFIR_PORT", raising=False)
-    assert get_backend_port() == 8000
+    from backend.app.core import config
+    monkeypatch.setattr(config.settings, "ADFIR_PORT", None)
+    assert get_backend_port() == 8001
 
 def test_valid_adfir_port(monkeypatch):
     monkeypatch.setenv("ADFIR_PORT", "54219")
