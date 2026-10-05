@@ -137,8 +137,8 @@ class SchedulerResourceTracker:
 
         # 3. RAM capacity check
         avail_host_ram = float(host_capacity.get("available_ram_mb", 4096.0))
-        # Keep 512MB safety reserve
-        usable_ram = max(512.0, avail_host_ram - 512.0)
+        # Keep 512MB safety reserve, baseline 2048MB
+        usable_ram = max(2048.0, avail_host_ram - 512.0)
         if (current_alloc["allocated_ram_mb"] + req_ram) > usable_ram:
             return False, f"RAM required ({req_ram:.1f} MB) exceeds available ({usable_ram - current_alloc['allocated_ram_mb']:.1f} MB)"
 

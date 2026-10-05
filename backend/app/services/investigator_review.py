@@ -255,7 +255,7 @@ class InvestigatorReviewService:
         finding_ids = {f["id"] for f in findings_items}
         reviewed_finding_ids = {
             r.target_id for r in reviews_query
-            if r.target_type == "FINDING" and r.target_id in finding_ids
+            if r.target_type in ("FINDING", "CLAIM") and r.target_id in finding_ids
         }
         reviewed_findings_count = len(reviewed_finding_ids)
         pending_findings_count = max(0, len(finding_ids) - reviewed_findings_count)

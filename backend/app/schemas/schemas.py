@@ -215,6 +215,7 @@ class EvidenceResponse(BaseModel):
     status: Optional[str] = "REGISTERED"
     intake_status: Optional[str] = "INTAKE_COMPLETE"
     integrity_status: Optional[str] = "VERIFIED"
+    verification_status: Optional[str] = "VERIFIED"
     read_only_verified: Optional[bool] = True
     notes: Optional[str] = None
     acquisition_notes: Optional[str] = None
@@ -246,6 +247,10 @@ class EvidenceResponse(BaseModel):
             self.md5 = self.md5_hash
         elif not self.md5_hash and self.md5:
             self.md5_hash = self.md5
+        if not self.verification_status and self.integrity_status:
+            self.verification_status = self.integrity_status
+        elif not self.integrity_status and self.verification_status:
+            self.integrity_status = self.verification_status
         if not self.notes and self.acquisition_notes:
             self.notes = self.acquisition_notes
         elif not self.acquisition_notes and self.notes:

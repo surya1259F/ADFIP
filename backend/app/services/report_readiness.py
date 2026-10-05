@@ -158,6 +158,10 @@ class ReportReadinessService:
 
         # Gate 7: Required tasks have completed successfully
         executions = db.query(ForensicExecution).filter(ForensicExecution.case_id == case.id).all()
+        if not executions:
+            tool_execs = db.query(ToolExecution).filter(ToolExecution.case_id == case.id).all()
+            if tool_execs:
+                executions = tool_execs
         running_or_queued = [ex for ex in executions if ex.status in ("RUNNING", "QUEUED")]
         failed_executions = [ex for ex in executions if ex.status in ("FAILED", "ERROR")]
         g7_passed = bool(executions) and len(running_or_queued) == 0

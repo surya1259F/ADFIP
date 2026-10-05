@@ -60,7 +60,7 @@ def list_global_specialist_agents(
             "id": a.id,
             "name": a.name,
             "domain": a.agent_type,
-            "status": a.lifecycle_status or "READY",
+            "status": getattr(a, "status", None) or getattr(a, "lifecycle_status", "READY"),
             "capabilities": a.supported_analysis_capabilities,
             "description": a.description,
             "execution_mode": "Deterministic",

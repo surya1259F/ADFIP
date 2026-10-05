@@ -66,7 +66,8 @@ export const EvidenceDetailPage: React.FC = () => {
   }
   if (!ev) return null;
 
-  const alreadyVerified = ev.verification_status === 'VERIFIED';
+  const alreadyVerified =
+    ev.integrity_status === 'VERIFIED' || ev.verification_status === 'VERIFIED';
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">

@@ -697,12 +697,15 @@ def list_case_executions_compat(
         art_count = db.query(ExecutionArtifact).filter(ExecutionArtifact.execution_id == fe.id).count()
         f_count = db.query(Finding).filter(Finding.execution_id == fe.id).count()
         status_norm = getattr(fe, "execution_status", "COMPLETED")
+        tool_raw = str(fe.tool_id or "")
+        agent_name = "DiskAgent" if any(k in tool_raw.lower() for k in ["fls", "sleuth", "tsk", "exif"]) else ("MalwareAgent" if "yara" in tool_raw.lower() else ("LogAgent" if "evtx" in tool_raw.lower() else ("MemoryAgent" if "vol" in tool_raw.lower() else "ForensicAgent")))
+        tool_display = "ExifTool" if "exif" in tool_raw.lower() else ("SleuthKit" if any(k in tool_raw.lower() for k in ["fls", "sleuth", "tsk"]) else ("YARA" if "yara" in tool_raw.lower() else ("python-evtx" if "evtx" in tool_raw.lower() else ("Volatility 3" if "vol" in tool_raw.lower() else tool_raw))))
         results.append({
             "id": fe.id,
             "case_id": fe.case_id,
             "evidence_id": fe.evidence_id,
-            "agent": "ForensicEngine",
-            "tool": fe.tool_id,
+            "agent": agent_name,
+            "tool": tool_display,
             "status": status_norm,
             "progress": 100 if status_norm == "COMPLETED" else (0 if status_norm in ["QUEUED", "STARTING"] else 50),
             "started_at": fe.started_at.isoformat() if hasattr(fe, "started_at") and fe.started_at else (fe.created_at.isoformat() if hasattr(fe, "created_at") and fe.created_at else None),

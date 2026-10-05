@@ -346,7 +346,13 @@ class PlatformAwareToolRegistry:
         return self._tools.get(name.lower().strip())
 
     def list_tools(self) -> List[ToolDefinition]:
-        return list(self._tools.values())
+        seen = set()
+        res = []
+        for t in self._tools.values():
+            if t.name not in seen:
+                seen.add(t.name)
+                res.append(t)
+        return res
 
     def validate_request(self, request: ToolExecutionRequest) -> Optional[str]:
         """

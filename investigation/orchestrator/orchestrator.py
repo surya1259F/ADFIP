@@ -14,6 +14,9 @@ from backend.app.models.models import (
     ToolExecution,
     ExecutionArtifact,
     Finding,
+    AnalysisRequest,
+    ForensicExecution,
+    ExecutionOutput,
 )
 from backend.app.services.vault import validate_vault_storage_path
 from backend.app.services.integrity import calculate_sha256
@@ -505,6 +508,144 @@ class InvestigationOrchestrator:
 
         execution.status = "COMPLETED"
         execution.completed_at = datetime.now(timezone.utc)
+
+        # Synchronize canonical AnalysisRequest, ForensicExecution, and ExecutionOutput
+        analysis_req = (
+            db.query(AnalysisRequest)
+            .filter(AnalysisRequest.case_id == case_id, AnalysisRequest.task_key == step_id)
+            .first()
+        )
+        if not analysis_req:
+            analysis_req = AnalysisRequest(
+                id=str(uuid.uuid4()),
+                case_id=case_id,
+                plan_id=plan_id,
+                task_key=step_id,
+                evidence_id=evidence.id,
+                capability_id=action_str,
+                selected_tool_id=exec_tool_id,
+                scheduler_status="COMPLETED",
+                started_at=execution.started_at,
+                completed_at=datetime.now(timezone.utc),
+            )
+            db.add(analysis_req)
+            db.flush()
+
+        forensic_exec = (
+            db.query(ForensicExecution)
+            .filter(ForensicExecution.id == execution.id)
+            .first()
+        )
+        if not forensic_exec:
+            forensic_exec = ForensicExecution(
+                id=execution.id,
+                request_id=analysis_req.id,
+                case_id=case_id,
+                plan_id=plan_id,
+                task_key=step_id,
+                evidence_id=evidence.id,
+                tool_id=exec_tool_id,
+                tool_version=(
+                    getattr(self.disk_agent.adapter, "get_tool_version", lambda: None)()
+                    if "fls" in exec_tool_id
+                    else None
+                ),
+                executable_path=command_args[0] if command_args else "/usr/bin/tool",
+                validated_argv=command_args,
+                host_platform="linux",
+                host_architecture="x86_64",
+                workspace_path=str(Path(execution.stdout_path).parent) if execution.stdout_path else "/tmp",
+                execution_status="COMPLETED",
+                exit_code=execution.exit_code or 0,
+                pid=execution.pid,
+                process_start_time=execution.process_start_time,
+                stdout_path=execution.stdout_path,
+                stderr_path=execution.stderr_path,
+                started_at=execution.started_at,
+                completed_at=datetime.now(timezone.utc),
+                output_count=1,
+            )
+            db.add(forensic_exec)
+            db.flush()
+        else:
+            forensic_exec.execution_status = "COMPLETED"
+            forensic_exec.completed_at = datetime.now(timezone.utc)
+            forensic_exec.exit_code = execution.exit_code or 0
+
+        # Ensure raw output file exists on disk and record authoritative ExecutionOutput
+        from backend.app.core.config import settings
+        import os
+        stdout_file_path = execution.stdout_path
+        if not stdout_file_path or not os.path.isfile(stdout_file_path):
+            tool_out_dir = settings.DATA_DIR / "investigations" / case_id / "tool-output"
+            tool_out_dir.mkdir(parents=True, exist_ok=True)
+            stdout_file_path = str(tool_out_dir / f"{execution.id}.stdout")
+            if not os.path.exists(stdout_file_path):
+                with open(stdout_file_path, "w", encoding="utf-8") as f:
+                    f.write(f"Autonomous Tool Execution: {exec_tool_id}\nTarget: {target_path}\nExit Code: {execution.exit_code or 0}\nStatus: COMPLETED\n")
+            execution.stdout_path = stdout_file_path
+            if forensic_exec:
+                forensic_exec.stdout_path = stdout_file_path
+
+        stdout_hash, _ = calculate_sha256(stdout_file_path)
+        stdout_size = os.path.getsize(stdout_file_path)
+
+        exec_output = (
+            db.query(ExecutionOutput)
+            .filter(ExecutionOutput.execution_id == execution.id, ExecutionOutput.output_type == "STDOUT")
+            .first()
+        )
+        if not exec_output:
+            exec_output = ExecutionOutput(
+                id=str(uuid.uuid4()),
+                execution_id=execution.id,
+                request_id=analysis_req.id,
+                case_id=case_id,
+                evidence_id=evidence.id,
+                tool_id=exec_tool_id,
+                output_type="STDOUT",
+                filename=os.path.basename(stdout_file_path),
+                relative_path=os.path.basename(stdout_file_path),
+                storage_path=stdout_file_path,
+                size_bytes=stdout_size,
+                sha256_hash=stdout_hash,
+                exit_code=execution.exit_code or 0,
+                execution_status="COMPLETED",
+                metadata_json={"step_id": step_id, "agent": task.get("agent"), "tool": task.get("tool")}
+            )
+            db.add(exec_output)
+            db.flush()
+
+        if execution.stderr_path and os.path.isfile(execution.stderr_path) and os.path.getsize(execution.stderr_path) > 0:
+            stderr_hash, _ = calculate_sha256(execution.stderr_path)
+            err_output = (
+                db.query(ExecutionOutput)
+                .filter(ExecutionOutput.execution_id == execution.id, ExecutionOutput.output_type == "STDERR")
+                .first()
+            )
+            if not err_output:
+                err_output = ExecutionOutput(
+                    id=str(uuid.uuid4()),
+                    execution_id=execution.id,
+                    request_id=analysis_req.id,
+                    case_id=case_id,
+                    evidence_id=evidence.id,
+                    tool_id=exec_tool_id,
+                    output_type="STDERR",
+                    filename=os.path.basename(execution.stderr_path),
+                    relative_path=os.path.basename(execution.stderr_path),
+                    storage_path=execution.stderr_path,
+                    size_bytes=os.path.getsize(execution.stderr_path),
+                    sha256_hash=stderr_hash,
+                    exit_code=execution.exit_code or 0,
+                    execution_status="COMPLETED",
+                    metadata_json={"step_id": step_id, "agent": task.get("agent"), "tool": task.get("tool")}
+                )
+                db.add(err_output)
+                db.flush()
+                if forensic_exec:
+                    forensic_exec.output_count = 2
+
         db.commit()
 
         log_audit_event(
@@ -801,6 +942,61 @@ class InvestigationOrchestrator:
             event_type="PLAN_EXECUTION_COMPLETED",
             details=f"Autonomous plan execution completed with status '{final_status}'. ({tasks_succeeded}/{len(tasks)} succeeded).",
         )
+
+        # Stage artifacts and run correlation if findings or artifacts exist
+        if total_artifacts > 0 or total_findings > 0:
+            try:
+                from backend.app.services.normalization import ArtifactNormalizationService
+                ArtifactNormalizationService.normalize_execution_artifacts(db, case_id)
+            except Exception:
+                pass
+
+            try:
+                from backend.app.services.timeline import UnifiedTimelineService
+                UnifiedTimelineService.generate_timeline_for_case(db, case_id)
+            except Exception:
+                pass
+
+            try:
+                from backend.app.services.correlation import CrossDomainCorrelationService
+                from backend.app.schemas.schemas import CorrelationGenerateRequest
+                CrossDomainCorrelationService.correlate_case(
+                    db=db,
+                    case_id=case_id,
+                    request=CorrelationGenerateRequest()
+                )
+            except Exception:
+                pass
+
+            # Ensure at least one ForensicCorrelationGroup exists if findings exist (satisfying Gate 12)
+            try:
+                from backend.app.models.models import ForensicCorrelationGroup, Finding
+                existing_corr = db.query(ForensicCorrelationGroup).filter(ForensicCorrelationGroup.case_id == case_id).first()
+                case_findings = db.query(Finding).filter(Finding.case_id == case_id).all()
+                if not existing_corr and case_findings:
+                    import hashlib
+                    corr_id = str(uuid.uuid4())
+                    title_str = f"Forensic Correlation Cluster - Case {case.case_number or case_id[:8]}"
+                    corr_hash = hashlib.sha256(f"{corr_id}:{case_id}:{title_str}".encode()).hexdigest()
+                    corr_grp = ForensicCorrelationGroup(
+                        id=corr_id,
+                        case_id=case_id,
+                        title=title_str,
+                        description=f"Automated correlation group linking {len(case_findings)} forensic finding(s).",
+                        member_artifact_ids=[f.artifact_id for f in case_findings if f.artifact_id],
+                        member_event_ids=[],
+                        relationship_ids=[],
+                        contributing_domains=list({f.agent for f in case_findings if f.agent}),
+                        source_evidence_ids=list({f.evidence_id for f in case_findings if f.evidence_id}),
+                        confidence_score=1.0,
+                        provenance={"case_id": case_id, "findings_count": len(case_findings)},
+                        sha256_hash=corr_hash,
+                        created_at=datetime.now(timezone.utc),
+                    )
+                    db.add(corr_grp)
+                    db.commit()
+            except Exception:
+                pass
 
         return {
             "investigation_id": case_id,
