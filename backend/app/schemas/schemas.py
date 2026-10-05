@@ -2029,8 +2029,10 @@ class AIProviderConfigResponse(BaseModel):
     status: str = "CONFIGURED"
     last_tested_at: Optional[datetime] = None
     last_test_status: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
+    configured: bool = True
+    key_configured: bool = False
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 class AIProviderConnectionTestRequest(BaseModel):

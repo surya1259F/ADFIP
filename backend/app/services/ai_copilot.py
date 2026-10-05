@@ -15,9 +15,11 @@ from backend.app.models.models import (
     CorrelationGroup,
     InvestigationPlan,
     ToolExecution,
-    InvestigatorDecision
+    InvestigatorDecision,
+    AIProviderConfigRecord
 )
 from backend.app.core.config import settings
+from backend.app.services.ai_reasoning import decrypt_credential
 from backend.app.services.ai_provider import (
     ProviderId,
     ProviderRequest,
@@ -391,7 +393,17 @@ async def run_copilot_query(
             f"INVESTIGATOR QUERY: {query}\n"
         )
 
-        effective_key = api_key or (settings.GEMINI_API_KEY if p_clean in ("gemini", "google") and settings.GEMINI_API_KEY else None)
+        effective_key = api_key
+        if not effective_key:
+            cfg = db.query(AIProviderConfigRecord).filter(
+                (AIProviderConfigRecord.case_id == case_id) | (AIProviderConfigRecord.case_id == None)
+            ).order_by(AIProviderConfigRecord.case_id.desc()).first()
+            if cfg and cfg.api_key_encrypted and (not p_clean or cfg.provider == p_clean):
+                effective_key = decrypt_credential(cfg.api_key_encrypted)
+                if not model:
+                    target_model = cfg.model
+            elif p_clean in ("gemini", "google") and settings.GEMINI_API_KEY:
+                effective_key = settings.GEMINI_API_KEY
         req = ProviderRequest(
             provider=adapter.provider_id,
             model=target_model,
@@ -482,7 +494,17 @@ async def explain_case_finding(
             f"MITRE ATT&CK: {', '.join(mitre_techs)}\n"
         )
 
-        effective_key = api_key or (settings.GEMINI_API_KEY if p_clean in ("gemini", "google") and settings.GEMINI_API_KEY else None)
+        effective_key = api_key
+        if not effective_key:
+            cfg = db.query(AIProviderConfigRecord).filter(
+                (AIProviderConfigRecord.case_id == case_id) | (AIProviderConfigRecord.case_id == None)
+            ).order_by(AIProviderConfigRecord.case_id.desc()).first()
+            if cfg and cfg.api_key_encrypted and (not p_clean or cfg.provider == p_clean):
+                effective_key = decrypt_credential(cfg.api_key_encrypted)
+                if not model:
+                    target_model = cfg.model
+            elif p_clean in ("gemini", "google") and settings.GEMINI_API_KEY:
+                effective_key = settings.GEMINI_API_KEY
         req = ProviderRequest(
             provider=adapter.provider_id,
             model=target_model,

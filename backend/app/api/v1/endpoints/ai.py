@@ -99,6 +99,8 @@ def configure_provider(
         status=rec.status,
         last_tested_at=rec.last_tested_at,
         last_test_status=rec.last_test_status,
+        configured=bool(rec.is_enabled and (rec.api_key_encrypted or rec.provider == "local_stub")),
+        key_configured=bool(rec.api_key_encrypted),
         created_at=rec.created_at,
         updated_at=rec.updated_at
     )
@@ -127,6 +129,8 @@ def get_provider_config(
                 status="CONFIGURED",
                 last_tested_at=None,
                 last_test_status=None,
+                configured=True,
+                key_configured=True,
                 created_at=None,
                 updated_at=None
             )
@@ -142,6 +146,8 @@ def get_provider_config(
         status=rec.status,
         last_tested_at=rec.last_tested_at,
         last_test_status=rec.last_test_status,
+        configured=bool(rec.is_enabled and (rec.api_key_encrypted or rec.provider == "local_stub")),
+        key_configured=bool(rec.api_key_encrypted),
         created_at=rec.created_at,
         updated_at=rec.updated_at
     )

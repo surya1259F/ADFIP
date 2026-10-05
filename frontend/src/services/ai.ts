@@ -11,8 +11,10 @@ export interface AIProviderConfigResponse {
   status: string;
   last_tested_at?: string | null;
   last_test_status?: string | null;
-  created_at?: string;
-  updated_at?: string;
+  configured?: boolean;
+  key_configured?: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 export interface AIProviderConfigRequest {

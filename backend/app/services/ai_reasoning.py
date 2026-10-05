@@ -183,6 +183,12 @@ class AIReasoningService:
             # Preserve existing key if not updated
             encrypted_key = record.api_key_encrypted
 
+        if provider_clean not in ("local_stub", "none") and not encrypted_key:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"API key is required to configure '{data.provider}' provider."
+            )
+
         if not record:
             record = AIProviderConfigRecord(
                 id=str(uuid.uuid4()),
@@ -291,8 +297,17 @@ class AIReasoningService:
         if req and req.provider:
             provider_name = req.provider.lower().strip()
             model_name = req.model or "default"
-            api_key_plain = req.api_key
-            endpoint_url = req.endpoint
+            api_key_plain = req.api_key.strip() if req.api_key else None
+            endpoint_url = req.endpoint.strip() if req.endpoint else None
+            if not api_key_plain:
+                # User did not provide key in test request; check their saved DB configuration
+                cfg = cls.get_provider_config(db, user, case_id)
+                if cfg and cfg.provider == provider_name and cfg.api_key_encrypted:
+                    api_key_plain = decrypt_credential(cfg.api_key_encrypted)
+                    if not req.model or req.model == "default":
+                        model_name = cfg.model
+                    if not req.endpoint:
+                        endpoint_url = cfg.endpoint
         else:
             cfg = cls.get_provider_config(db, user, case_id)
             if cfg:

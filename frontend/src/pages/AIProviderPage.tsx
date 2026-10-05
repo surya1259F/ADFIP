@@ -87,9 +87,6 @@ export const AIProviderPage: React.FC = () => {
       });
     } catch {
       // Error captured in aiProviderTestError state
-    } finally {
-      // CRITICAL CREDENTIAL RULE: Clear transient API key input state after test submission
-      setApiKey('');
     }
   };
 

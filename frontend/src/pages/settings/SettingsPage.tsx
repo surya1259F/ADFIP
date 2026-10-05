@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Users,
@@ -15,6 +15,8 @@ import {
   Radio,
   Sun,
   Moon,
+  Circle,
+  Loader2,
 } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { SectionHeader } from '../../components/ui/SectionHeader';
@@ -22,10 +24,37 @@ import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
 import { Badge } from '../../components/ui/Badge';
+import { Dialog } from '../../components/ui/Dialog';
 import { useAuthStore } from '../../stores/authStore';
 import { useUIStore } from '../../stores/uiStore';
 import { aiService, type AIProviderConfigRequest } from '../../services/ai';
 import { normalizeError } from '../../services/client';
+
+export function getFriendlyErrorMessage(errorCode?: string | null, rawMessage?: string): string {
+  switch (errorCode) {
+    case 'SUCCESS':
+      return '✓ Gemini connection successful';
+    case 'INVALID_API_KEY':
+      return '✕ The Gemini API key is invalid. Please verify your API key and try again.';
+    case 'MODEL_UNAVAILABLE':
+      return '✕ The selected Gemini model is unavailable.';
+    case 'RATE_LIMITED':
+      return '⚠ Gemini is temporarily rate limited. Try again later.';
+    case 'QUOTA_EXCEEDED':
+      return '⚠ Gemini API quota has been exceeded. Check your plan and billing details.';
+    case 'PROVIDER_UNREACHABLE':
+      return '⚠ Unable to reach Google Gemini. Check your network connection.';
+    case 'CONFIGURATION_ERROR':
+      return '✕ Configuration error. An API key is required.';
+    case 'GENERATION_FAILED':
+      return '✕ Generation test failed.';
+    default:
+      if (rawMessage) {
+        return rawMessage.replace(/^\[[A-Z_]+\]\s*/, '');
+      }
+      return '✕ Connection failed.';
+  }
+}
 
 type SettingsTab = 'account' | 'ai' | 'investigation' | 'legal';
 
@@ -107,13 +136,32 @@ export const SettingsPage: React.FC = () => {
   const theme = useUIStore((s) => s.theme);
   const setTheme = useUIStore((s) => s.setTheme);
   const qc = useQueryClient();
-  const [activeTab, setActiveTab] = useState<SettingsTab>('account');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialTab = useMemo<SettingsTab>(() => {
+    const tab = searchParams.get('tab');
+    if (tab === 'ai' || tab === 'investigation' || tab === 'legal') return tab as SettingsTab;
+    return 'account';
+  }, [searchParams]);
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
+
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab && (tab === 'account' || tab === 'ai' || tab === 'investigation' || tab === 'legal')) {
+      setActiveTab(tab as SettingsTab);
+    }
+  }, [searchParams]);
+
+  const handleTabSelect = (tab: SettingsTab) => {
+    setActiveTab(tab);
+    setSearchParams({ tab });
+  };
 
   // AI Configuration State
   const [selectedProvider, setSelectedProvider] = useState<string>('gemini');
   const [selectedModel, setSelectedModel] = useState<string>('gemini-2.5-flash');
   const [endpoint, setEndpoint] = useState<string>('');
   const [apiKeyInput, setApiKeyInput] = useState<string>('');
+  const [showRemoveConfirm, setShowRemoveConfirm] = useState<boolean>(false);
   const [testResult, setTestResult] = useState<{
     success: boolean;
     message: string;
@@ -152,7 +200,10 @@ export const SettingsPage: React.FC = () => {
 
   const currentModelOptions = useMemo(() => {
     if (dynamicModels && dynamicModels.length > 0) {
-      return dynamicModels.map((m) => ({ value: m, label: m }));
+      return dynamicModels.map((m) => ({
+        value: m,
+        label: m === 'gemini-2.5-flash' ? `${m} (Recommended)` : m,
+      }));
     }
     return MODEL_OPTIONS[selectedProvider] || [];
   }, [dynamicModels, selectedProvider]);
@@ -177,18 +228,17 @@ export const SettingsPage: React.FC = () => {
     onSuccess: (res) => {
       setTestResult({
         success: res.success,
-        message: res.status_message,
+        message: getFriendlyErrorMessage(res.error_code, res.status_message),
         latency: res.latency_ms,
       });
-      // Clear transient API key input for credential security
-      setApiKeyInput('');
+      // Do not clear transient apiKeyInput so user can save after testing
     },
     onError: (err) => {
+      const errorMsg = normalizeError(err);
       setTestResult({
         success: false,
-        message: normalizeError(err),
+        message: getFriendlyErrorMessage(undefined, errorMsg),
       });
-      setApiKeyInput('');
     },
   });
 
@@ -213,6 +263,8 @@ export const SettingsPage: React.FC = () => {
     onSuccess: () => {
       setActionSuccess('AI provider configuration removed successfully.');
       setActionError(null);
+      setApiKeyInput('');
+      setTestResult(null);
       qc.invalidateQueries({ queryKey: ['ai-provider-config'] });
       qc.invalidateQueries({ queryKey: ['ai-provider-status'] });
       setTimeout(() => setActionSuccess(null), 4000);
@@ -230,12 +282,21 @@ export const SettingsPage: React.FC = () => {
       setSelectedModel(available[0].value);
     }
     setTestResult(null);
+    setActionError(null);
   };
 
   const handleSaveConfig = (e: React.FormEvent) => {
     e.preventDefault();
     setActionError(null);
     setActionSuccess(null);
+
+    if (selectedProvider !== 'local_stub') {
+      const hasExistingKey = Boolean(aiConfig?.has_api_key && aiConfig?.provider === selectedProvider);
+      if (!apiKeyInput.trim() && !hasExistingKey) {
+        setActionError(`An API key is required to configure ${selectedProvider === 'gemini' ? 'Google Gemini' : selectedProvider}.`);
+        return;
+      }
+    }
 
     saveMutation.mutate({
       provider: selectedProvider,
@@ -247,6 +308,47 @@ export const SettingsPage: React.FC = () => {
   };
 
   const isConfigured = Boolean(aiConfig?.is_enabled && (aiConfig?.has_api_key || aiConfig?.provider === 'local_stub'));
+
+  const renderConnectionStatus = () => {
+    if (testMutation.isPending) {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
+          <Loader2 className="w-3 h-3 animate-spin text-blue-500" />
+          Testing...
+        </span>
+      );
+    }
+    if (testResult) {
+      if (testResult.success) {
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+            Connected {testResult.latency !== undefined && testResult.latency !== null ? `(${testResult.latency}ms)` : ''}
+          </span>
+        );
+      }
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-red-50 text-red-700 border border-red-200">
+          <AlertCircle className="w-3 h-3 text-red-600" />
+          Connection failed
+        </span>
+      );
+    }
+    if (aiConfig?.is_enabled && (aiConfig?.has_api_key || aiConfig?.provider === 'local_stub')) {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+          Configured: {aiConfig.provider.toUpperCase()}
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium bg-stone-100 text-stone-600 border border-stone-200">
+        <Circle className="w-2.5 h-2.5 fill-stone-300 text-stone-300" />
+        Not configured
+      </span>
+    );
+  };
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -261,7 +363,7 @@ export const SettingsPage: React.FC = () => {
       {/* Navigation Tabs — Exactly 4 Tabs */}
       <div className="flex items-center gap-1 border-b border-stone-200 text-xs font-medium">
         <button
-          onClick={() => setActiveTab('account')}
+          onClick={() => handleTabSelect('account')}
           className={`px-4 py-2 border-b-2 transition-colors cursor-pointer flex items-center gap-2 ${
             activeTab === 'account'
               ? 'border-slate-900 text-slate-900 font-semibold'
@@ -273,7 +375,7 @@ export const SettingsPage: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setActiveTab('ai')}
+          onClick={() => handleTabSelect('ai')}
           className={`px-4 py-2 border-b-2 transition-colors cursor-pointer flex items-center gap-2 ${
             activeTab === 'ai'
               ? 'border-slate-900 text-slate-900 font-semibold'
@@ -285,7 +387,7 @@ export const SettingsPage: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setActiveTab('investigation')}
+          onClick={() => handleTabSelect('investigation')}
           className={`px-4 py-2 border-b-2 transition-colors cursor-pointer flex items-center gap-2 ${
             activeTab === 'investigation'
               ? 'border-slate-900 text-slate-900 font-semibold'
@@ -297,7 +399,7 @@ export const SettingsPage: React.FC = () => {
         </button>
 
         <button
-          onClick={() => setActiveTab('legal')}
+          onClick={() => handleTabSelect('legal')}
           className={`px-4 py-2 border-b-2 transition-colors cursor-pointer flex items-center gap-2 ${
             activeTab === 'legal'
               ? 'border-slate-900 text-slate-900 font-semibold'
@@ -322,13 +424,7 @@ export const SettingsPage: React.FC = () => {
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                {aiConfig?.is_enabled ? (
-                  <Badge tone="success">
-                    Active: {aiConfig.provider.toUpperCase()}
-                  </Badge>
-                ) : (
-                  <Badge tone="warning">AI Runtime Not Configured</Badge>
-                )}
+                {renderConnectionStatus()}
                 <Button
                   variant="ghost"
                   size="sm"
@@ -372,7 +468,7 @@ export const SettingsPage: React.FC = () => {
                     variant="danger"
                     size="sm"
                     loading={deleteMutation.isPending}
-                    onClick={() => deleteMutation.mutate()}
+                    onClick={() => setShowRemoveConfirm(true)}
                     icon={<Trash2 className="w-3 h-3" />}
                   >
                     Remove
@@ -418,6 +514,7 @@ export const SettingsPage: React.FC = () => {
                   value={selectedProvider}
                   onChange={(e) => handleProviderChange(e.target.value)}
                   options={PROVIDER_OPTIONS}
+                  disabled={saveMutation.isPending || testMutation.isPending}
                 />
 
                 <Select
@@ -425,6 +522,7 @@ export const SettingsPage: React.FC = () => {
                   value={selectedModel}
                   onChange={(e) => setSelectedModel(e.target.value)}
                   options={currentModelOptions}
+                  disabled={saveMutation.isPending || testMutation.isPending}
                 />
               </div>
 
@@ -441,6 +539,7 @@ export const SettingsPage: React.FC = () => {
                         : 'Enter provider API key'
                     }
                     helper="Submitted credentials are encrypted on the backend using AES-GCM. Plaintext keys are never stored in the client."
+                    disabled={saveMutation.isPending || testMutation.isPending}
                   />
 
                   {(selectedProvider === 'local_openai' || selectedProvider === 'openai') && (
@@ -455,6 +554,7 @@ export const SettingsPage: React.FC = () => {
                           : 'https://api.openai.com/v1'
                       }
                       helper="Provide custom base URL if using an air-gapped proxy, vLLM, or Ollama endpoint."
+                      disabled={saveMutation.isPending || testMutation.isPending}
                     />
                   )}
                 </div>
@@ -490,6 +590,7 @@ export const SettingsPage: React.FC = () => {
                   variant="outline"
                   size="sm"
                   loading={testMutation.isPending}
+                  disabled={saveMutation.isPending}
                   onClick={() => testMutation.mutate()}
                   icon={<Radio className="w-3.5 h-3.5" />}
                 >
@@ -501,12 +602,54 @@ export const SettingsPage: React.FC = () => {
                   variant="primary"
                   size="sm"
                   loading={saveMutation.isPending}
+                  disabled={testMutation.isPending}
                 >
                   Save Configuration
                 </Button>
               </div>
             </form>
           </Card>
+
+          {/* Remove Configuration Confirmation Dialog */}
+          <Dialog
+            open={showRemoveConfirm}
+            onClose={() => setShowRemoveConfirm(false)}
+            title="Remove AI Provider Configuration?"
+            description="This will remove the saved AI credential and configuration from ADFIP."
+            size="sm"
+          >
+            <div className="space-y-4 pt-2">
+              <p className="text-xs text-slate-600">
+                Are you sure you want to remove the current configuration for{' '}
+                <span className="font-semibold text-slate-800 uppercase">{aiConfig?.provider || selectedProvider}</span>?
+                External AI features will be disabled until reconfigured.
+              </p>
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-stone-100">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowRemoveConfirm(false)}
+                  disabled={deleteMutation.isPending}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="danger"
+                  size="sm"
+                  loading={deleteMutation.isPending}
+                  onClick={() => {
+                    deleteMutation.mutate(undefined, {
+                      onSettled: () => setShowRemoveConfirm(false),
+                    });
+                  }}
+                >
+                  Remove
+                </Button>
+              </div>
+            </div>
+          </Dialog>
 
           {/* Agent-to-LLM Relationship Matrix */}
           <Card className="bg-white border-stone-200">
