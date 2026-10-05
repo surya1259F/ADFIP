@@ -34,6 +34,7 @@ from backend.app.models.models import (
     EvidenceItem,
     ChainOfCustodyEvent,
     ForensicExecution,
+    ToolExecution,
     ExecutionOutput,
     StructuredArtifact,
     DeterministicFinding,
@@ -536,3 +537,51 @@ def test_scenario_h_closed_case_blocks_gate_2(db, tmp_path):
         json={"title": "Attempt Report on Closed Case"}
     )
     assert res.status_code == 422
+
+
+def test_scenario_i_canonical_execution_missing_blocks_gate_7(db, tmp_path):
+    """
+    TEST I — Canonical Execution Missing:
+    Only legacy ToolExecution exists, no ForensicExecution -> Gate 7 fails with CANONICAL_EXECUTION_MISSING -> 422.
+    """
+    user, case = _create_authorized_user_and_case(db, "legacy_exec_usr")
+    setup = _setup_fully_valid_investigation(db, user, case, str(tmp_path))
+
+    # Replace ForensicExecution with legacy ToolExecution
+    db.delete(setup["execution"])
+    db.commit()
+
+    legacy_te = ToolExecution(
+        id=str(uuid.uuid4()),
+        case_id=case.id,
+        evidence_id=setup["evidence"].id,
+        tool_id="sleuthkit",
+        status="COMPLETED"
+    )
+    db.add(legacy_te)
+    db.commit()
+
+    readiness = ReportReadinessService.evaluate(db, case, user)
+    assert readiness.ready is False
+    g7 = next(g for g in readiness.gates if g.gate_number == 7)
+    assert g7.passed is False
+    assert any(r.code == "CANONICAL_EXECUTION_MISSING" for r in readiness.blocking_reasons)
+
+
+def test_scenario_j_missing_execution_outputs_blocks_gate_8(db, tmp_path):
+    """
+    TEST J — Missing Execution Outputs:
+    Execution completed but output records are missing -> Gate 8 fails -> 422.
+    """
+    user, case = _create_authorized_user_and_case(db, "no_output_usr")
+    setup = _setup_fully_valid_investigation(db, user, case, str(tmp_path))
+
+    # Remove the output record
+    db.delete(setup["output"])
+    db.commit()
+
+    readiness = ReportReadinessService.evaluate(db, case, user)
+    assert readiness.ready is False
+    g8 = next(g for g in readiness.gates if g.gate_number == 8)
+    assert g8.passed is False
+    assert any("OUTPUT" in r.code for r in readiness.blocking_reasons)

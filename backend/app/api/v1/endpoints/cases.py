@@ -675,6 +675,27 @@ def get_case_decisions_compat(
     return db.query(InvestigatorDecision).filter(InvestigatorDecision.case_id == case.id).all()
 
 
+def _resolve_tool_and_agent(tool_raw: str):
+    from forensic_tools.registry import tool_registry
+    tool_def = tool_registry.get_tool(tool_raw)
+    tool_display = tool_def.display_name if tool_def else (tool_raw or "Specialist Tool")
+    if tool_def:
+        caps = tool_def.capabilities or []
+        if any(c in caps for c in ["filesystem_structure_extraction", "metadata_extraction", "filesystem_analysis"]):
+            agent_name = "DiskAgent"
+        elif "signature_scan" in caps:
+            agent_name = "MalwareAgent"
+        elif "security_log_parsing" in caps:
+            agent_name = "LogAgent"
+        elif any(c in caps for c in ["process_enumeration", "network_socket_extraction"]):
+            agent_name = "MemoryAgent"
+        else:
+            agent_name = "ForensicAgent"
+    else:
+        agent_name = "ForensicAgent"
+    return tool_display, agent_name
+
+
 @router.get("/{case_id}/executions")
 def list_case_executions_compat(
     case_id: str,
@@ -698,8 +719,7 @@ def list_case_executions_compat(
         f_count = db.query(Finding).filter(Finding.execution_id == fe.id).count()
         status_norm = getattr(fe, "execution_status", "COMPLETED")
         tool_raw = str(fe.tool_id or "")
-        agent_name = "DiskAgent" if any(k in tool_raw.lower() for k in ["fls", "sleuth", "tsk", "exif"]) else ("MalwareAgent" if "yara" in tool_raw.lower() else ("LogAgent" if "evtx" in tool_raw.lower() else ("MemoryAgent" if "vol" in tool_raw.lower() else "ForensicAgent")))
-        tool_display = "ExifTool" if "exif" in tool_raw.lower() else ("SleuthKit" if any(k in tool_raw.lower() for k in ["fls", "sleuth", "tsk"]) else ("YARA" if "yara" in tool_raw.lower() else ("python-evtx" if "evtx" in tool_raw.lower() else ("Volatility 3" if "vol" in tool_raw.lower() else tool_raw))))
+        tool_display, agent_name = _resolve_tool_and_agent(tool_raw)
         results.append({
             "id": fe.id,
             "case_id": fe.case_id,
@@ -728,8 +748,7 @@ def list_case_executions_compat(
         if any(r["id"] == te.id for r in results):
             continue
         tool_raw = str(te.tool_id or "")
-        agent_name = "DiskAgent" if any(k in tool_raw.lower() for k in ["fls", "sleuth", "tsk", "exif"]) else ("MalwareAgent" if "yara" in tool_raw.lower() else ("LogAgent" if "evtx" in tool_raw.lower() else ("MemoryAgent" if "vol" in tool_raw.lower() else "ForensicAgent")))
-        tool_display = "ExifTool" if "exif" in tool_raw.lower() else ("SleuthKit" if any(k in tool_raw.lower() for k in ["fls", "sleuth", "tsk"]) else ("YARA" if "yara" in tool_raw.lower() else ("python-evtx" if "evtx" in tool_raw.lower() else ("Volatility 3" if "vol" in tool_raw.lower() else tool_raw))))
+        tool_display, agent_name = _resolve_tool_and_agent(tool_raw)
         art_count = db.query(ExecutionArtifact).filter(ExecutionArtifact.execution_id == te.id).count()
         f_count = db.query(Finding).filter(Finding.execution_id == te.id).count()
         status_norm = te.status or "COMPLETED"

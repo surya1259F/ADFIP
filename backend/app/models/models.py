@@ -200,8 +200,8 @@ class EvidenceItem(Base):
     mime_type = Column(String, default="application/octet-stream")
     status = Column(String, default="REGISTERED", nullable=False, index=True) # REGISTERED, PRESERVING, PRESERVED, VERIFYING, VERIFIED, INTEGRITY_WARNING, INVALID, ANALYSIS_READY, ARCHIVED
     intake_status = Column(String, default="INTAKE_COMPLETE", nullable=False) # INTAKE_COMPLETE, QUARANTINED, ARCHIVED
-    integrity_status = Column(String, default="VERIFIED", nullable=False) # VERIFIED, FAILED, UNCHECKED, MISSING, INTEGRITY_MISMATCH
-    read_only_verified = Column(Boolean, default=True, nullable=False)
+    integrity_status = Column(String, default="UNCHECKED", nullable=False) # VERIFIED, FAILED, UNCHECKED, MISSING, INTEGRITY_MISMATCH
+    read_only_verified = Column(Boolean, default=False, nullable=False)
     notes = Column(Text, nullable=True)
     metadata_json = Column(JSON, default=dict)
     intelligence_json = Column(JSON, default=dict)
@@ -1413,7 +1413,7 @@ class DeterministicFinding(Base):
     finding_type = Column(String, nullable=False, index=True)
     severity = Column(String, nullable=False, index=True) # CRITICAL, HIGH, MEDIUM, LOW, INFORMATIONAL
     severity_rule = Column(String, nullable=False)
-    confidence = Column(Float, default=1.0, nullable=False, index=True)
+    confidence = Column(Float, default=None, nullable=True, index=True)
     confidence_inputs = Column(JSON, default=dict, nullable=False)
     supporting_artifact_ids = Column(JSON, default=list, nullable=False)
     supporting_event_ids = Column(JSON, default=list, nullable=False)
@@ -1441,7 +1441,7 @@ class DeterministicFinding(Base):
 
     @property
     def mitre_techniques(self):
-        return getattr(self, "_mitre_techniques", ["T1053.003"])
+        return getattr(self, "_mitre_techniques", [])
 
     @mitre_techniques.setter
     def mitre_techniques(self, value):
@@ -1464,7 +1464,7 @@ class Report(Base):
     evidence_count = Column(Integer, default=0, nullable=False)
     full_report_markdown = Column(Text, nullable=False)
     report_hash = Column(String(64), nullable=True, index=True) # SHA-256 of canonical report JSON
-    status = Column(String, default="OFFICIAL_FINAL", nullable=False, index=True) # DRAFT, OFFICIAL_FINAL, ARCHIVED
+    status = Column(String, default="DRAFT", nullable=False, index=True) # DRAFT, OFFICIAL_FINAL, ARCHIVED
     generated_by = Column(String, default="lead-investigator", nullable=False)
     generated_at = Column(DateTime, default=utc_now, nullable=False, index=True)
 
@@ -1472,7 +1472,7 @@ class Report(Base):
     sections = Column(JSON, default=dict, nullable=True) # 12 structured sections
     provenance = Column(JSON, default=dict, nullable=True) # Full multi-tier lineage trace
     report_metadata = Column(JSON, default=dict, nullable=True) # Generation config, tool versions, methodology
-    integrity_status = Column(String, default="VERIFIED", nullable=True, index=True) # VERIFIED, INTEGRITY_WARNING, TAMPERED
+    integrity_status = Column(String, default="UNVERIFIED", nullable=True, index=True) # VERIFIED, INTEGRITY_WARNING, TAMPERED, UNVERIFIED
     evidence_integrity_summary = Column(JSON, default=dict, nullable=True) # Summary of evidence hash verifications
     storage_path = Column(String, nullable=True) # File path of report archive
     created_at = Column(DateTime, default=utc_now, nullable=True)

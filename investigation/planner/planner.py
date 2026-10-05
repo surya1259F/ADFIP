@@ -255,6 +255,8 @@ class InvestigationPlanner:
 
         # Deterministic sort order by priority, evidence_id, step_id
         tasks.sort(key=lambda t: (t["priority"], t["evidence_id"], t["step_id"]))
+        for index, task in enumerate(tasks, start=1):
+            task["priority"] = index
         execution_order = [f"{t['agent']}::{t['tool']}" for t in tasks]
 
         return {

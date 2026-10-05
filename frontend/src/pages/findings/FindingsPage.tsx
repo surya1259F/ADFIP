@@ -140,11 +140,11 @@ const FindingDetailPanel: React.FC<{
           </div>
         )}
 
-        {(finding.mitre_techniques?.length ?? 0) > 0 && (
-          <div>
-            <p className="text-slate-400 font-medium mb-1">
-              MITRE ATT&CK Techniques
-            </p>
+        <div>
+          <p className="text-slate-400 font-medium mb-1">
+            MITRE ATT&CK Techniques
+          </p>
+          {(finding.mitre_techniques?.length ?? 0) > 0 ? (
             <div className="flex flex-wrap gap-1">
               {finding.mitre_techniques!.map((t) => (
                 <span
@@ -155,8 +155,10 @@ const FindingDetailPanel: React.FC<{
                 </span>
               ))}
             </div>
-          </div>
-        )}
+          ) : (
+            <p className="text-[11px] text-slate-400 italic">Not mapped</p>
+          )}
+        </div>
 
         {finding.sha256_hash && (
           <div>

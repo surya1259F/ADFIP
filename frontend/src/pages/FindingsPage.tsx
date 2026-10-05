@@ -51,8 +51,8 @@ export const FindingsPage: React.FC = () => {
       await explainFinding({
         case_id: activeInvestigation.id,
         finding_id: finding.id,
-        provider: aiConfig.provider,
-        model: aiConfig.model
+        provider: aiConfig.provider || undefined,
+        model: aiConfig.model || undefined
       });
     } catch {
       // Error captured in findingExplanationError state

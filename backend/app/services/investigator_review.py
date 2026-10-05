@@ -170,7 +170,7 @@ class InvestigatorReviewService:
                 "finding_type": sf.finding_type or "specialist_finding",
                 "severity": sf.severity or "MEDIUM",
                 "severity_rule": f"Specialist tool: {sf.tool}" if sf.tool else "Specialist finding",
-                "confidence": sf.confidence if sf.confidence is not None else 0.85,
+                "confidence": sf.confidence,
                 "observed_facts": [sf.evidence_reference] if sf.evidence_reference else [],
                 "supporting_artifact_ids": [sf.artifact_id] if sf.artifact_id else [],
                 "supporting_artifacts": sf_supp_arts,
@@ -734,7 +734,7 @@ class InvestigatorReviewService:
                 "type": "SPECIALIST_FINDING",
                 "title": specialist_finding.title,
                 "severity": specialist_finding.severity or "MEDIUM",
-                "confidence": specialist_finding.confidence if specialist_finding.confidence is not None else 0.85,
+                "confidence": specialist_finding.confidence,
                 "sha256_hash": sf_hash,
                 "created_at": specialist_finding.created_at.isoformat() if specialist_finding.created_at else None
             }

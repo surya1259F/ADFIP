@@ -515,7 +515,7 @@ class FinalForensicReportService:
                 "title": sf.title,
                 "finding_type": sf.finding_type or "specialist_finding",
                 "severity": sf.severity or "MEDIUM",
-                "confidence": sf.confidence if sf.confidence is not None else 0.85,
+                "confidence": sf.confidence,
                 "classification": sf.classification or "FACT",
                 "supporting_evidence_ids": [sf.evidence_id] if sf.evidence_id else [],
                 "supporting_artifact_ids": [sf.artifact_id] if sf.artifact_id else [],

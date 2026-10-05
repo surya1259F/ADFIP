@@ -22,8 +22,8 @@ export const AIProviderPage: React.FC = () => {
     testAIProvider
   } = useInvestigationStore();
 
-  const [provider, setProvider] = useState<'openai' | 'anthropic' | 'google' | 'local_stub'>(aiConfig.provider);
-  const [model, setModel] = useState<string>(aiConfig.model);
+  const [provider, setProvider] = useState<'openai' | 'anthropic' | 'google' | 'local_stub'>(aiConfig.provider || 'google');
+  const [model, setModel] = useState<string>(aiConfig.model || 'gemini-2.5-flash');
   const [apiKey, setApiKey] = useState<string>('');
   const [baseUrl, setBaseUrl] = useState<string>('');
   const [saveStatusMsg, setSaveStatusMsg] = useState<string>('');

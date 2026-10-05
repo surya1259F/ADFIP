@@ -310,11 +310,11 @@ export const useInvestigationStore = create<InvestigationState>((set, get) => ({
   currentUser: null,
 
   aiConfig: {
-    provider: 'local_stub',
-    model: 'adfir-deterministic-engine',
-    has_key: true,
-    is_tested: true,
-    status: 'CONFIGURED'
+    provider: null,
+    model: null,
+    has_key: false,
+    is_tested: false,
+    status: 'NOT_CONFIGURED'
   },
 
   settings: {

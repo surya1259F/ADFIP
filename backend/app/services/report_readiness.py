@@ -23,6 +23,7 @@ from backend.app.models.models import (
     Finding,
     DeterministicFinding,
     ForensicExecution,
+    ToolExecution,
     ExecutionOutput,
     InvestigationPlan,
     InvestigatorReviewRecord,
@@ -158,15 +159,29 @@ class ReportReadinessService:
 
         # Gate 7: Required tasks have completed successfully
         executions = db.query(ForensicExecution).filter(ForensicExecution.case_id == case.id).all()
-        if not executions:
-            tool_execs = db.query(ToolExecution).filter(ToolExecution.case_id == case.id).all()
-            if tool_execs:
-                executions = tool_execs
-        running_or_queued = [ex for ex in executions if ex.status in ("RUNNING", "QUEUED")]
-        failed_executions = [ex for ex in executions if ex.status in ("FAILED", "ERROR")]
-        g7_passed = bool(executions) and len(running_or_queued) == 0
+        tool_execs = db.query(ToolExecution).filter(ToolExecution.case_id == case.id).all()
+
+        g7_passed = False
         g7_reason = None
-        if not g7_passed:
+        if not executions:
+            if tool_execs:
+                g7_reason = BlockingReason(
+                    code="CANONICAL_EXECUTION_MISSING",
+                    description=f"{len(tool_execs)} legacy tool execution(s) found, but canonical ForensicExecution records are missing.",
+                    count=len(tool_execs),
+                    references=[tx.id for tx in tool_execs]
+                )
+                blocking_reasons.append(g7_reason)
+            else:
+                g7_reason = BlockingReason(
+                    code="NO_EXECUTIONS_RECORDED",
+                    description="No forensic tool execution tasks have been executed for this case.",
+                    count=0
+                )
+                blocking_reasons.append(g7_reason)
+        else:
+            running_or_queued = [ex for ex in executions if (getattr(ex, "execution_status", None) in ("RUNNING", "QUEUED") or getattr(ex, "status", None) in ("RUNNING", "QUEUED"))]
+            failed_executions = [ex for ex in executions if (getattr(ex, "execution_status", None) in ("FAILED", "ERROR") or getattr(ex, "status", None) in ("FAILED", "ERROR"))]
             if running_or_queued:
                 g7_reason = BlockingReason(
                     code="EXECUTIONS_STILL_RUNNING",
@@ -175,13 +190,17 @@ class ReportReadinessService:
                     references=[ex.id for ex in running_or_queued]
                 )
                 blocking_reasons.append(g7_reason)
-            elif not executions:
+            elif failed_executions:
                 g7_reason = BlockingReason(
-                    code="NO_EXECUTIONS_RECORDED",
-                    description="No forensic tool execution tasks have been executed for this case.",
-                    count=0
+                    code="EXECUTIONS_FAILED",
+                    description=f"{len(failed_executions)} tool execution(s) failed or terminated with error.",
+                    count=len(failed_executions),
+                    references=[ex.id for ex in failed_executions]
                 )
                 blocking_reasons.append(g7_reason)
+            else:
+                g7_passed = True
+
         gates.append(ReadinessGateResult(
             gate_number=7,
             code="REQUIRED_TASKS_COMPLETED",
@@ -192,11 +211,26 @@ class ReportReadinessService:
         ))
 
         # Gate 8: Execution outputs exist
-        outputs_count = db.query(func.count(ExecutionOutput.id)).filter(ExecutionOutput.case_id == case.id).scalar() or 0
-        g8_passed = outputs_count > 0 or (len(executions) > 0 and len(failed_executions) == 0)
+        all_outputs_for_case = db.query(ExecutionOutput).filter(ExecutionOutput.case_id == case.id).all()
+        output_execution_ids = {out.execution_id for out in all_outputs_for_case if out.execution_id}
+        successful_executions = [ex for ex in executions if (getattr(ex, "execution_status", None) == "COMPLETED" or getattr(ex, "status", None) == "COMPLETED")]
+        missing_output_execs = [ex.id for ex in successful_executions if ex.id not in output_execution_ids]
+        outputs_count = len(all_outputs_for_case)
+
+        g8_passed = len(successful_executions) > 0 and outputs_count > 0 and len(missing_output_execs) == 0
         g8_reason = None
         if not g8_passed:
-            g8_reason = BlockingReason(code="NO_EXECUTION_OUTPUTS", description="No forensic tool outputs recorded from executed tasks.", count=0)
+            if outputs_count == 0:
+                g8_reason = BlockingReason(code="NO_EXECUTION_OUTPUTS", description="No forensic tool outputs recorded from executed tasks.", count=0)
+            elif missing_output_execs:
+                g8_reason = BlockingReason(
+                    code="EXECUTION_OUTPUTS_MISSING",
+                    description=f"{len(missing_output_execs)} completed execution(s) have no persisted execution output records.",
+                    count=len(missing_output_execs),
+                    references=missing_output_execs[:20]
+                )
+            else:
+                g8_reason = BlockingReason(code="NO_SUCCESSFUL_EXECUTIONS", description="No successfully completed forensic executions with preserved outputs.", count=0)
             blocking_reasons.append(g8_reason)
         gates.append(ReadinessGateResult(
             gate_number=8,
@@ -332,6 +366,11 @@ class ReportReadinessService:
         corr_groups = db.query(ForensicCorrelationGroup).filter(
             ForensicCorrelationGroup.case_id == case.id
         ).all()
+        corr_audit = db.query(AuditEvent).filter(
+            AuditEvent.case_id == case.id,
+            AuditEvent.event_type == "CORRELATION_EXECUTED"
+        ).first()
+
         has_findings = bool(all_finding_ids)
         corr_completed = len(corr_groups) > 0
 
@@ -342,9 +381,12 @@ class ReportReadinessService:
         elif corr_completed:
             g12_passed = True
             g12_detail = f"REQUIRED_AND_COMPLETED — {len(corr_groups)} correlation group(s) persisted."
+        elif corr_audit:
+            g12_passed = True
+            g12_detail = "REQUIRED_AND_COMPLETED — Correlation engine executed (0 cross-domain relationship groups discovered)."
         else:
             g12_passed = False
-            g12_detail = "REQUIRED_BUT_MISSING — findings exist but no correlation run has produced persisted groups."
+            g12_detail = "REQUIRED_BUT_MISSING — findings exist but no correlation run has executed or produced persisted groups."
 
         g12_reason = None
         if not g12_passed:

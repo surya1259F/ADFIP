@@ -11,6 +11,7 @@ import {
   FileCheck,
 } from 'lucide-react';
 import { casesService } from '../../services/cases';
+import { toolsService } from '../../services/tools';
 import { normalizeError } from '../../services/client';
 import { Card } from '../../components/ui/Card';
 import { StatusBadge } from '../../components/ui/Badge';
@@ -32,6 +33,11 @@ export const DashboardPage: React.FC = () => {
   } = useQuery({
     queryKey: ['cases'],
     queryFn: casesService.list,
+  });
+
+  const { data: agents } = useQuery({
+    queryKey: ['agents'],
+    queryFn: toolsService.listAgents,
   });
 
   const activeCases = cases?.filter(
@@ -98,7 +104,9 @@ export const DashboardPage: React.FC = () => {
           </div>
           <div className="mt-2">
             <p className="text-base font-bold text-slate-900 leading-tight">Specialist Tools</p>
-            <p className="text-xs text-blue-700 font-medium mt-0.5">11 Registered Agents</p>
+            <p className="text-xs text-blue-700 font-medium mt-0.5">
+              {agents ? `${agents.length} Registered Agents` : 'Specialist Agents'}
+            </p>
           </div>
           <p className="text-[11px] text-slate-400 mt-2 font-mono">
             Deterministic execution

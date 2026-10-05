@@ -52,6 +52,7 @@ from backend.app.schemas.schemas import (
     RelationshipProvenanceResponse,
     RelationshipResponse,
 )
+from backend.app.services.audit import log_audit_event
 
 logger = logging.getLogger("ADFIR_CORRELATION")
 
@@ -655,6 +656,14 @@ class CrossDomainCorrelationService:
             )
             db.add(rel_model)
             created_rels.append(rel_model)
+
+        log_audit_event(
+            db=db,
+            case_id=case_id,
+            event_type="CORRELATION_EXECUTED",
+            actor_name="ADFIP_CORRELATION_ENGINE",
+            details=f"Deterministic cross-domain correlation executed: {len(created_rels)} relationships, {len(created_groups)} groups identified."
+        )
 
         db.commit()
 

@@ -39,7 +39,7 @@ export function truncateId(id: string, chars = 4): string {
 }
 
 export function formatConfidence(conf: number | null | undefined): string {
-  if (conf == null) return 'Unknown';
+  if (conf == null) return 'Not scored';
   return conf.toFixed(2);
 }
 
