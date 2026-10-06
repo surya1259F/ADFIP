@@ -3,6 +3,8 @@ import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ShieldCheck } from 'lucide-react';
 import { apiClient, normalizeError } from '../../services/client';
+import { evidenceService } from '../../services/evidence';
+import { InvestigatorFinalAuthorization } from '../../components/verification/InvestigatorFinalAuthorization';
 import { Card } from '../../components/ui/Card';
 import { StatusBadge, Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
@@ -186,15 +188,24 @@ export const VerificationPage: React.FC = () => {
     enabled: !!caseId,
   });
 
+  const { data: evidenceList } = useQuery({
+    queryKey: ['cases', caseId, 'evidence'],
+    queryFn: () => evidenceService.listByCase(caseId!),
+    enabled: !!caseId,
+  });
+
   const allFindings = reviewItems?.deterministic_findings || [];
   const pendingFindings = allFindings.filter((f) => !f.latest_decision);
   const reviewedFindings = allFindings.filter((f) => !!f.latest_decision);
 
+  const findingIds = allFindings.map((f) => f.id);
+  const evidenceIds = (evidenceList || []).map((e) => e.id);
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <SectionHeader
-        title="Investigator Review"
-        description="Human verification of forensic findings — decisions are recorded in the audit trail"
+        title="Investigator Review & Authorization"
+        description="Two-tier governance: verify granular forensic findings and sign the final case release authorization (G14)."
       />
 
       {isError && (
@@ -226,77 +237,100 @@ export const VerificationPage: React.FC = () => {
             </Card>
           </div>
 
-          {allFindings.length === 0 && (
-            <EmptyState
-              icon={<ShieldCheck className="w-8 h-8" />}
-              title="No findings to review"
-              description="Findings will appear here after forensic analysis completes."
+          {/* Tier 1: Granular Finding Review */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between border-b border-stone-200 pb-2">
+              <div>
+                <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                  Tier 1: Ground Truth Finding Review
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Assess and verify individual findings (ACCEPT / CHALLENGE / REJECT / REQUEST MORE EVIDENCE).
+                </p>
+              </div>
+            </div>
+
+            {allFindings.length === 0 && (
+              <EmptyState
+                icon={<ShieldCheck className="w-8 h-8" />}
+                title="No findings to review"
+                description="Findings will appear here after forensic analysis completes."
+              />
+            )}
+
+            {pendingFindings.length > 0 && (
+              <Card padding={false}>
+                <div className="px-4 py-2.5 border-b border-stone-100 flex items-center justify-between">
+                  <p className="text-xs font-semibold text-slate-600">
+                    Pending Review
+                  </p>
+                  <Badge tone="warning">{pendingFindings.length}</Badge>
+                </div>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-stone-100">
+                      <th className="text-left px-4 py-2 text-slate-500 font-medium">
+                        Finding
+                      </th>
+                      <th className="text-left px-4 py-2 text-slate-500 font-medium">
+                        Confidence
+                      </th>
+                      <th className="text-left px-4 py-2 text-slate-500 font-medium">
+                        Decision
+                      </th>
+                      <th className="px-4 py-2" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pendingFindings.map((f) => (
+                      <ReviewFindingRow key={f.id} finding={f} caseId={caseId!} />
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+            )}
+
+            {reviewedFindings.length > 0 && (
+              <Card padding={false}>
+                <div className="px-4 py-2.5 border-b border-stone-100 flex items-center justify-between">
+                  <p className="text-xs font-semibold text-slate-600">
+                    Reviewed
+                  </p>
+                  <Badge tone="success">{reviewedFindings.length}</Badge>
+                </div>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-stone-100">
+                      <th className="text-left px-4 py-2 text-slate-500 font-medium">
+                        Finding
+                      </th>
+                      <th className="text-left px-4 py-2 text-slate-500 font-medium">
+                        Confidence
+                      </th>
+                      <th className="text-left px-4 py-2 text-slate-500 font-medium">
+                        Decision
+                      </th>
+                      <th className="px-4 py-2" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reviewedFindings.map((f) => (
+                      <ReviewFindingRow key={f.id} finding={f} caseId={caseId!} />
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+            )}
+          </div>
+
+          {/* Tier 2: Dedicated Case-Level Release Authorization (G14 Gate) */}
+          <div className="pt-2">
+            <InvestigatorFinalAuthorization
+              caseId={caseId!}
+              findingIds={findingIds}
+              evidenceIds={evidenceIds}
             />
-          )}
-
-          {pendingFindings.length > 0 && (
-            <Card padding={false}>
-              <div className="px-4 py-2.5 border-b border-stone-100 flex items-center justify-between">
-                <p className="text-xs font-semibold text-slate-600">
-                  Pending Review
-                </p>
-                <Badge tone="warning">{pendingFindings.length}</Badge>
-              </div>
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-stone-100">
-                    <th className="text-left px-4 py-2 text-slate-500 font-medium">
-                      Finding
-                    </th>
-                    <th className="text-left px-4 py-2 text-slate-500 font-medium">
-                      Confidence
-                    </th>
-                    <th className="text-left px-4 py-2 text-slate-500 font-medium">
-                      Decision
-                    </th>
-                    <th className="px-4 py-2" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {pendingFindings.map((f) => (
-                    <ReviewFindingRow key={f.id} finding={f} caseId={caseId!} />
-                  ))}
-                </tbody>
-              </table>
-            </Card>
-          )}
-
-          {reviewedFindings.length > 0 && (
-            <Card padding={false}>
-              <div className="px-4 py-2.5 border-b border-stone-100 flex items-center justify-between">
-                <p className="text-xs font-semibold text-slate-600">
-                  Reviewed
-                </p>
-                <Badge tone="success">{reviewedFindings.length}</Badge>
-              </div>
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-stone-100">
-                    <th className="text-left px-4 py-2 text-slate-500 font-medium">
-                      Finding
-                    </th>
-                    <th className="text-left px-4 py-2 text-slate-500 font-medium">
-                      Confidence
-                    </th>
-                    <th className="text-left px-4 py-2 text-slate-500 font-medium">
-                      Decision
-                    </th>
-                    <th className="px-4 py-2" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {reviewedFindings.map((f) => (
-                    <ReviewFindingRow key={f.id} finding={f} caseId={caseId!} />
-                  ))}
-                </tbody>
-              </table>
-            </Card>
-          )}
+          </div>
         </>
       )}
     </div>

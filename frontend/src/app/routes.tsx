@@ -77,6 +77,7 @@ export const router = createBrowserRouter([
           { path: '/cases/:caseId/execution', element: <PageSuspense><ExecutionPage /></PageSuspense> },
           { path: '/cases/:caseId/findings', element: <PageSuspense><FindingsPage /></PageSuspense> },
           { path: '/cases/:caseId/verification', element: <PageSuspense><VerificationPage /></PageSuspense> },
+          { path: '/cases/:caseId/review', element: <PageSuspense><VerificationPage /></PageSuspense> },
           { path: '/cases/:caseId/report', element: <PageSuspense><ReportsPage /></PageSuspense> },
           { path: '/cases/:caseId/audit', element: <PageSuspense><AuditPage /></PageSuspense> },
           { path: '/tools', element: <PageSuspense><ToolsPage /></PageSuspense> },

@@ -672,7 +672,7 @@ def get_case_decisions_compat(
 ):
     from backend.app.models.models import InvestigatorDecision
     case = get_authorized_case(case_id, db, current_user)
-    return db.query(InvestigatorDecision).filter(InvestigatorDecision.case_id == case.id).all()
+    return db.query(InvestigatorDecision).filter(InvestigatorDecision.case_id == case.id).order_by(InvestigatorDecision.timestamp.desc()).all()
 
 
 def _resolve_tool_and_agent(tool_raw: str):

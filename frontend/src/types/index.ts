@@ -622,11 +622,23 @@ export interface AppSettings {
 }
 
 export interface InvestigatorDecision {
-  decision: 'CONFIRM' | 'REJECT' | 'INCONCLUSIVE' | 'REQUEST_MORE_EVIDENCE';
-  investigator_notes: string;
-  timestamp: string;
-  investigator_id: string;
+  id: string;
+  case_id: string;
+  investigator_id?: string | null;
   investigator_name: string;
+  decision: 'CONFIRM' | 'REJECT' | 'INCONCLUSIVE' | 'REQUEST_MORE_EVIDENCE';
+  rationale: string;
+  finding_ids: string[];
+  evidence_ids: string[];
+  timestamp: string;
+}
+
+export interface InvestigatorDecisionCreateRequest {
+  decision: 'CONFIRM' | 'REJECT' | 'INCONCLUSIVE' | 'REQUEST_MORE_EVIDENCE';
+  rationale: string;
+  finding_ids?: string[];
+  evidence_ids?: string[];
+  investigator_name?: string;
 }
 
 export interface CaseConfidenceBreakdown {

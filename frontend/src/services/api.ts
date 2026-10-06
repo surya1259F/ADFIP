@@ -22,6 +22,7 @@ import type {
   CorrelatedGroup,
   VerificationResult,
   InvestigatorDecision,
+  InvestigatorDecisionCreateRequest,
   Report,
   SystemStatus,
   AuditEvent,
@@ -485,7 +486,7 @@ export const api = {
     return res.data;
   },
 
-  recordDecision: async (investigationId: string, data: { decision: string; rationale: string; finding_ids?: string[]; evidence_ids?: string[]; investigator_name?: string }): Promise<InvestigatorDecision> => {
+  recordDecision: async (investigationId: string, data: InvestigatorDecisionCreateRequest): Promise<InvestigatorDecision> => {
     const res = await client.post<InvestigatorDecision>(`/cases/${investigationId}/decisions`, data);
     return res.data;
   },

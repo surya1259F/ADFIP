@@ -465,7 +465,7 @@ export const useInvestigationStore = create<InvestigationState>((set, get) => ({
         rationale: notes,
         finding_ids: get().findings.map((f) => f.id),
         evidence_ids: get().evidenceList.map((e) => e.id),
-        investigator_name: user?.name || 'Investigator'
+        investigator_name: user?.name || undefined
       });
       set({ currentDecision: dec, loading: false });
       await get().fetchAuditTrail(active.id);

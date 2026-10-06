@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   FileText,
@@ -89,6 +89,7 @@ const ReportPreviewDialog: React.FC<{
 
 export const ReportsPage: React.FC = () => {
   const { caseId } = useParams<{ caseId: string }>();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [generateErr, setGenerateErr] = useState<string | null>(null);
@@ -148,6 +149,7 @@ export const ReportsPage: React.FC = () => {
   const passedGates = readiness?.passed_gates ?? 0;
   const totalGates = readiness?.total_gates ?? 14;
   const blockingReasons = readiness?.blocking_reasons ?? [];
+  const g14Gate = readiness?.gates?.find((g) => g.gate_number === 14);
 
   return (
     <div className="max-w-4xl mx-auto space-y-4">
@@ -298,6 +300,57 @@ export const ReportsPage: React.FC = () => {
           )}
         </Card>
       ) : null}
+
+      {/* Dedicated G14 Investigator Release Authorization Gate Card */}
+      {!readinessLoading && readiness && (
+        <Card
+          className={`border ${
+            g14Gate?.passed
+              ? 'bg-emerald-50/60 border-emerald-200'
+              : 'bg-amber-50/70 border-amber-200'
+          }`}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 shrink-0">
+                {g14Gate?.passed ? (
+                  <ShieldCheck className="w-5 h-5 text-emerald-600" />
+                ) : (
+                  <ShieldAlert className="w-5 h-5 text-amber-600" />
+                )}
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-slate-800">
+                    G14 — Investigator Release Authorization
+                  </span>
+                  <Badge tone={g14Gate?.passed ? 'success' : 'warning'}>
+                    {g14Gate?.passed ? 'PASSED' : 'AUTHORIZATION REQUIRED'}
+                  </Badge>
+                </div>
+                <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                  {g14Gate?.passed
+                    ? 'Final investigator authorization has been signed and recorded (CONFIRM). Official report release is authorized.'
+                    : g14Gate?.blocking_reason?.description ||
+                      'Final investigator authorization is required before the Official Final Report can be released.'}
+                </p>
+              </div>
+            </div>
+
+            {!g14Gate?.passed && (
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<ShieldCheck className="w-3.5 h-3.5" />}
+                onClick={() => navigate(`/cases/${caseId}/verification`)}
+                className="shrink-0"
+              >
+                Review & Authorize Case
+              </Button>
+            )}
+          </div>
+        </Card>
+      )}
 
       {generateErr && (
         <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-md">

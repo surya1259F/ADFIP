@@ -3,6 +3,7 @@ import { PageContainer } from '../components/PageContainer';
 import { EmptyState } from '../components/EmptyState';
 import { useInvestigationStore } from '../stores/investigationStore';
 import { api } from '../services/api';
+import { InvestigatorFinalAuthorization } from '../components/verification/InvestigatorFinalAuthorization';
 import type {
   ReviewItemsResponse,
   InvestigatorReviewResponse,
@@ -383,6 +384,19 @@ export const InvestigatorReviewPage: React.FC = () => {
               <span className="text-[10px] text-slate-500 block mt-1">All Vault Items SHA-256 Verified</span>
             </div>
           </div>
+        )}
+
+        {/* Dedicated Case-Level Investigator Final Authorization (G14 Gate) */}
+        {activeInvestigation && (
+          <InvestigatorFinalAuthorization
+            caseId={activeInvestigation.id}
+            findingIds={reviewItems?.deterministic_findings.map((f) => f.id) || []}
+            evidenceIds={reviewItems?.evidence_items.map((e) => e.id) || []}
+            onDecisionSuccess={() => {
+              loadData();
+              showNotification('success', 'Official investigator authorization decision recorded.');
+            }}
+          />
         )}
 
         {/* Navigation Tabs */}
