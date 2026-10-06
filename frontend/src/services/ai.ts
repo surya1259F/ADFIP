@@ -81,9 +81,34 @@ export const aiService = {
     return res.data;
   },
 
-  getModels: async (provider?: string): Promise<string[]> => {
+  getModels: async (provider?: string, apiKey?: string, endpoint?: string): Promise<string[]> => {
+    const headers: Record<string, string> = {};
+    if (apiKey && apiKey.trim()) {
+      headers['x-provider-api-key'] = apiKey.trim();
+    }
     const res = await apiClient.get<string[]>('/ai/provider/models', {
-      params: provider ? { provider } : undefined,
+      params: {
+        ...(provider ? { provider } : {}),
+        ...(endpoint && endpoint.trim() ? { endpoint: endpoint.trim() } : {}),
+      },
+      headers,
+    });
+    return res.data;
+  },
+
+  /**
+   * Discovers models using a POST request with transient API key in body.
+   * The key is NOT persisted, NOT logged, and NOT returned by the backend.
+   */
+  discoverModels: async (
+    provider: string,
+    apiKey?: string,
+    endpoint?: string
+  ): Promise<string[]> => {
+    const res = await apiClient.post<string[]>('/ai/provider/models', {
+      provider,
+      api_key: apiKey?.trim() || undefined,
+      endpoint: endpoint?.trim() || undefined,
     });
     return res.data;
   },

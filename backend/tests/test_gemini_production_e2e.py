@@ -208,7 +208,7 @@ async def test_1_gemini_no_key_returns_configuration_error(monkeypatch, db_sessi
     AIReasoningService.remove_provider_config(db_session, user)
 
     # 1. Connection test via service
-    test_req = AIProviderConnectionTestRequest(provider="gemini", model="gemini-2.5-flash")
+    test_req = AIProviderConnectionTestRequest(provider="gemini", model="gemini-3.8-flash")
     res = await AIReasoningService.test_connection(db_session, user, test_req)
     assert res.success is False
     assert res.error_code == AIErrorCode.CONFIGURATION_ERROR.value
@@ -218,7 +218,7 @@ async def test_1_gemini_no_key_returns_configuration_error(monkeypatch, db_sessi
     adapter = GeminiAdapter()
     req = ProviderRequest(
         provider=ProviderId.GEMINI,
-        model="gemini-2.5-flash",
+        model="gemini-3.8-flash",
         prompt="Test",
         api_key=None
     )
@@ -248,7 +248,7 @@ async def test_2_gemini_invalid_key_returns_invalid_api_key(monkeypatch, db_sess
     user_id, email, headers = create_user_and_token("test2_invalid")
     user = db_session.query(User).filter(User.id == user_id).first()
 
-    test_req = AIProviderConnectionTestRequest(provider="gemini", model="gemini-2.5-flash", api_key="AIzaSyBadKey")
+    test_req = AIProviderConnectionTestRequest(provider="gemini", model="gemini-3.8-flash", api_key="AIzaSyBadKey")
     res = await AIReasoningService.test_connection(db_session, user, test_req)
 
     assert res.success is False
@@ -304,7 +304,7 @@ async def test_4_gemini_quota_exceeded_returns_quota_exceeded(monkeypatch, db_se
     user_id, email, headers = create_user_and_token("test4_quota")
     user = db_session.query(User).filter(User.id == user_id).first()
 
-    test_req = AIProviderConnectionTestRequest(provider="gemini", model="gemini-2.5-flash", api_key=MOCK_USER_KEY)
+    test_req = AIProviderConnectionTestRequest(provider="gemini", model="gemini-3.8-flash", api_key=MOCK_USER_KEY)
     res = await AIReasoningService.test_connection(db_session, user, test_req)
 
     assert res.success is False
@@ -325,7 +325,7 @@ async def test_5_gemini_unreachable_returns_provider_unreachable(monkeypatch, db
     user_id, email, headers = create_user_and_token("test5_timeout")
     user = db_session.query(User).filter(User.id == user_id).first()
 
-    test_req = AIProviderConnectionTestRequest(provider="gemini", model="gemini-2.5-flash", api_key=MOCK_USER_KEY)
+    test_req = AIProviderConnectionTestRequest(provider="gemini", model="gemini-3.8-flash", api_key=MOCK_USER_KEY)
     res = await AIReasoningService.test_connection(db_session, user, test_req)
 
     assert res.success is False
@@ -355,7 +355,7 @@ async def test_6_gemini_successful_connection(monkeypatch, db_session):
     user_id, email, headers = create_user_and_token("test6_success")
     user = db_session.query(User).filter(User.id == user_id).first()
 
-    test_req = AIProviderConnectionTestRequest(provider="gemini", model="gemini-2.5-flash", api_key=MOCK_USER_KEY)
+    test_req = AIProviderConnectionTestRequest(provider="gemini", model="gemini-3.8-flash", api_key=MOCK_USER_KEY)
     res = await AIReasoningService.test_connection(db_session, user, test_req)
 
     assert res.success is True
@@ -406,7 +406,7 @@ async def test_7_gemini_successful_generation_no_fake_strings(monkeypatch, db_se
     # Save user provider config
     cfg_req = AIProviderConfigRequest(
         provider="gemini",
-        model="gemini-2.5-flash",
+        model="gemini-3.8-flash",
         api_key=MOCK_USER_KEY,
         is_enabled=True
     )
@@ -452,7 +452,7 @@ async def test_8_gemini_user_credential_precedence(monkeypatch, db_session):
     # User explicitly saved their own key
     cfg_req = AIProviderConfigRequest(
         provider="gemini",
-        model="gemini-2.5-flash",
+        model="gemini-3.8-flash",
         api_key=MOCK_USER_KEY,
         is_enabled=True
     )
@@ -478,7 +478,7 @@ def test_9_gemini_credential_secrecy(db_session):
     # 1. Configure via API
     cfg_payload = {
         "provider": "gemini",
-        "model": "gemini-2.5-flash",
+        "model": "gemini-3.8-flash",
         "api_key": MOCK_USER_KEY,
         "is_enabled": True
     }
@@ -541,7 +541,7 @@ async def test_10_gemini_no_silent_fallback_on_error(monkeypatch, db_session):
 
     cfg_req = AIProviderConfigRequest(
         provider="gemini",
-        model="gemini-2.5-flash",
+        model="gemini-3.8-flash",
         api_key=MOCK_USER_KEY,
         is_enabled=True
     )

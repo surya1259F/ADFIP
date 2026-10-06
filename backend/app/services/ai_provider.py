@@ -411,12 +411,13 @@ class AnthropicAdapter(BaseAIAdapter):
 
 class GeminiAdapter(BaseAIAdapter):
     DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
-    DEFAULT_MODEL = "gemini-2.5-flash"
+    DEFAULT_MODEL = "gemini-3.8-flash"
     SUPPORTED_MODELS = [
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
+        "gemini-3.8-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
     ]
 
     def __init__(self, transport: Optional[httpx.AsyncBaseTransport] = None):
@@ -568,48 +569,96 @@ class GeminiAdapter(BaseAIAdapter):
         effective_key = api_key or (settings.GEMINI_API_KEY if settings.GEMINI_API_KEY else None)
 
         if not effective_key:
-            # Without a configured API key, return the documented supported models.
+            # Without a configured API key, return the documented application default model.
             return list(self.SUPPORTED_MODELS)
 
         target_url = self._normalize_base_url(base_url)
         self._validate_https_url(target_url, is_local=False)
         headers = {"x-goog-api-key": effective_key.strip()}
 
+        all_discovered: List[str] = []
+        page_token: Optional[str] = None
+        max_pages = 20
+
         try:
             async with self._get_client() as client:
-                res = await client.get(f"{target_url}/models", headers=headers)
-                if res.status_code == 200:
+                for _ in range(max_pages):
+                    params: Dict[str, Any] = {"pageSize": 100}
+                    if page_token:
+                        params["pageToken"] = page_token
+
+                    res = await client.get(f"{target_url}/models", headers=headers, params=params)
+                    if res.status_code != 200:
+                        category = self._categorize_http_status(res.status_code, res.text)
+                        detail = self._extract_error_detail(res.text)
+                        sanitized_detail = ProviderError._sanitize(detail)
+                        logger.warning(
+                            f"Google Gemini model discovery failed (HTTP {res.status_code}, {category.value}): {sanitized_detail}"
+                        )
+                        raise ProviderError(
+                            self.provider_id,
+                            f"[{category.value}] Google Gemini model discovery failed (HTTP {res.status_code}): {sanitized_detail}",
+                            status_code=res.status_code,
+                            error_code=category
+                        )
+
                     data = res.json()
                     models_raw = data.get("models", [])
-                    discovered = []
                     for m in models_raw:
                         methods = m.get("supportedGenerationMethods", [])
                         if "generateContent" in methods:
                             clean_name = m.get("name", "")
                             while clean_name.startswith("models/"):
                                 clean_name = clean_name[7:].lstrip("/")
+                            clean_name = clean_name.strip()
                             if (
                                 clean_name
                                 and not clean_name.endswith("-tuning")
                                 and not clean_name.startswith("text-embedding")
                                 and not clean_name.startswith("embedding-")
                                 and not clean_name.startswith("aqa")
+                                and "-tts" not in clean_name
+                                and "-live" not in clean_name
+                                and "-image" not in clean_name
+                                and "transcribe" not in clean_name
+                                and clean_name not in all_discovered
                             ):
-                                discovered.append(clean_name)
-                    return discovered if discovered else list(self.SUPPORTED_MODELS)
-                else:
-                    category = self._categorize_http_status(res.status_code, res.text)
-                    detail = self._extract_error_detail(res.text)
-                    sanitized_detail = ProviderError._sanitize(detail)
-                    logger.warning(
-                        f"Google Gemini model discovery failed (HTTP {res.status_code}, {category.value}): {sanitized_detail}"
-                    )
-                    raise ProviderError(
-                        self.provider_id,
-                        f"[{category.value}] Google Gemini model discovery failed (HTTP {res.status_code}): {sanitized_detail}",
-                        status_code=res.status_code,
-                        error_code=category
-                    )
+                                all_discovered.append(clean_name)
+
+                    next_token = data.get("nextPageToken")
+                    if next_token and isinstance(next_token, str) and next_token.strip():
+                        page_token = next_token.strip()
+                    else:
+                        break
+
+            if not all_discovered:
+                raise ProviderError(
+                    self.provider_id,
+                    f"[{AIErrorCode.MODEL_UNAVAILABLE.value}] No models supporting generateContent found for Google Gemini.",
+                    error_code=AIErrorCode.MODEL_UNAVAILABLE
+                )
+
+            # Sensible deterministic ordering per ADFIP production policy:
+            # 1. gemini-3.8-flash (recommended)
+            # 2. gemini-3.5-flash-lite (budget)
+            # 3. Other flash models (by version descending)
+            # 4. Other generation models
+            _PREFERRED_ORDER = {
+                "gemini-3.8-flash": 0,
+                "gemini-3.5-flash-lite": 1,
+                "gemini-3.7-flash": 2,
+                "gemini-3.6-flash": 3,
+                "gemini-3.5-flash": 4,
+            }
+
+            def sort_key(model_name: str):
+                preferred = _PREFERRED_ORDER.get(model_name, 100)
+                is_flash = 0 if "flash" in model_name.lower() else 1
+                return (preferred, is_flash, model_name)
+
+            all_discovered.sort(key=sort_key)
+            return all_discovered
+
         except httpx.TimeoutException:
             raise ProviderError(
                 self.provider_id,
@@ -665,6 +714,28 @@ class GeminiAdapter(BaseAIAdapter):
                 latency = round((time.time() - start_time) * 1000, 2)
 
                 if res.status_code == 200:
+                    try:
+                        data = res.json()
+                        candidates = data.get("candidates", [])
+                        if not candidates:
+                            return ConnectionTestResult(
+                                provider=self.provider_id,
+                                success=False,
+                                status_message=f"[{AIErrorCode.GENERATION_FAILED.value}] Google Gemini connection test returned malformed response: missing candidates.",
+                                error_code=AIErrorCode.GENERATION_FAILED,
+                                latency_ms=latency,
+                                has_key=True
+                            )
+                    except Exception as e:
+                        return ConnectionTestResult(
+                            provider=self.provider_id,
+                            success=False,
+                            status_message=f"[{AIErrorCode.GENERATION_FAILED.value}] Google Gemini connection test returned malformed response: {ProviderError._sanitize(str(e))}",
+                            error_code=AIErrorCode.GENERATION_FAILED,
+                            latency_ms=latency,
+                            has_key=True
+                        )
+
                     logger.info(f"Google Gemini connection verified successfully using model '{model_name}' ({latency}ms).")
                     return ConnectionTestResult(
                         provider=self.provider_id,

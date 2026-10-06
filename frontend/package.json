@@ -10,6 +10,7 @@
     "test:oauth": "jiti src/__tests__/oauth_message_handler.test.ts",
     "test:discovery": "jiti src/__tests__/discovery.test.ts",
     "test:evidence": "jiti src/__tests__/evidence_register.test.ts",
+    "test:gemini": "jiti src/__tests__/gemini_provider.test.ts",
     "lint": "eslint .",
     "preview": "vite preview",
     "tauri": "tauri"

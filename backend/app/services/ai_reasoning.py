@@ -322,7 +322,7 @@ class AIReasoningService:
             elif cfg and cfg_p == provider_name and cfg.model and cfg.model.lower() != "default":
                 model_name = cfg.model
             else:
-                model_name = getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash") if provider_name == "gemini" else "adfir-deterministic-engine"
+                model_name = getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash") if provider_name == "gemini" else "adfir-deterministic-engine"
         else:
             cfg = cls.get_provider_config(db, user, case_id)
             if cfg:
@@ -336,7 +336,7 @@ class AIReasoningService:
                 provider_name = settings.DEFAULT_LLM_PROVIDER
                 if provider_name == "google":
                     provider_name = "gemini"
-                model_name = getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash")
+                model_name = getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash")
                 api_key_plain = settings.GEMINI_API_KEY
                 endpoint_url = None
 
@@ -420,7 +420,9 @@ class AIReasoningService:
         db: Session,
         user: User,
         provider: Optional[str] = None,
-        case_id: Optional[str] = None
+        case_id: Optional[str] = None,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None
     ) -> List[str]:
         """
         Dynamically discovers and lists supported models for the provider.
@@ -431,10 +433,10 @@ class AIReasoningService:
         if effective_provider == "google":
             effective_provider = "gemini"
 
-        api_key_plain = decrypt_credential(cfg.api_key_encrypted) if cfg and cfg.api_key_encrypted else None
+        api_key_plain = api_key or (decrypt_credential(cfg.api_key_encrypted) if cfg and cfg.api_key_encrypted else None)
         if not api_key_plain and effective_provider == "gemini" and settings.GEMINI_API_KEY:
             api_key_plain = settings.GEMINI_API_KEY
-        endpoint_url = cfg.endpoint if cfg else None
+        endpoint_url = base_url or (cfg.endpoint if cfg else None)
 
         adapter = get_ai_adapter(effective_provider)
         try:
@@ -448,7 +450,10 @@ class AIReasoningService:
         except Exception as e:
             logger.warning(f"Error listing models for provider '{effective_provider}': {ProviderError._sanitize(str(e))}")
             if effective_provider in ("gemini", "google"):
-                return ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"[{AIErrorCode.PROVIDER_UNREACHABLE.value}] Unable to retrieve Gemini models: {ProviderError._sanitize(str(e))}"
+                )
             elif effective_provider == "openai":
                 return ["gpt-4o", "gpt-4o-mini", "o3-mini"]
             elif effective_provider == "anthropic":
@@ -743,11 +748,22 @@ class AIReasoningService:
         if target_provider == "google":
             target_provider = "gemini"
 
-        target_model = request.model or (provider_cfg.model if provider_cfg else getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash"))
+        target_model = request.model or (provider_cfg.model if provider_cfg else getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash"))
         api_key_plain = decrypt_credential(provider_cfg.api_key_encrypted) if provider_cfg else None
         if not api_key_plain and target_provider == "gemini" and settings.GEMINI_API_KEY:
             api_key_plain = settings.GEMINI_API_KEY
         endpoint_url = provider_cfg.endpoint if provider_cfg else None
+
+        if target_provider == "gemini":
+            stale_models = {"gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"}
+            if not request.model and target_model in stale_models:
+                try:
+                    adapter = get_ai_adapter("gemini")
+                    discovered = await adapter.list_models(api_key=api_key_plain, base_url=endpoint_url)
+                    if discovered and target_model not in discovered:
+                        target_model = discovered[0]
+                except Exception:
+                    target_model = getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash") or "gemini-3.8-flash"
 
         statements: List[Dict[str, Any]] = []
         raw_llm_summary = None

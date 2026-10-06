@@ -74,8 +74,9 @@ class GeminiProvider(LLMProvider):
     """
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         from backend.app.services.ai_provider import GeminiAdapter
+        from backend.app.core.config import settings
         self.api_key = api_key
-        self.model = model or "gemini-2.5-flash"
+        self.model = model or getattr(settings, "GEMINI_MODEL", GeminiAdapter.DEFAULT_MODEL)
         self._adapter = GeminiAdapter()
 
     async def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:

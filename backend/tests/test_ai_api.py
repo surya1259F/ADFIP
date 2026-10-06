@@ -650,3 +650,32 @@ def test_30_33_ai_cannot_mutate_forensic_state(db_session):
 
     assert findings_after[0].title == findings_before[0].title
     assert evidence_after[0].name == evidence_before[0].name
+
+
+# -----------------------------------------------------------------------------
+# 34. POST /ai/provider/models supports transient API key discovery
+# -----------------------------------------------------------------------------
+def test_34_transient_key_model_discovery(monkeypatch, db_session):
+    user_id, email, headers = create_user_and_token("user34")
+
+    def mock_handler(request: httpx.Request):
+        assert request.headers["x-goog-api-key"] == "AIzaSyTestTransientKey12345"
+        return httpx.Response(200, json={
+            "models": [
+                {"name": "models/gemini-3.8-flash", "supportedGenerationMethods": ["generateContent"]},
+                {"name": "models/gemini-3.5-flash-lite", "supportedGenerationMethods": ["generateContent"]}
+            ]
+        })
+
+    from backend.app.services.ai_provider import GeminiAdapter
+    adapter = GeminiAdapter(transport=httpx.MockTransport(mock_handler))
+    monkeypatch.setattr("backend.app.services.ai_reasoning.get_ai_adapter", lambda p: adapter)
+
+    res = client.post("/api/v1/ai/provider/models", headers=headers, json={
+        "provider": "gemini",
+        "api_key": "AIzaSyTestTransientKey12345"
+    })
+    assert res.status_code == 200
+    models = res.json()
+    assert models == ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
+

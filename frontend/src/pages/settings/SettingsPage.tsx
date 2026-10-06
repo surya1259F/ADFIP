@@ -70,10 +70,8 @@ const PROVIDER_OPTIONS = [
 
 const MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = {
   gemini: [
-    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (Recommended)' },
-    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (Fast Reasoning)' },
-    { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash (Legacy Fast)' },
-    { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro (Large Context & Deep Analysis)' },
+    { value: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash — Recommended' },
+    { value: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite — Budget' },
   ],
   openai: [
     { value: 'gpt-4o-mini', label: 'GPT-4o Mini (Fast Reasoning)' },
@@ -160,7 +158,7 @@ export const SettingsPage: React.FC = () => {
 
   // AI Configuration State
   const [selectedProvider, setSelectedProvider] = useState<string>('gemini');
-  const [selectedModel, setSelectedModel] = useState<string>('gemini-2.5-flash');
+  const [selectedModel, setSelectedModel] = useState<string>('gemini-3.8-flash');
   const [endpoint, setEndpoint] = useState<string>('');
   const [apiKeyInput, setApiKeyInput] = useState<string>('');
   const [showRemoveConfirm, setShowRemoveConfirm] = useState<boolean>(false);
@@ -204,11 +202,24 @@ export const SettingsPage: React.FC = () => {
     if (dynamicModels && dynamicModels.length > 0) {
       return dynamicModels.map((m) => ({
         value: m,
-        label: m === 'gemini-2.5-flash' ? `${m} (Recommended)` : m,
+        label: m === 'gemini-3.8-flash'
+          ? `${m} — Recommended`
+          : m === 'gemini-3.5-flash-lite'
+            ? `${m} — Budget`
+            : m,
       }));
     }
     return MODEL_OPTIONS[selectedProvider] || [];
   }, [dynamicModels, selectedProvider]);
+
+  // Synchronize selected model when dynamically discovered models change
+  useEffect(() => {
+    if (dynamicModels && dynamicModels.length > 0) {
+      setSelectedModel((current) =>
+        dynamicModels.includes(current) ? current : dynamicModels[0]
+      );
+    }
+  }, [dynamicModels]);
 
   useEffect(() => {
     if (aiConfig) {

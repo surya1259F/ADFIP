@@ -189,7 +189,7 @@ async def test_9_gemini_success():
     adapter = GeminiAdapter(transport=httpx.MockTransport(handler))
     req = ProviderRequest(
         provider=ProviderId.GEMINI,
-        model="gemini-1.5-flash",
+        model="gemini-3.8-flash",
         prompt="Analyze EVTX logs",
         api_key=MOCK_SECRET_KEY
     )
@@ -205,7 +205,7 @@ async def test_10_gemini_http_error():
     adapter = GeminiAdapter(transport=httpx.MockTransport(handler))
     req = ProviderRequest(
         provider=ProviderId.GEMINI,
-        model="gemini-1.5-flash",
+        model="gemini-3.8-flash",
         prompt="Analyze",
         api_key=MOCK_SECRET_KEY
     )
@@ -222,7 +222,7 @@ async def test_11_gemini_timeout():
     adapter = GeminiAdapter(transport=httpx.MockTransport(handler))
     req = ProviderRequest(
         provider=ProviderId.GEMINI,
-        model="gemini-1.5-flash",
+        model="gemini-3.8-flash",
         prompt="Analyze",
         api_key=MOCK_SECRET_KEY
     )
@@ -238,7 +238,7 @@ async def test_12_gemini_malformed_response():
     adapter = GeminiAdapter(transport=httpx.MockTransport(handler))
     req = ProviderRequest(
         provider=ProviderId.GEMINI,
-        model="gemini-1.5-flash",
+        model="gemini-3.8-flash",
         prompt="Analyze",
         api_key=MOCK_SECRET_KEY
     )
@@ -391,10 +391,10 @@ async def test_23_gemini_model_mapping_and_test_connection():
 
     adapter = GeminiAdapter(transport=httpx.MockTransport(handler))
     # Test connection preserves selected model name without artificial downgrade
-    res = await adapter.test_connection(api_key=MOCK_SECRET_KEY, model="gemini-2.0-flash")
+    res = await adapter.test_connection(api_key=MOCK_SECRET_KEY, model="gemini-3.5-flash-lite")
     assert res.success is True
-    assert "gemini-2.0-flash" in res.status_message
-    assert any("models/gemini-2.0-flash:generateContent" in u for u in called_urls)
+    assert "gemini-3.5-flash-lite" in res.status_message
+    assert any("models/gemini-3.5-flash-lite:generateContent" in u for u in called_urls)
     assert res.error_code == AIErrorCode.SUCCESS
 
 
@@ -415,7 +415,7 @@ async def test_24_gemini_error_categorization():
         return httpx.Response(429, json={"error": {"code": 429, "message": "Resource exhausted: quota exceeded"}})
 
     adapter_quota = GeminiAdapter(transport=httpx.MockTransport(handler_429))
-    res_quota = await adapter_quota.test_connection(api_key=MOCK_SECRET_KEY, model="gemini-1.5-flash")
+    res_quota = await adapter_quota.test_connection(api_key=MOCK_SECRET_KEY, model="gemini-3.8-flash")
     assert res_quota.success is False
     assert res_quota.error_code == AIErrorCode.QUOTA_EXCEEDED
     assert "[QUOTA_EXCEEDED]" in res_quota.status_message
@@ -434,11 +434,11 @@ async def test_25_gemini_list_models_success():
         return httpx.Response(200, json={
             "models": [
                 {
-                    "name": "models/gemini-2.5-flash",
+                    "name": "models/gemini-3.8-flash",
                     "supportedGenerationMethods": ["generateContent"]
                 },
                 {
-                    "name": "models/gemini-2.0-flash",
+                    "name": "models/gemini-3.5-flash-lite",
                     "supportedGenerationMethods": ["generateContent"]
                 },
                 {
@@ -450,8 +450,8 @@ async def test_25_gemini_list_models_success():
 
     adapter = GeminiAdapter(transport=httpx.MockTransport(handler))
     models = await adapter.list_models(api_key=MOCK_SECRET_KEY)
-    assert "gemini-2.5-flash" in models
-    assert "gemini-2.0-flash" in models
+    assert "gemini-3.8-flash" in models
+    assert "gemini-3.5-flash-lite" in models
     assert "text-embedding-004" not in models
 
 
@@ -491,13 +491,13 @@ async def test_27_gemini_generate_success():
     adapter = GeminiAdapter(transport=httpx.MockTransport(handler))
     req = ProviderRequest(
         provider=ProviderId.GEMINI,
-        model="gemini-2.5-flash",
+        model="gemini-3.8-flash",
         prompt="Explain finding evidence.",
         api_key=MOCK_SECRET_KEY
     )
     res = await adapter.generate(req)
     assert res.provider == ProviderId.GEMINI
-    assert res.model == "gemini-2.5-flash"
+    assert res.model == "gemini-3.8-flash"
     assert "Ground truth forensic analysis" in res.content
     assert res.usage["prompt_tokens"] == 25
     assert res.usage["completion_tokens"] == 15
@@ -509,7 +509,7 @@ async def test_28_gemini_generate_missing_key():
     adapter = GeminiAdapter()
     req = ProviderRequest(
         provider=ProviderId.GEMINI,
-        model="gemini-2.5-flash",
+        model="gemini-3.8-flash",
         prompt="Explain finding evidence.",
         api_key=None
     )
@@ -525,7 +525,7 @@ async def test_29_gemini_rate_limit_handling():
         return httpx.Response(429, json={"error": {"message": "Too Many Requests, please back off"}})
 
     adapter = GeminiAdapter(transport=httpx.MockTransport(handler))
-    res = await adapter.test_connection(api_key=MOCK_SECRET_KEY, model="gemini-2.5-flash")
+    res = await adapter.test_connection(api_key=MOCK_SECRET_KEY, model="gemini-3.8-flash")
     assert res.success is False
     assert res.error_code == AIErrorCode.RATE_LIMITED
     assert "[RATE_LIMITED]" in res.status_message
@@ -539,7 +539,7 @@ async def test_30_gemini_no_fake_ai_fallback():
     adapter = GeminiAdapter(transport=httpx.MockTransport(handler))
     req = ProviderRequest(
         provider=ProviderId.GEMINI,
-        model="gemini-2.5-flash",
+        model="gemini-3.8-flash",
         prompt="Investigate memory image.",
         api_key=MOCK_SECRET_KEY
     )
@@ -557,13 +557,14 @@ def test_31_no_hardcoded_secrets_in_repo():
 
 
 def test_32_gemini_normalization_helpers():
-    assert GeminiAdapter._normalize_model("models/gemini-2.5-flash") == "gemini-2.5-flash"
-    assert GeminiAdapter._normalize_model("/models/gemini-2.5-flash") == "gemini-2.5-flash"
-    assert GeminiAdapter._normalize_model("models//models/gemini-2.5-flash") == "gemini-2.5-flash"
-    assert GeminiAdapter._normalize_model("default") == "gemini-2.5-flash"
-    assert GeminiAdapter._normalize_model("") == "gemini-2.5-flash"
-    assert GeminiAdapter._normalize_model(None) == "gemini-2.5-flash"
-    assert GeminiAdapter._normalize_model("gemini-1.5-pro") == "gemini-1.5-pro"
+    assert GeminiAdapter._normalize_model("models/gemini-3.8-flash") == "gemini-3.8-flash"
+    assert GeminiAdapter._normalize_model("/models/gemini-3.8-flash") == "gemini-3.8-flash"
+    assert GeminiAdapter._normalize_model("models//models/gemini-3.8-flash") == "gemini-3.8-flash"
+    assert GeminiAdapter._normalize_model("default") == "gemini-3.8-flash"
+    assert GeminiAdapter._normalize_model("") == "gemini-3.8-flash"
+    assert GeminiAdapter._normalize_model(None) == "gemini-3.8-flash"
+    assert GeminiAdapter._normalize_model("gemini-3.5-flash-lite") == "gemini-3.5-flash-lite"
+    assert GeminiAdapter._normalize_model("custom-model-id") == "custom-model-id"
 
     assert GeminiAdapter._normalize_base_url("https://generativelanguage.googleapis.com") == "https://generativelanguage.googleapis.com/v1beta"
     assert GeminiAdapter._normalize_base_url("https://generativelanguage.googleapis.com/") == "https://generativelanguage.googleapis.com/v1beta"
@@ -607,7 +608,226 @@ async def test_34_gemini_list_models_no_key_returns_supported_models():
     adapter = GeminiAdapter()
     models = await adapter.list_models(api_key=None)
     assert isinstance(models, list)
-    assert "gemini-2.5-flash" in models
-    assert "gemini-1.5-pro" in models
-    assert len(models) == 4
+    assert "gemini-3.8-flash" in models
+    assert "gemini-3.5-flash-lite" in models
+    assert "gemini-3.7-flash" in models
+    assert "gemini-3.6-flash" in models
+    assert "gemini-3.5-flash" in models
+    assert len(models) == 5
+
+
+# -----------------------------------------------------------------------------
+# Section 26: Required Gemini Production Tests (Tests A through N)
+# -----------------------------------------------------------------------------
+
+def test_a_gemini_default_model():
+    assert GeminiAdapter.DEFAULT_MODEL == "gemini-3.8-flash"
+
+
+def test_b_gemini_config_default():
+    from backend.app.core.config import settings
+    assert settings.GEMINI_MODEL == "gemini-3.8-flash"
+
+
+def test_c_model_normalization():
+    assert GeminiAdapter._normalize_model("models/gemini-3.8-flash") == "gemini-3.8-flash"
+    assert GeminiAdapter._normalize_model("gemini-3.8-flash") == "gemini-3.8-flash"
+
+
+@pytest.mark.asyncio
+async def test_d_and_e_model_discovery_and_filtering():
+    def handler(request: httpx.Request):
+        assert request.headers["x-goog-api-key"] == MOCK_SECRET_KEY
+        return httpx.Response(200, json={
+            "models": [
+                {
+                    "name": "models/gemini-3.8-flash",
+                    "supportedGenerationMethods": ["generateContent"]
+                },
+                {
+                    "name": "models/some-embedding-model",
+                    "supportedGenerationMethods": ["embedContent"]
+                }
+            ]
+        })
+
+    adapter = GeminiAdapter(transport=httpx.MockTransport(handler))
+    models = await adapter.list_models(api_key=MOCK_SECRET_KEY)
+    assert models == ["gemini-3.8-flash"]
+    assert "some-embedding-model" not in models
+
+
+@pytest.mark.asyncio
+async def test_f_discovery_failure():
+    for status_code in (401, 403, 404, 500):
+        def handler(request: httpx.Request):
+            return httpx.Response(status_code, json={"error": {"code": status_code, "message": "Discovery failed"}})
+
+        adapter = GeminiAdapter(transport=httpx.MockTransport(handler))
+        with pytest.raises(ProviderError) as exc_info:
+            await adapter.list_models(api_key=MOCK_SECRET_KEY)
+        assert exc_info.value.status_code == status_code
+        # Critical invariant: must NOT return stale models
+        assert "gemini-2.5-flash" not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_g_real_generation_request_shape():
+    captured_requests = []
+    def handler(request: httpx.Request):
+        captured_requests.append(request)
+        return httpx.Response(200, json={
+            "candidates": [{
+                "content": {"parts": [{"text": "OK"}]}
+            }]
+        })
+
+    adapter = GeminiAdapter(transport=httpx.MockTransport(handler))
+    req = ProviderRequest(
+        provider=ProviderId.GEMINI,
+        model="gemini-3.8-flash",
+        prompt="Test shape",
+        api_key=MOCK_SECRET_KEY
+    )
+    res = await adapter.generate(req)
+    assert res.content == "OK"
+    assert len(captured_requests) == 1
+    req_url = str(captured_requests[0].url)
+    assert "/models/gemini-3.8-flash:generateContent" in req_url
+
+
+@pytest.mark.asyncio
+async def test_h_unavailable_model():
+    def handler(request: httpx.Request):
+        return httpx.Response(404, json={
+            "error": {
+                "code": 404,
+                "message": "models/nonexistent is not found for generateContent"
+            }
+        })
+
+    adapter = GeminiAdapter(transport=httpx.MockTransport(handler))
+    res = await adapter.test_connection(api_key=MOCK_SECRET_KEY, model="nonexistent")
+    assert res.success is False
+    assert res.error_code == AIErrorCode.MODEL_UNAVAILABLE
+    assert "[MODEL_UNAVAILABLE]" in res.status_message
+
+
+def test_i_api_key_security():
+    secret_key = "AIzaSySecretProductionKey1234567890"
+    sanitized = ProviderError._sanitize(f"Error occurred with key {secret_key}")
+    assert secret_key not in sanitized
+    assert "[REDACTED_GEMINI_KEY]" in sanitized
+
+
+@pytest.mark.asyncio
+async def test_j_malformed_gemini_response():
+    # 1. 200 OK with missing candidates in test_connection
+    def handler_missing(request: httpx.Request):
+        return httpx.Response(200, json={"candidates": []})
+
+    adapter_missing = GeminiAdapter(transport=httpx.MockTransport(handler_missing))
+    res_missing = await adapter_missing.test_connection(api_key=MOCK_SECRET_KEY, model="gemini-3.8-flash")
+    assert res_missing.success is False
+    assert res_missing.error_code == AIErrorCode.GENERATION_FAILED
+
+    # 2. 200 OK with non-JSON in test_connection
+    def handler_non_json(request: httpx.Request):
+        return httpx.Response(200, text="<HTML>Bad Gateway</HTML>")
+
+    adapter_non_json = GeminiAdapter(transport=httpx.MockTransport(handler_non_json))
+    res_non_json = await adapter_non_json.test_connection(api_key=MOCK_SECRET_KEY, model="gemini-3.8-flash")
+    assert res_non_json.success is False
+    assert res_non_json.error_code == AIErrorCode.GENERATION_FAILED
+
+
+@pytest.mark.asyncio
+async def test_k_gemini_system_instruction():
+    captured_payloads = []
+    def handler(request: httpx.Request):
+        captured_payloads.append(json.loads(request.content.decode()))
+        return httpx.Response(200, json={
+            "candidates": [{
+                "content": {"parts": [{"text": "Forensic findings verified."}]}
+            }]
+        })
+
+    adapter = GeminiAdapter(transport=httpx.MockTransport(handler))
+    req = ProviderRequest(
+        provider=ProviderId.GEMINI,
+        model="gemini-3.8-flash",
+        prompt="Examine memory dump artifact.",
+        system_prompt="You are a certified DFIR investigator adhering to ISO/IEC 27037.",
+        api_key=MOCK_SECRET_KEY
+    )
+    res = await adapter.generate(req)
+    assert res.content == "Forensic findings verified."
+    assert len(captured_payloads) == 1
+    payload = captured_payloads[0]
+    assert "systemInstruction" in payload
+    assert payload["systemInstruction"]["parts"][0]["text"] == "You are a certified DFIR investigator adhering to ISO/IEC 27037."
+
+
+@pytest.mark.asyncio
+async def test_l_gemini_pagination():
+    pages_requested = []
+    def handler(request: httpx.Request):
+        url = str(request.url)
+        pages_requested.append(url)
+        if "pageToken=page2_token" in url:
+            return httpx.Response(200, json={
+                "models": [
+                    {
+                        "name": "models/gemini-3.5-flash-lite",
+                        "supportedGenerationMethods": ["generateContent"]
+                    }
+                ]
+            })
+        else:
+            return httpx.Response(200, json={
+                "models": [
+                    {
+                        "name": "models/gemini-3.8-flash",
+                        "supportedGenerationMethods": ["generateContent"]
+                    }
+                ],
+                "nextPageToken": "page2_token"
+            })
+
+    adapter = GeminiAdapter(transport=httpx.MockTransport(handler))
+    models = await adapter.list_models(api_key=MOCK_SECRET_KEY)
+    assert "gemini-3.8-flash" in models
+    assert "gemini-3.5-flash-lite" in models
+    assert len(pages_requested) == 2
+
+
+@pytest.mark.asyncio
+async def test_m_gemini_non_text_modality_filtering():
+    def handler(request: httpx.Request):
+        return httpx.Response(200, json={
+            "models": [
+                {"name": "models/gemini-3.8-flash", "supportedGenerationMethods": ["generateContent"]},
+                {"name": "models/gemini-3.5-flash-lite", "supportedGenerationMethods": ["generateContent"]},
+                {"name": "models/gemini-live-2.5", "supportedGenerationMethods": ["generateContent"]},
+                {"name": "models/gemini-tts-1.0", "supportedGenerationMethods": ["generateContent"]},
+                {"name": "models/imagen-3-image-generation", "supportedGenerationMethods": ["generateContent"]},
+                {"name": "models/chirp-transcribe-v2", "supportedGenerationMethods": ["generateContent"]},
+                {"name": "models/gemini-custom-tuning", "supportedGenerationMethods": ["generateContent"]},
+                {"name": "models/text-embedding-005", "supportedGenerationMethods": ["embedContent"]},
+                {"name": "models/aqa-model", "supportedGenerationMethods": ["generateContent"]},
+            ]
+        })
+
+    adapter = GeminiAdapter(transport=httpx.MockTransport(handler))
+    models = await adapter.list_models(api_key=MOCK_SECRET_KEY)
+    assert models == ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
+    assert "gemini-live-2.5" not in models
+    assert "gemini-tts-1.0" not in models
+    assert "imagen-3-image-generation" not in models
+    assert "chirp-transcribe-v2" not in models
+    assert "gemini-custom-tuning" not in models
+    assert "text-embedding-005" not in models
+    assert "aqa-model" not in models
+
+
 

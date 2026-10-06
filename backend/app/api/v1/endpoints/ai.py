@@ -14,7 +14,8 @@ Endpoints for:
 
 import logging
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, Header, status
 from sqlalchemy.orm import Session
 
 from backend.app.core.config import settings
@@ -108,12 +109,13 @@ def configure_provider(
 
 @router.get("/provider/config", response_model=AIProviderConfigResponse)
 @router.get("/ai/provider/config", response_model=AIProviderConfigResponse)
-def get_provider_config(
+async def get_provider_config(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
     Retrieves current user's provider configuration with masked API key.
+    Automatically resolves stale saved Gemini models without altering the DB record.
     """
     rec = AIReasoningService.get_provider_config(db, current_user)
     if not rec:
@@ -121,7 +123,7 @@ def get_provider_config(
             return AIProviderConfigResponse(
                 id="env-configured",
                 provider=settings.DEFAULT_LLM_PROVIDER,
-                model=getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash"),
+                model=getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash"),
                 endpoint=None,
                 has_api_key=True,
                 masked_api_key="[Configured via .env]",
@@ -135,10 +137,29 @@ def get_provider_config(
                 updated_at=None
             )
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No AI provider configured.")
+
+    effective_model = rec.model
+    if rec.provider in ("gemini", "google"):
+        stale_models = {"gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"}
+        if rec.model in stale_models:
+            plain_key = decrypt_credential(rec.api_key_encrypted) or (settings.GEMINI_API_KEY if settings.GEMINI_API_KEY else None)
+            if plain_key:
+                try:
+                    adapter = get_ai_adapter("gemini")
+                    discovered = await adapter.list_models(api_key=plain_key, base_url=rec.endpoint)
+                    if discovered:
+                        effective_model = rec.model if rec.model in discovered else discovered[0]
+                    else:
+                        effective_model = getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash")
+                except Exception:
+                    effective_model = getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash")
+            else:
+                effective_model = getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash")
+
     return AIProviderConfigResponse(
         id=rec.id,
         provider=rec.provider,
-        model=rec.model,
+        model=effective_model,
         endpoint=rec.endpoint,
         has_api_key=bool(rec.api_key_encrypted),
         masked_api_key=mask_credential(decrypt_credential(rec.api_key_encrypted)),
@@ -183,7 +204,7 @@ def get_provider_status(
             return {
                 "status": "CONFIGURED",
                 "provider": settings.DEFAULT_LLM_PROVIDER,
-                "model": getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash"),
+                "model": getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash"),
                 "is_enabled": True,
                 "has_api_key": True,
                 "last_tested_at": None,
@@ -214,13 +235,50 @@ def get_provider_status(
 @router.get("/ai/provider/models", response_model=List[str])
 async def get_provider_models(
     provider: Optional[str] = Query(default=None),
+    endpoint: Optional[str] = Query(default=None),
+    x_provider_api_key: Optional[str] = Header(default=None, alias="x-provider-api-key"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
     Discovers and lists supported models for the AI provider dynamically.
     """
-    return await AIReasoningService.list_models(db, current_user, provider=provider)
+    return await AIReasoningService.list_models(
+        db,
+        current_user,
+        provider=provider,
+        api_key=x_provider_api_key,
+        base_url=endpoint
+    )
+
+
+class _TransientModelDiscoveryRequest(BaseModel):
+    """Request body for POST model discovery with a transient API key.
+    The API key is used only for the discovery request, never persisted, never logged, never returned."""
+    provider: str = "gemini"
+    api_key: Optional[str] = None
+    endpoint: Optional[str] = None
+
+
+@router.post("/provider/models", response_model=List[str])
+@router.post("/ai/provider/models", response_model=List[str])
+async def discover_provider_models(
+    payload: _TransientModelDiscoveryRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Discovers models using a transient API key provided in the request body.
+    The key is NOT persisted, NOT logged, and NOT returned.
+    This allows model discovery before saving the key to the backend.
+    """
+    return await AIReasoningService.list_models(
+        db,
+        current_user,
+        provider=payload.provider,
+        api_key=payload.api_key.strip() if payload.api_key else None,
+        base_url=payload.endpoint.strip() if payload.endpoint else None
+    )
 
 
 @router.post("/provider/test-connection", response_model=AIProviderConnectionTestResponse)

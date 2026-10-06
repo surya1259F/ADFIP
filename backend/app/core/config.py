@@ -123,7 +123,7 @@ class Settings(BaseSettings):
     # LLM Settings (Provider Abstraction)
     DEFAULT_LLM_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_MODEL: str = "gemini-3.8-flash"
     OPENROUTER_API_KEY: str = ""
     LOCAL_LLM_ENDPOINT: str = ""
 
