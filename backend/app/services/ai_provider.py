@@ -412,39 +412,122 @@ class AnthropicAdapter(BaseAIAdapter):
 class GeminiAdapter(BaseAIAdapter):
     DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
     DEFAULT_MODEL = "gemini-2.5-flash"
+    SUPPORTED_MODELS = [
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
+    ]
 
     def __init__(self, transport: Optional[httpx.AsyncBaseTransport] = None):
         default_model = getattr(settings, "GEMINI_MODEL", self.DEFAULT_MODEL) or self.DEFAULT_MODEL
         super().__init__(ProviderId.GEMINI, default_model, transport)
 
     @classmethod
+    def _normalize_base_url(cls, base_url: Optional[str]) -> str:
+        url = (base_url or cls.DEFAULT_BASE_URL).strip().rstrip("/")
+        if url.endswith("/models"):
+            url = url[:-7].rstrip("/")
+        if url in (
+            "https://generativelanguage.googleapis.com",
+            "http://generativelanguage.googleapis.com",
+        ):
+            url = f"{url}/v1beta"
+        return url
+
+    @classmethod
+    def _normalize_model(cls, model_name: Optional[str]) -> str:
+        fallback = getattr(settings, "GEMINI_MODEL", cls.DEFAULT_MODEL) or cls.DEFAULT_MODEL
+        name = (model_name or "").strip()
+        if not name or name.lower() == "default":
+            name = fallback.strip()
+        name = name.lstrip("/")
+        while name.startswith("models/"):
+            name = name[7:].lstrip("/")
+        return name or fallback
+
+    @classmethod
     def _categorize_http_status(cls, status_code: int, response_text: str = "") -> AIErrorCode:
         text_lower = response_text.lower()
+        error_msg = ""
+        error_status = ""
+        error_reason = ""
+        try:
+            parsed = json.loads(response_text)
+            err = parsed.get("error", {})
+            if isinstance(err, dict):
+                error_msg = str(err.get("message", "")).lower()
+                error_status = str(err.get("status", "")).lower()
+                details = err.get("details", [])
+                if isinstance(details, list):
+                    for d in details:
+                        if isinstance(d, dict) and "reason" in d:
+                            error_reason = str(d.get("reason", "")).lower()
+        except Exception:
+            pass
+
+        combined_text = f"{text_lower} {error_msg} {error_status} {error_reason}"
+
+        # 1. Quota & Rate Limit
         if (
-            status_code in (401, 403)
-            or "api_key_invalid" in text_lower
-            or "api key not valid" in text_lower
-            or "unauthenticated" in text_lower
-            or "permission_denied" in text_lower
-            or "permissiondenied" in text_lower
+            status_code == 429
+            or error_reason in ("resource_exhausted", "quota_exceeded", "rate_limit_exceeded")
+            or "resource_exhausted" in combined_text
+            or "resourceexhausted" in combined_text
+            or "quota" in combined_text
+            or "billing" in combined_text
         ):
-            if "quota" in text_lower or "resource_exhausted" in text_lower:
-                return AIErrorCode.QUOTA_EXCEEDED
-            return AIErrorCode.INVALID_API_KEY
-        if status_code == 404 or "not found" in text_lower or "is not supported for generatecontent" in text_lower:
-            return AIErrorCode.MODEL_UNAVAILABLE
-        if status_code == 429:
-            if "quota" in text_lower or "resource_exhausted" in text_lower or "check quota" in text_lower:
+            if "quota" in combined_text or "billing" in combined_text or "resource_exhausted" in combined_text:
                 return AIErrorCode.QUOTA_EXCEEDED
             return AIErrorCode.RATE_LIMITED
-        if "resource_exhausted" in text_lower or "quota" in text_lower:
-            return AIErrorCode.QUOTA_EXCEEDED
-        if status_code == 400:
-            if "key" in text_lower or "credential" in text_lower or "api_key" in text_lower:
-                return AIErrorCode.INVALID_API_KEY
-            return AIErrorCode.CONFIGURATION_ERROR
+
+        # 2. Authentication & API Key
+        if (
+            status_code in (401, 403)
+            or error_reason in ("api_key_invalid", "api_key_not_found", "key_invalid")
+            or "api_key_invalid" in combined_text
+            or "api key not valid" in combined_text
+            or "unregistered callers" in combined_text
+            or "api key not found" in combined_text
+            or "unauthenticated" in combined_text
+            or "permission_denied" in combined_text
+            or "permissiondenied" in combined_text
+        ):
+            return AIErrorCode.INVALID_API_KEY
+
+        if status_code == 400 and (
+            "api_key" in combined_text
+            or "api key" in combined_text
+            or "credential" in combined_text
+            or "invalid api key" in combined_text
+            or "key not valid" in combined_text
+        ):
+            return AIErrorCode.INVALID_API_KEY
+
+        # 3. Model Availability
+        # A 404 indicates model unavailable ONLY if Google specifically states that the model was not found
+        # or not supported for generateContent.
+        is_model_specific_404 = (
+            status_code == 404
+            and (
+                "models/" in error_msg
+                or "model" in error_msg
+                or "is not supported for generatecontent" in combined_text
+                or "not found for api version" in combined_text
+            )
+        )
+        is_model_specific_error = (
+            "is not supported for generatecontent" in combined_text
+            or ("model" in error_msg and ("not found" in error_msg or "not supported" in error_msg or "unknown model" in error_msg))
+        )
+        if is_model_specific_404 or is_model_specific_error:
+            return AIErrorCode.MODEL_UNAVAILABLE
+
+        # 4. Provider / Server Unreachable
         if status_code in (500, 502, 503, 504):
             return AIErrorCode.PROVIDER_UNREACHABLE
+
+        # 5. Configuration Error (e.g. general 400, or route 404 that was not a model error)
         return AIErrorCode.CONFIGURATION_ERROR
 
     @staticmethod
@@ -456,37 +539,41 @@ class GeminiAdapter(BaseAIAdapter):
             err = data.get("error", {})
             if isinstance(err, dict):
                 msg = err.get("message")
+                status_str = err.get("status")
+                details = err.get("details", [])
+                reasons = []
+                if isinstance(details, list):
+                    for d in details:
+                        if isinstance(d, dict) and "reason" in d:
+                            reasons.append(str(d["reason"]))
+                parts = []
                 if msg and isinstance(msg, str):
-                    return msg.strip()
+                    parts.append(msg.strip())
+                if status_str and isinstance(status_str, str) and status_str != msg:
+                    parts.append(f"[{status_str}]")
+                if reasons:
+                    parts.append(f"Reason: {', '.join(reasons)}")
+                if parts:
+                    return " ".join(parts)
         except Exception:
             pass
         clean = ProviderError._sanitize(response_text).strip()
-        return clean[:200] if len(clean) > 200 else clean
-
-    @classmethod
-    def _normalize_model(cls, model_name: Optional[str]) -> str:
-        fallback = getattr(settings, "GEMINI_MODEL", cls.DEFAULT_MODEL) or cls.DEFAULT_MODEL
-        name = (model_name or fallback).strip()
-        if name.startswith("models/"):
-            return name[7:]
-        return name
+        return clean[:300] if len(clean) > 300 else clean
 
     async def list_models(
         self,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None
     ) -> List[str]:
-        default_model_name = self._normalize_model(getattr(settings, "GEMINI_MODEL", self.DEFAULT_MODEL) or self.DEFAULT_MODEL)
         effective_key = api_key or (settings.GEMINI_API_KEY if settings.GEMINI_API_KEY else None)
 
         if not effective_key:
-            # Without a configured API key, return only the configured default model.
-            # Do NOT pretend that unverified fallback models were discovered from the Google API.
-            return [default_model_name]
+            # Without a configured API key, return the documented supported models.
+            return list(self.SUPPORTED_MODELS)
 
-        target_url = (base_url or self.DEFAULT_BASE_URL).rstrip("/")
+        target_url = self._normalize_base_url(base_url)
         self._validate_https_url(target_url, is_local=False)
-        headers = {"x-goog-api-key": effective_key}
+        headers = {"x-goog-api-key": effective_key.strip()}
 
         try:
             async with self._get_client() as client:
@@ -498,16 +585,28 @@ class GeminiAdapter(BaseAIAdapter):
                     for m in models_raw:
                         methods = m.get("supportedGenerationMethods", [])
                         if "generateContent" in methods:
-                            clean_name = m.get("name", "").replace("models/", "")
-                            if clean_name and not clean_name.endswith("-tuning") and not clean_name.startswith("text-embedding"):
+                            clean_name = m.get("name", "")
+                            while clean_name.startswith("models/"):
+                                clean_name = clean_name[7:].lstrip("/")
+                            if (
+                                clean_name
+                                and not clean_name.endswith("-tuning")
+                                and not clean_name.startswith("text-embedding")
+                                and not clean_name.startswith("embedding-")
+                                and not clean_name.startswith("aqa")
+                            ):
                                 discovered.append(clean_name)
-                    return discovered if discovered else [default_model_name]
+                    return discovered if discovered else list(self.SUPPORTED_MODELS)
                 else:
                     category = self._categorize_http_status(res.status_code, res.text)
                     detail = self._extract_error_detail(res.text)
+                    sanitized_detail = ProviderError._sanitize(detail)
+                    logger.warning(
+                        f"Google Gemini model discovery failed (HTTP {res.status_code}, {category.value}): {sanitized_detail}"
+                    )
                     raise ProviderError(
                         self.provider_id,
-                        f"[{category.value}] Google Gemini model discovery failed (HTTP {res.status_code}): {detail}",
+                        f"[{category.value}] Google Gemini model discovery failed (HTTP {res.status_code}): {sanitized_detail}",
                         status_code=res.status_code,
                         error_code=category
                     )
@@ -547,12 +646,12 @@ class GeminiAdapter(BaseAIAdapter):
                 error_code=AIErrorCode.CONFIGURATION_ERROR,
                 has_key=False
             )
-        target_url = (base_url or self.DEFAULT_BASE_URL).rstrip("/")
+        target_url = self._normalize_base_url(base_url)
         self._validate_https_url(target_url, is_local=False)
 
         model_name = self._normalize_model(model)
         headers = {
-            "x-goog-api-key": effective_key,
+            "x-goog-api-key": effective_key.strip(),
             "Content-Type": "application/json"
         }
         start_time = time.time()
@@ -566,6 +665,7 @@ class GeminiAdapter(BaseAIAdapter):
                 latency = round((time.time() - start_time) * 1000, 2)
 
                 if res.status_code == 200:
+                    logger.info(f"Google Gemini connection verified successfully using model '{model_name}' ({latency}ms).")
                     return ConnectionTestResult(
                         provider=self.provider_id,
                         success=True,
@@ -577,16 +677,21 @@ class GeminiAdapter(BaseAIAdapter):
                 else:
                     category = self._categorize_http_status(res.status_code, res.text)
                     detail = self._extract_error_detail(res.text)
+                    sanitized_detail = ProviderError._sanitize(detail)
+                    logger.warning(
+                        f"Google Gemini connection test failed for '{model_name}' (HTTP {res.status_code}, {category.value}): {sanitized_detail}"
+                    )
                     return ConnectionTestResult(
                         provider=self.provider_id,
                         success=False,
-                        status_message=f"[{category.value}] Google Gemini API error (HTTP {res.status_code}): {ProviderError._sanitize(detail)}",
+                        status_message=f"[{category.value}] Google Gemini API error (HTTP {res.status_code}): {sanitized_detail}",
                         error_code=category,
                         latency_ms=latency,
                         has_key=True
                     )
         except httpx.TimeoutException:
             latency = round((time.time() - start_time) * 1000, 2)
+            logger.warning(f"Google Gemini connection timed out for model '{model_name}'.")
             return ConnectionTestResult(
                 provider=self.provider_id,
                 success=False,
@@ -597,6 +702,7 @@ class GeminiAdapter(BaseAIAdapter):
             )
         except (httpx.ConnectError, httpx.NetworkError) as e:
             latency = round((time.time() - start_time) * 1000, 2)
+            logger.warning(f"Google Gemini network connection failed for model '{model_name}': {ProviderError._sanitize(str(e))}")
             return ConnectionTestResult(
                 provider=self.provider_id,
                 success=False,
@@ -607,6 +713,7 @@ class GeminiAdapter(BaseAIAdapter):
             )
         except Exception as e:
             latency = round((time.time() - start_time) * 1000, 2)
+            logger.error(f"Unexpected error during Google Gemini connection test for model '{model_name}': {ProviderError._sanitize(str(e))}")
             return ConnectionTestResult(
                 provider=self.provider_id,
                 success=False,
@@ -625,11 +732,11 @@ class GeminiAdapter(BaseAIAdapter):
                 error_code=AIErrorCode.CONFIGURATION_ERROR
             )
 
-        target_url = (req.base_url or self.DEFAULT_BASE_URL).rstrip("/")
+        target_url = self._normalize_base_url(req.base_url)
         self._validate_https_url(target_url, is_local=False)
 
         headers = {
-            "x-goog-api-key": effective_key,
+            "x-goog-api-key": effective_key.strip(),
             "Content-Type": "application/json"
         }
 
@@ -658,9 +765,13 @@ class GeminiAdapter(BaseAIAdapter):
                 if res.status_code != 200:
                     category = self._categorize_http_status(res.status_code, res.text)
                     detail = self._extract_error_detail(res.text)
+                    sanitized_detail = ProviderError._sanitize(detail)
+                    logger.warning(
+                        f"Google Gemini generation failed for '{model_name}' (HTTP {res.status_code}, {category.value}): {sanitized_detail}"
+                    )
                     raise ProviderError(
                         self.provider_id,
-                        f"[{category.value}] Google Gemini API error HTTP {res.status_code}: {ProviderError._sanitize(detail)}",
+                        f"[{category.value}] Google Gemini API error HTTP {res.status_code}: {sanitized_detail}",
                         status_code=res.status_code,
                         error_code=category
                     )
@@ -703,7 +814,7 @@ class GeminiAdapter(BaseAIAdapter):
         except (httpx.ConnectError, httpx.NetworkError) as e:
             raise ProviderError(
                 self.provider_id,
-                f"[{AIErrorCode.PROVIDER_UNREACHABLE.value}] Network connection failed: {ProviderError._sanitize(str(e))}",
+                f"[{AIErrorCode.PROVIDER_UNREACHABLE.value}] Network connection to Google Gemini API failed: {ProviderError._sanitize(str(e))}",
                 error_code=AIErrorCode.PROVIDER_UNREACHABLE
             )
         except json.JSONDecodeError:

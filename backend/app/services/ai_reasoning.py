@@ -301,21 +301,28 @@ class AIReasoningService:
             provider_name = req.provider.lower().strip()
             if provider_name == "google":
                 provider_name = "gemini"
-            model_name = req.model or "default"
+            req_model = (req.model.strip() if req.model else None)
             api_key_plain = req.api_key.strip() if req.api_key else None
             endpoint_url = req.endpoint.strip() if req.endpoint else None
-            if not api_key_plain:
-                # User did not provide key in test request; check their saved DB configuration
-                cfg = cls.get_provider_config(db, user, case_id)
-                cfg_p = (cfg.provider.lower().strip() if cfg else "")
-                if cfg_p == "google":
-                    cfg_p = "gemini"
-                if cfg and cfg_p == provider_name and cfg.api_key_encrypted:
-                    api_key_plain = decrypt_credential(cfg.api_key_encrypted)
-                    if not req.model or req.model == "default":
-                        model_name = cfg.model
-                    if not req.endpoint:
-                        endpoint_url = cfg.endpoint
+
+            # Check user's saved DB configuration
+            cfg = cls.get_provider_config(db, user, case_id)
+            cfg_p = (cfg.provider.lower().strip() if cfg else "")
+            if cfg_p == "google":
+                cfg_p = "gemini"
+
+            if not api_key_plain and cfg and cfg_p == provider_name and cfg.api_key_encrypted:
+                api_key_plain = decrypt_credential(cfg.api_key_encrypted)
+
+            if not endpoint_url and cfg and cfg_p == provider_name:
+                endpoint_url = cfg.endpoint
+
+            if req_model and req_model.lower() != "default":
+                model_name = req_model
+            elif cfg and cfg_p == provider_name and cfg.model and cfg.model.lower() != "default":
+                model_name = cfg.model
+            else:
+                model_name = getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash") if provider_name == "gemini" else "adfir-deterministic-engine"
         else:
             cfg = cls.get_provider_config(db, user, case_id)
             if cfg:
@@ -355,7 +362,7 @@ class AIReasoningService:
 
         try:
             adapter = get_ai_adapter(provider_name)
-            target_model = model_name or adapter.default_model
+            target_model = model_name if (model_name and model_name.lower() != "default") else adapter.default_model
             conn_res = await adapter.test_connection(
                 api_key=api_key_plain,
                 base_url=endpoint_url,
@@ -382,7 +389,7 @@ class AIReasoningService:
         log_audit_event(
             db=db,
             event_type="AI_PROVIDER_TEST",
-            details=f"AI provider connectivity test for '{provider_name}' (success: {success})",
+            details=f"AI provider connectivity test for '{provider_name}' (model: {model_name}, success: {success}, status: {error_code_str or ('SUCCESS' if success else 'FAILED')})",
             actor_id=user.id,
             actor_name=user.email,
             case_id=case_id,
@@ -390,6 +397,9 @@ class AIReasoningService:
                 "provider": provider_name,
                 "model": model_name,
                 "success": success,
+                "status": error_code_str or ("SUCCESS" if success else "FAILED"),
+                "error_code": error_code_str,
+                "status_message": ProviderError._sanitize(status_msg),
                 "latency_ms": latency
             }
         )
@@ -438,7 +448,7 @@ class AIReasoningService:
         except Exception as e:
             logger.warning(f"Error listing models for provider '{effective_provider}': {ProviderError._sanitize(str(e))}")
             if effective_provider in ("gemini", "google"):
-                return [getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash")]
+                return ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
             elif effective_provider == "openai":
                 return ["gpt-4o", "gpt-4o-mini", "o3-mini"]
             elif effective_provider == "anthropic":

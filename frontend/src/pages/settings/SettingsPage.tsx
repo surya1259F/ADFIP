@@ -30,27 +30,29 @@ import { useUIStore } from '../../stores/uiStore';
 import { aiService, type AIProviderConfigRequest } from '../../services/ai';
 import { normalizeError } from '../../services/client';
 
-export function getFriendlyErrorMessage(errorCode?: string | null, rawMessage?: string): string {
+export function getFriendlyErrorMessage(errorCode?: string | null, rawMessage?: string, modelName?: string): string {
+  const modelSuffix = modelName ? ` (${modelName})` : '';
+  const cleanRaw = rawMessage ? rawMessage.replace(/^\[[A-Z_]+\]\s*/, '') : '';
   switch (errorCode) {
     case 'SUCCESS':
-      return '✓ Gemini connection successful';
+      return `✓ Gemini connection successful${modelSuffix}`;
     case 'INVALID_API_KEY':
-      return '✕ The Gemini API key is invalid. Please verify your API key and try again.';
+      return '✕ Invalid Gemini API key. Please check your credentials and try again.';
     case 'MODEL_UNAVAILABLE':
-      return '✕ The selected Gemini model is unavailable.';
+      return `✕ The selected Gemini model${modelSuffix} is not available for your account or region.`;
     case 'RATE_LIMITED':
-      return '⚠ Gemini is temporarily rate limited. Try again later.';
+      return '⚠ Gemini API rate limit reached. Try again in a few moments.';
     case 'QUOTA_EXCEEDED':
-      return '⚠ Gemini API quota has been exceeded. Check your plan and billing details.';
+      return '⚠ Gemini API quota exceeded. Check your plan and billing details.';
     case 'PROVIDER_UNREACHABLE':
-      return '⚠ Unable to reach Google Gemini. Check your network connection.';
+      return '⚠ Unable to reach Google Gemini services. Check your network connection.';
     case 'CONFIGURATION_ERROR':
-      return '✕ Configuration error. An API key is required.';
+      return cleanRaw ? `✕ Configuration error: ${cleanRaw}` : '✕ Configuration error. An API key is required.';
     case 'GENERATION_FAILED':
-      return '✕ Generation test failed.';
+      return cleanRaw ? `✕ Generation test failed: ${cleanRaw}` : '✕ Generation test failed.';
     default:
-      if (rawMessage) {
-        return rawMessage.replace(/^\[[A-Z_]+\]\s*/, '');
+      if (cleanRaw) {
+        return `✕ Connection failed: ${cleanRaw}`;
       }
       return '✕ Connection failed.';
   }
@@ -228,7 +230,7 @@ export const SettingsPage: React.FC = () => {
     onSuccess: (res) => {
       setTestResult({
         success: res.success,
-        message: getFriendlyErrorMessage(res.error_code, res.status_message),
+        message: getFriendlyErrorMessage(res.error_code, res.status_message, selectedModel),
         latency: res.latency_ms,
       });
       // Do not clear transient apiKeyInput so user can save after testing
@@ -237,7 +239,7 @@ export const SettingsPage: React.FC = () => {
       const errorMsg = normalizeError(err);
       setTestResult({
         success: false,
-        message: getFriendlyErrorMessage(undefined, errorMsg),
+        message: getFriendlyErrorMessage(undefined, errorMsg, selectedModel),
       });
     },
   });

@@ -1,6 +1,7 @@
 import pytest
 import httpx
 import re
+import json
 
 from backend.app.services.ai_provider import (
     ProviderId,
@@ -553,3 +554,60 @@ def test_31_no_hardcoded_secrets_in_repo():
     s = Settings()
     # Ensure default is empty string or None, not a real key
     assert not s.GEMINI_API_KEY or s.GEMINI_API_KEY == "" or not s.GEMINI_API_KEY.startswith("AIzaSy")
+
+
+def test_32_gemini_normalization_helpers():
+    assert GeminiAdapter._normalize_model("models/gemini-2.5-flash") == "gemini-2.5-flash"
+    assert GeminiAdapter._normalize_model("/models/gemini-2.5-flash") == "gemini-2.5-flash"
+    assert GeminiAdapter._normalize_model("models//models/gemini-2.5-flash") == "gemini-2.5-flash"
+    assert GeminiAdapter._normalize_model("default") == "gemini-2.5-flash"
+    assert GeminiAdapter._normalize_model("") == "gemini-2.5-flash"
+    assert GeminiAdapter._normalize_model(None) == "gemini-2.5-flash"
+    assert GeminiAdapter._normalize_model("gemini-1.5-pro") == "gemini-1.5-pro"
+
+    assert GeminiAdapter._normalize_base_url("https://generativelanguage.googleapis.com") == "https://generativelanguage.googleapis.com/v1beta"
+    assert GeminiAdapter._normalize_base_url("https://generativelanguage.googleapis.com/") == "https://generativelanguage.googleapis.com/v1beta"
+    assert GeminiAdapter._normalize_base_url("https://generativelanguage.googleapis.com/v1beta") == "https://generativelanguage.googleapis.com/v1beta"
+    assert GeminiAdapter._normalize_base_url("https://generativelanguage.googleapis.com/v1beta/") == "https://generativelanguage.googleapis.com/v1beta"
+    assert GeminiAdapter._normalize_base_url("https://generativelanguage.googleapis.com/v1beta/models") == "https://generativelanguage.googleapis.com/v1beta"
+
+
+def test_33_gemini_error_categorization_nuances():
+    # Model unavailable 404 (Google model not found format)
+    res_404_model = GeminiAdapter._categorize_http_status(
+        404,
+        json.dumps({"error": {"code": 404, "message": "models/gemini-not-found is not found for API version v1beta"}})
+    )
+    assert res_404_model == AIErrorCode.MODEL_UNAVAILABLE
+
+    # Generic route 404 must NOT be classified as MODEL_UNAVAILABLE
+    res_404_generic = GeminiAdapter._categorize_http_status(
+        404,
+        "<!DOCTYPE html><html><body>404 Not Found</body></html>"
+    )
+    assert res_404_generic == AIErrorCode.CONFIGURATION_ERROR
+
+    # 400 with API key invalid
+    res_400_key = GeminiAdapter._categorize_http_status(
+        400,
+        json.dumps({"error": {"code": 400, "message": "API key not valid. Please pass a valid API key.", "status": "INVALID_ARGUMENT"}})
+    )
+    assert res_400_key == AIErrorCode.INVALID_API_KEY
+
+    # 403 unregistered callers
+    res_403_unreg = GeminiAdapter._categorize_http_status(
+        403,
+        json.dumps({"error": {"code": 403, "message": "Method doesn't allow unregistered callers. Please use API Key.", "status": "PERMISSION_DENIED"}})
+    )
+    assert res_403_unreg == AIErrorCode.INVALID_API_KEY
+
+
+@pytest.mark.asyncio
+async def test_34_gemini_list_models_no_key_returns_supported_models():
+    adapter = GeminiAdapter()
+    models = await adapter.list_models(api_key=None)
+    assert isinstance(models, list)
+    assert "gemini-2.5-flash" in models
+    assert "gemini-1.5-pro" in models
+    assert len(models) == 4
+
