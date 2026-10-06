@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, Navigate } from 'react-router-dom';
 import { UserPlus, User, Mail, Building2, Shield } from 'lucide-react';
 import { AuthCard } from '../../components/auth/AuthCard';
@@ -57,6 +57,7 @@ export const SignUpPage: React.FC = () => {
   const [generalError, setGeneralError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [socialNotice, setSocialNotice] = useState<string | null>(null);
+  const [accountExists, setAccountExists] = useState(false);
 
   if (status === 'AUTHENTICATED') {
     return <Navigate to="/dashboard" replace />;
@@ -105,6 +106,7 @@ export const SignUpPage: React.FC = () => {
     e.preventDefault();
     setGeneralError(null);
     setNotice(null);
+    setAccountExists(false);
 
     if (!validate()) return;
 
@@ -138,13 +140,25 @@ export const SignUpPage: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const errCode = params.get('error_code');
+    const err = params.get('error');
+    if (errCode === 'ACCOUNT_ALREADY_EXISTS' || (err && decodeURIComponent(err).toLowerCase().includes('already exists'))) {
+      setAccountExists(true);
+    } else if (err) {
+      setGeneralError(decodeURIComponent(err));
+    }
+  }, []);
+
   const handleGoogleSignUp = async () => {
     setSocialNotice(null);
     setGeneralError(null);
+    setAccountExists(false);
     setLoading(true);
 
     try {
-      const res = await authService.getGoogleLoginUrl();
+      const res = await authService.getGoogleLoginUrl(undefined, 'SIGN_UP');
       if (!res.authorization_url) {
         setSocialNotice('Google OAuth is not configured for this deployment. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in server settings.');
         setLoading(false);
@@ -223,7 +237,13 @@ export const SignUpPage: React.FC = () => {
           }
 
           window.removeEventListener('message', handleMessage);
-          setGeneralError(event.data.error || 'Google registration was cancelled or failed.');
+          const errCode = typeof event.data.error_code === 'string' ? event.data.error_code : undefined;
+          if (errCode === 'ACCOUNT_ALREADY_EXISTS' || (typeof event.data.error === 'string' && event.data.error.toLowerCase().includes('already exists'))) {
+            setAccountExists(true);
+            setGeneralError(null);
+          } else {
+            setGeneralError(event.data.error || 'Google registration was cancelled or failed.');
+          }
           setLoading(false);
         }
       };
@@ -276,6 +296,29 @@ export const SignUpPage: React.FC = () => {
         <p className="text-[15px] text-gray-500 mt-2 max-w-[360px] mx-auto leading-snug">
           Join ADFIP and let autonomous AI agents accelerate your forensic investigations.
         </p>
+
+        {/* Account Already Exists Banner */}
+        {accountExists && (
+          <div className="mt-4 p-4 bg-amber-50/90 border border-amber-300 rounded-[14px] text-left">
+            <div className="flex items-start gap-2.5">
+              <Shield className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <h3 className="text-sm font-semibold text-amber-900">Account already exists</h3>
+                <p className="text-xs text-amber-800 mt-1 leading-relaxed">
+                  This Google account is already registered with ADFIP. Please use Sign In instead.
+                </p>
+                <div className="mt-3">
+                  <Link
+                    to="/signin"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                  >
+                    Go to Sign In
+                  </Link>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Error Alert */}
         {generalError && (

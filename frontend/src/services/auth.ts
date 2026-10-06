@@ -69,9 +69,14 @@ export const authService = {
     return res.data;
   },
 
-  getGoogleLoginUrl: async (redirectUrl?: string): Promise<GoogleAuthUrlResponse> => {
+  getGoogleLoginUrl: async (
+    redirectUrl?: string,
+    intent: 'SIGN_IN' | 'SIGN_UP' = 'SIGN_IN'
+  ): Promise<GoogleAuthUrlResponse> => {
+    const params: Record<string, string> = { intent };
+    if (redirectUrl) params.redirect_url = redirectUrl;
     const res = await apiClient.get<GoogleAuthUrlResponse>('/auth/google/login', {
-      params: redirectUrl ? { redirect_url: redirectUrl } : undefined,
+      params,
     });
     return res.data;
   },

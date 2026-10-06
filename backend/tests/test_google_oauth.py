@@ -15,6 +15,7 @@ from backend.app.models.models import (
     UserExternalIdentity,
     OAuthState,
     OAuthExchangeCode,
+    AuditEvent,
 )
 from backend.app.services.google_oauth import GoogleOAuthService
 
@@ -66,7 +67,7 @@ def test_oauth_login_generates_pkce_and_persists_state(monkeypatch):
     monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", "test-id-123.apps.googleusercontent.com")
     monkeypatch.setattr(settings, "GOOGLE_CLIENT_SECRET", "test-secret-456")
 
-    res = client.get("/api/v1/auth/google/login?redirect_url=/dashboard")
+    res = client.get("/api/v1/auth/google/login?intent=SIGN_IN&redirect_url=/dashboard")
     assert res.status_code == 200
     data = res.json()
     assert data["is_configured"] is True
@@ -80,6 +81,7 @@ def test_oauth_login_generates_pkce_and_persists_state(monkeypatch):
         saved_state = db.query(OAuthState).filter(OAuthState.state == data["state"]).first()
         assert saved_state is not None
         assert saved_state.is_consumed is False
+        assert saved_state.intent == "SIGN_IN"
         assert len(saved_state.code_verifier) > 30
         assert saved_state.frontend_redirect_url == "/dashboard"
     finally:
@@ -185,6 +187,7 @@ def test_oauth_full_flow_new_user_and_exchange(monkeypatch):
         state_obj = OAuthState(
             state=valid_state,
             provider="google",
+            intent="SIGN_UP",
             code_verifier="verifier_token_secret_12345",
             nonce="verifier_nonce_12345",
             redirect_uri=settings.EFFECTIVE_GOOGLE_REDIRECT_URI,
@@ -305,6 +308,7 @@ def test_oauth_scenario_c_prevents_silent_account_takeover(monkeypatch):
         state_obj = OAuthState(
             state=valid_state,
             provider="google",
+            intent="SIGN_UP",
             code_verifier="verifier_token_secret_takeover",
             nonce="mock_scenario_c_nonce",
             redirect_uri=settings.EFFECTIVE_GOOGLE_REDIRECT_URI,
@@ -401,10 +405,10 @@ def test_redirect_url_security_allowlist(monkeypatch):
     monkeypatch.setattr(settings, "GOOGLE_CLIENT_SECRET", "test-client-secret")
 
     # Accepted routes
-    res1 = client.get("/api/v1/auth/google/login?redirect_url=/dashboard")
+    res1 = client.get("/api/v1/auth/google/login?intent=SIGN_IN&redirect_url=/dashboard")
     assert res1.status_code == 200
 
-    res2 = client.get("/api/v1/auth/google/login?redirect_url=/auth/callback")
+    res2 = client.get("/api/v1/auth/google/login?intent=SIGN_IN&redirect_url=/auth/callback")
     assert res2.status_code == 200
 
     # Rejected targets
@@ -418,7 +422,7 @@ def test_redirect_url_security_allowlist(monkeypatch):
         "https://evil.example/dashboard",
     ]
     for target in invalid_targets:
-        res = client.get(f"/api/v1/auth/google/login?redirect_url={target}")
+        res = client.get(f"/api/v1/auth/google/login?intent=SIGN_IN&redirect_url={target}")
         assert res.status_code == 400, f"Expected 400 for redirect target '{target}', got {res.status_code}"
         assert "redirect url" in res.json()["detail"].lower()
 
@@ -1318,4 +1322,485 @@ def test_group_g_userinfo_subject_and_email_mismatch_fails_closed(monkeypatch):
         )
     assert exc2.value.status_code == 400
     assert "email mismatch" in exc2.value.detail.lower()
+
+
+# ============================================================================
+# TARGETED INTENT ENFORCEMENT: GOOGLE SIGN-IN VS SIGN-UP POLICY TESTS
+# ============================================================================
+
+
+def test_google_sign_in_unknown_account_rejected_no_user_created(monkeypatch):
+    """
+    GOOGLE SIGN-IN INTENT: Unknown Google identity must be rejected.
+    - Status code 404 (HTML response)
+    - Error code ACCOUNT_NOT_FOUND
+    - NO user created in DB
+    - NO external identity created in DB
+    - NO exchange ticket issued
+    - GOOGLE_SIGN_IN_ACCOUNT_NOT_FOUND audit event logged
+    """
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", "mock-client-id")
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_SECRET", "mock-client-secret")
+
+    db = SessionLocal()
+    st_val = f"signin_unknown_state_{uuid.uuid4().hex}"
+    google_sub = f"sub_unknown_signin_{uuid.uuid4().hex[:8]}"
+    test_email = f"unknown_signin_{uuid.uuid4().hex[:6]}@agency.gov"
+    try:
+        state_obj = OAuthState(
+            state=st_val,
+            provider="google",
+            intent="SIGN_IN",
+            code_verifier="verifier_signin_unknown_123",
+            nonce="nonce_signin_unknown",
+            redirect_uri=settings.EFFECTIVE_GOOGLE_REDIRECT_URI,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+            is_consumed=False,
+        )
+        db.add(state_obj)
+        db.commit()
+    finally:
+        db.close()
+
+    monkeypatch.setattr(
+        GoogleOAuthService,
+        "exchange_code_for_tokens",
+        lambda code, code_verifier, redirect_uri, http_client=None: {
+            "access_token": "ya29.mock_tok",
+            "id_token": "mock_id_token",
+        },
+    )
+    monkeypatch.setattr(
+        GoogleOAuthService,
+        "verify_google_identity",
+        lambda access_token, id_token=None, expected_nonce=None, db=None, http_client=None: {
+            "sub": google_sub,
+            "email": test_email,
+            "name": "Unknown Investigator",
+        },
+    )
+
+    res = client.get(
+        "/api/v1/auth/google/callback",
+        params={"code": "mock_code", "state": st_val},
+    )
+    assert res.status_code == 404
+    assert "text/html" in res.headers["content-type"]
+    assert "ACCOUNT_NOT_FOUND" in res.text
+    assert "ADFIP_OAUTH_ERROR" in res.text
+    assert "not registered with adfip" in res.text.lower()
+
+    # Verify database: NO User, NO ExternalIdentity, NO ExchangeTicket, AUDIT logged
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == test_email).first()
+        assert user is None
+
+        identity = db.query(UserExternalIdentity).filter(UserExternalIdentity.provider_subject == google_sub).first()
+        assert identity is None
+
+        audit = (
+            db.query(AuditEvent)
+            .filter(AuditEvent.event_type == "GOOGLE_SIGN_IN_ACCOUNT_NOT_FOUND")
+            .order_by(AuditEvent.timestamp.desc())
+            .first()
+        )
+        assert audit is not None
+        assert google_sub in audit.details
+    finally:
+        db.close()
+
+
+def test_google_sign_in_existing_account_success(monkeypatch):
+    """
+    GOOGLE SIGN-IN INTENT: Existing Google identity authenticates successfully.
+    - Status code 200
+    - Issues exchange ticket
+    - Ticket exchanges for JWT and user profile
+    - USER_LOGIN_SUCCESSFUL audit event logged
+    """
+    import re
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", "mock-client-id")
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_SECRET", "mock-client-secret")
+
+    db = SessionLocal()
+    st_val = f"signin_existing_state_{uuid.uuid4().hex}"
+    google_sub = f"sub_existing_signin_{uuid.uuid4().hex[:8]}"
+    test_email = f"existing_signin_{uuid.uuid4().hex[:6]}@agency.gov"
+    try:
+        user = User(
+            email=test_email,
+            name="Existing Agent",
+            organization="Forensics",
+            role="INVESTIGATOR",
+            is_active=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        ext = UserExternalIdentity(
+            user_id=user.id,
+            provider="google",
+            provider_subject=google_sub,
+            provider_email=test_email,
+        )
+        db.add(ext)
+
+        state_obj = OAuthState(
+            state=st_val,
+            provider="google",
+            intent="SIGN_IN",
+            code_verifier="verifier_signin_existing_123",
+            nonce="nonce_signin_existing",
+            redirect_uri=settings.EFFECTIVE_GOOGLE_REDIRECT_URI,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+            is_consumed=False,
+        )
+        db.add(state_obj)
+        db.commit()
+    finally:
+        db.close()
+
+    monkeypatch.setattr(
+        GoogleOAuthService,
+        "exchange_code_for_tokens",
+        lambda code, code_verifier, redirect_uri, http_client=None: {
+            "access_token": "ya29.mock_tok",
+            "id_token": "mock_id_token",
+        },
+    )
+    monkeypatch.setattr(
+        GoogleOAuthService,
+        "verify_google_identity",
+        lambda access_token, id_token=None, expected_nonce=None, db=None, http_client=None: {
+            "sub": google_sub,
+            "email": test_email,
+            "name": "Existing Agent",
+        },
+    )
+
+    res = client.get(
+        "/api/v1/auth/google/callback",
+        params={"code": "mock_code", "state": st_val},
+    )
+    assert res.status_code == 200
+    assert "ADFIP_OAUTH_SUCCESS" in res.text
+
+    match = re.search(r'const ticket = "([^"]+)";', res.text)
+    assert match is not None
+    ticket = match.group(1)
+
+    # Exchange ticket for JWT
+    exchange_res = client.post(
+        "/api/v1/auth/google/exchange",
+        json={"code": ticket},
+    )
+    assert exchange_res.status_code == 200
+    token_data = exchange_res.json()
+    assert "access_token" in token_data
+    assert token_data["user"]["email"] == test_email
+
+    # Verify audit event
+    db = SessionLocal()
+    try:
+        audit = (
+            db.query(AuditEvent)
+            .filter(AuditEvent.event_type == "USER_LOGIN_SUCCESSFUL")
+            .order_by(AuditEvent.timestamp.desc())
+            .first()
+        )
+        assert audit is not None
+        assert test_email in audit.details
+    finally:
+        db.close()
+
+
+def test_google_sign_up_new_account_created_and_linked(monkeypatch):
+    """
+    GOOGLE SIGN-UP INTENT: Unknown verified Google identity registers new user and links identity.
+    - Creates new User with INVESTIGATOR role
+    - Creates UserExternalIdentity record
+    - Issues exchange ticket redeemable for JWT
+    - Logs USER_ACCOUNT_CREATED and GOOGLE_OAUTH_LINKED audit events
+    """
+    import re
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", "mock-client-id")
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_SECRET", "mock-client-secret")
+
+    db = SessionLocal()
+    st_val = f"signup_new_state_{uuid.uuid4().hex}"
+    google_sub = f"sub_new_signup_{uuid.uuid4().hex[:8]}"
+    test_email = f"new_signup_{uuid.uuid4().hex[:6]}@agency.gov"
+    try:
+        state_obj = OAuthState(
+            state=st_val,
+            provider="google",
+            intent="SIGN_UP",
+            code_verifier="verifier_signup_new_123",
+            nonce="nonce_signup_new",
+            redirect_uri=settings.EFFECTIVE_GOOGLE_REDIRECT_URI,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+            is_consumed=False,
+        )
+        db.add(state_obj)
+        db.commit()
+    finally:
+        db.close()
+
+    monkeypatch.setattr(
+        GoogleOAuthService,
+        "exchange_code_for_tokens",
+        lambda code, code_verifier, redirect_uri, http_client=None: {
+            "access_token": "ya29.mock_tok",
+            "id_token": "mock_id_token",
+        },
+    )
+    monkeypatch.setattr(
+        GoogleOAuthService,
+        "verify_google_identity",
+        lambda access_token, id_token=None, expected_nonce=None, db=None, http_client=None: {
+            "sub": google_sub,
+            "email": test_email,
+            "name": "Detective New",
+        },
+    )
+
+    res = client.get(
+        "/api/v1/auth/google/callback",
+        params={"code": "mock_code", "state": st_val},
+    )
+    assert res.status_code == 200
+    assert "ADFIP_OAUTH_SUCCESS" in res.text
+
+    match = re.search(r'const ticket = "([^"]+)";', res.text)
+    assert match is not None
+    ticket = match.group(1)
+
+    # Redeem ticket
+    exchange_res = client.post(
+        "/api/v1/auth/google/exchange",
+        json={"code": ticket},
+    )
+    assert exchange_res.status_code == 200
+    assert exchange_res.json()["user"]["role"] == "INVESTIGATOR"
+
+    # Verify DB state
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == test_email).first()
+        assert user is not None
+        assert user.role == "INVESTIGATOR"
+        assert user.name == "Detective New"
+
+        ext = db.query(UserExternalIdentity).filter(UserExternalIdentity.provider_subject == google_sub).first()
+        assert ext is not None
+        assert ext.user_id == user.id
+
+        created_audit = (
+            db.query(AuditEvent)
+            .filter(AuditEvent.event_type == "USER_ACCOUNT_CREATED", AuditEvent.actor_id == user.id)
+            .first()
+        )
+        assert created_audit is not None
+
+        linked_audit = (
+            db.query(AuditEvent)
+            .filter(AuditEvent.event_type == "GOOGLE_OAUTH_LINKED", AuditEvent.actor_id == user.id)
+            .first()
+        )
+        assert linked_audit is not None
+    finally:
+        db.close()
+
+
+def test_google_sign_up_existing_account_rejected(monkeypatch):
+    """
+    GOOGLE SIGN-UP INTENT: Existing Google identity is rejected from creating a duplicate account.
+    - Status code 409 Conflict (HTML response)
+    - Error code ACCOUNT_ALREADY_EXISTS
+    - Details prompt user to use Sign In
+    - NO duplicate User or UserExternalIdentity created
+    - GOOGLE_SIGN_UP_ACCOUNT_EXISTS audit event logged
+    """
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", "mock-client-id")
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_SECRET", "mock-client-secret")
+
+    db = SessionLocal()
+    st_val = f"signup_dup_state_{uuid.uuid4().hex}"
+    google_sub = f"sub_dup_signup_{uuid.uuid4().hex[:8]}"
+    test_email = f"dup_signup_{uuid.uuid4().hex[:6]}@agency.gov"
+    try:
+        user = User(
+            email=test_email,
+            name="Existing Agent",
+            organization="Forensics",
+            role="INVESTIGATOR",
+            is_active=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        ext = UserExternalIdentity(
+            user_id=user.id,
+            provider="google",
+            provider_subject=google_sub,
+            provider_email=test_email,
+        )
+        db.add(ext)
+
+        state_obj = OAuthState(
+            state=st_val,
+            provider="google",
+            intent="SIGN_UP",
+            code_verifier="verifier_signup_dup_123",
+            nonce="nonce_signup_dup",
+            redirect_uri=settings.EFFECTIVE_GOOGLE_REDIRECT_URI,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+            is_consumed=False,
+        )
+        db.add(state_obj)
+        db.commit()
+    finally:
+        db.close()
+
+    monkeypatch.setattr(
+        GoogleOAuthService,
+        "exchange_code_for_tokens",
+        lambda code, code_verifier, redirect_uri, http_client=None: {
+            "access_token": "ya29.mock_tok",
+            "id_token": "mock_id_token",
+        },
+    )
+    monkeypatch.setattr(
+        GoogleOAuthService,
+        "verify_google_identity",
+        lambda access_token, id_token=None, expected_nonce=None, db=None, http_client=None: {
+            "sub": google_sub,
+            "email": test_email,
+            "name": "Existing Agent",
+        },
+    )
+
+    res = client.get(
+        "/api/v1/auth/google/callback",
+        params={"code": "mock_code", "state": st_val},
+    )
+    assert res.status_code == 409
+    assert "ACCOUNT_ALREADY_EXISTS" in res.text
+    assert "ADFIP_OAUTH_ERROR" in res.text
+    assert "please use sign in" in res.text.lower()
+
+    # Assert no duplicates in DB
+    db = SessionLocal()
+    try:
+        user_count = db.query(User).filter(User.email == test_email).count()
+        assert user_count == 1
+
+        ext_count = db.query(UserExternalIdentity).filter(UserExternalIdentity.provider_subject == google_sub).count()
+        assert ext_count == 1
+
+        audit = (
+            db.query(AuditEvent)
+            .filter(AuditEvent.event_type == "GOOGLE_SIGN_UP_ACCOUNT_EXISTS")
+            .order_by(AuditEvent.timestamp.desc())
+            .first()
+        )
+        assert audit is not None
+        assert test_email in audit.details
+    finally:
+        db.close()
+
+
+def test_oauth_intent_missing_rejected(monkeypatch):
+    """
+    OAuth initiation endpoint requires intent query parameter.
+    Missing intent returns 400 Bad Request.
+    """
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", "mock-client-id")
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_SECRET", "mock-client-secret")
+
+    res = client.get("/api/v1/auth/google/login")
+    assert res.status_code == 400
+    assert "intent" in res.json()["detail"].lower()
+
+
+def test_oauth_intent_invalid_rejected(monkeypatch):
+    """
+    OAuth initiation endpoint validates intent query parameter.
+    Invalid intent returns 400 Bad Request.
+    """
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", "mock-client-id")
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_SECRET", "mock-client-secret")
+
+    res = client.get("/api/v1/auth/google/login?intent=MALICIOUS_INTENT")
+    assert res.status_code == 400
+    assert "intent" in res.json()["detail"].lower()
+
+
+def test_oauth_intent_tampered_callback_uses_server_state(monkeypatch):
+    """
+    Attacker tampering with callback query parameters (e.g. passing intent=SIGN_UP)
+    cannot override server-stored OAuthState.intent (SIGN_IN).
+    Unknown Google user is still rejected with 404 ACCOUNT_NOT_FOUND.
+    """
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_ID", "mock-client-id")
+    monkeypatch.setattr(settings, "GOOGLE_CLIENT_SECRET", "mock-client-secret")
+
+    db = SessionLocal()
+    st_val = f"tampered_callback_state_{uuid.uuid4().hex}"
+    google_sub = f"sub_tamper_{uuid.uuid4().hex[:8]}"
+    test_email = f"tamper_{uuid.uuid4().hex[:6]}@agency.gov"
+    try:
+        # Server record was created with SIGN_IN
+        state_obj = OAuthState(
+            state=st_val,
+            provider="google",
+            intent="SIGN_IN",
+            code_verifier="verifier_tamper_123",
+            nonce="nonce_tamper",
+            redirect_uri=settings.EFFECTIVE_GOOGLE_REDIRECT_URI,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+            is_consumed=False,
+        )
+        db.add(state_obj)
+        db.commit()
+    finally:
+        db.close()
+
+    monkeypatch.setattr(
+        GoogleOAuthService,
+        "exchange_code_for_tokens",
+        lambda code, code_verifier, redirect_uri, http_client=None: {
+            "access_token": "ya29.mock_tok",
+            "id_token": "mock_id_token",
+        },
+    )
+    monkeypatch.setattr(
+        GoogleOAuthService,
+        "verify_google_identity",
+        lambda access_token, id_token=None, expected_nonce=None, db=None, http_client=None: {
+            "sub": google_sub,
+            "email": test_email,
+            "name": "Tamper Test",
+        },
+    )
+
+    # Attacker tries to inject intent=SIGN_UP in callback query
+    res = client.get(
+        "/api/v1/auth/google/callback",
+        params={"code": "mock_code", "state": st_val, "intent": "SIGN_UP"},
+    )
+    # Server strictly respects stored OAuthState.intent ("SIGN_IN") -> 404 rejected
+    assert res.status_code == 404
+    assert "ACCOUNT_NOT_FOUND" in res.text
+
+    # No user created
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == test_email).first()
+        assert user is None
+    finally:
+        db.close()
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation, Navigate } from 'react-router-dom';
-import { LogIn, Mail, CheckCircle2 } from 'lucide-react';
+import { LogIn, Mail, CheckCircle2, UserPlus } from 'lucide-react';
 import { AuthCard } from '../../components/auth/AuthCard';
 import { AuthInput } from '../../components/auth/AuthInput';
 import { PasswordInput } from '../../components/auth/PasswordInput';
@@ -23,6 +23,7 @@ export const SignInPage: React.FC = () => {
   const [errors, setErrors] = useState<{ email?: string; password?: string; general?: string }>({});
   const [notice, setNotice] = useState<string | null>(successNotice || null);
   const [socialNotice, setSocialNotice] = useState<string | null>(null);
+  const [accountNotFound, setAccountNotFound] = useState(false);
 
   // If already authenticated, redirect to dashboard
   if (status === 'AUTHENTICATED') {
@@ -50,6 +51,7 @@ export const SignInPage: React.FC = () => {
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setNotice(null);
+    setAccountNotFound(false);
     setErrors({});
 
     if (!validate()) return;
@@ -83,19 +85,23 @@ export const SignInPage: React.FC = () => {
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
+    const errCode = params.get('error_code');
     const err = params.get('error');
-    if (err) {
+    if (errCode === 'ACCOUNT_NOT_FOUND' || (err && decodeURIComponent(err).toLowerCase().includes('not registered'))) {
+      setAccountNotFound(true);
+    } else if (err) {
       setErrors((prev) => ({ ...prev, general: decodeURIComponent(err) }));
     }
   }, [location.search]);
 
   const handleGoogleSignIn = async () => {
     setSocialNotice(null);
+    setAccountNotFound(false);
     setErrors({});
     setLoading(true);
 
     try {
-      const res = await authService.getGoogleLoginUrl();
+      const res = await authService.getGoogleLoginUrl(undefined, 'SIGN_IN');
       if (!res.authorization_url) {
         setSocialNotice('Google OAuth is not configured for this deployment. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in server settings.');
         setLoading(false);
@@ -176,7 +182,13 @@ export const SignInPage: React.FC = () => {
           }
 
           window.removeEventListener('message', handleMessage);
-          setErrors((prev) => ({ ...prev, general: event.data.error || 'Google authentication was cancelled or failed.' }));
+          const errCode = typeof event.data.error_code === 'string' ? event.data.error_code : undefined;
+          if (errCode === 'ACCOUNT_NOT_FOUND' || (typeof event.data.error === 'string' && event.data.error.toLowerCase().includes('not registered'))) {
+            setAccountNotFound(true);
+            setErrors({});
+          } else {
+            setErrors((prev) => ({ ...prev, general: event.data.error || 'Google authentication was cancelled or failed.' }));
+          }
           setLoading(false);
         }
       };
@@ -244,6 +256,29 @@ export const SignInPage: React.FC = () => {
         <p className="text-[15px] text-gray-500 mt-2 max-w-[340px] mx-auto leading-snug">
           Autonomous multi-agent AI for faster, evidence-grade digital forensics investigations.
         </p>
+
+        {/* Account Not Found Banner */}
+        {accountNotFound && (
+          <div className="mt-4 p-4 bg-amber-50/90 border border-amber-300 rounded-[14px] text-left">
+            <div className="flex items-start gap-2.5">
+              <UserPlus className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <h3 className="text-sm font-semibold text-amber-900">No ADFIP account found</h3>
+                <p className="text-xs text-amber-800 mt-1 leading-relaxed">
+                  This Google account isn't registered with ADFIP. Please use Sign Up to create your account.
+                </p>
+                <div className="mt-3">
+                  <Link
+                    to="/signup"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                  >
+                    Go to Sign Up
+                  </Link>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* General Error Banner */}
         {errors.general && (

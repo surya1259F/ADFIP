@@ -1970,6 +1970,7 @@ class OAuthState(Base):
     state = Column(String(128), unique=True, nullable=False, index=True)
     provider = Column(String(50), default="google", nullable=False)
     purpose = Column(String(20), default="LOGIN", nullable=False)  # LOGIN or LINK
+    intent = Column(String(20), default="SIGN_IN", nullable=False)  # SIGN_IN or SIGN_UP
     target_user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     nonce = Column(String(128), nullable=True)
     redirect_uri = Column(Text, nullable=False)

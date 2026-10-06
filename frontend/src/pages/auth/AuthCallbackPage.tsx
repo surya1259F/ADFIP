@@ -13,6 +13,7 @@ export const AuthCallbackPage: React.FC = () => {
 
   const [status, setStatus] = useState<'exchanging' | 'success' | 'error'>('exchanging');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const executedRef = React.useRef(false);
 
   useEffect(() => {
@@ -20,11 +21,18 @@ export const AuthCallbackPage: React.FC = () => {
 
     const code = searchParams.get('code');
     const error = searchParams.get('error') || searchParams.get('error_description');
+    const errCode = searchParams.get('error_code');
 
-    if (error) {
+    if (error || errCode) {
       executedRef.current = true;
       setStatus('error');
-      setErrorMessage(error);
+      setErrorCode(errCode);
+      setErrorMessage(
+        error ||
+        (errCode === 'ACCOUNT_NOT_FOUND'
+          ? "This Google account isn't registered with ADFIP. Please use Sign Up first."
+          : 'Authentication failed.')
+      );
       return;
     }
 
@@ -107,20 +115,58 @@ export const AuthCallbackPage: React.FC = () => {
             <div className="flex items-center justify-center w-10 h-10 rounded-full bg-red-50 text-red-600 mx-auto">
               <AlertCircle className="w-5 h-5" />
             </div>
-            <div>
-              <h2 className="text-sm font-semibold text-slate-800">Authentication Failed</h2>
-              <p className="text-xs text-red-600 mt-1 max-w-xs mx-auto leading-relaxed">
-                {errorMessage}
-              </p>
-            </div>
-            <Button
-              variant="primary"
-              size="md"
-              className="w-full mt-2"
-              onClick={() => navigate('/signin', { replace: true })}
-            >
-              Return to Sign In
-            </Button>
+            {errorCode === 'ACCOUNT_NOT_FOUND' ? (
+              <>
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-800">No ADFIP account found</h2>
+                  <p className="text-xs text-amber-700 mt-1 max-w-xs mx-auto leading-relaxed">
+                    This Google account isn't registered with ADFIP. Please use Sign Up to create your account.
+                  </p>
+                </div>
+                <Button
+                  variant="primary"
+                  size="md"
+                  className="w-full mt-2"
+                  onClick={() => navigate('/signup', { replace: true })}
+                >
+                  Go to Sign Up
+                </Button>
+              </>
+            ) : errorCode === 'ACCOUNT_ALREADY_EXISTS' ? (
+              <>
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-800">Account already exists</h2>
+                  <p className="text-xs text-amber-700 mt-1 max-w-xs mx-auto leading-relaxed">
+                    This Google account is already registered with ADFIP. Please use Sign In instead.
+                  </p>
+                </div>
+                <Button
+                  variant="primary"
+                  size="md"
+                  className="w-full mt-2"
+                  onClick={() => navigate('/signin', { replace: true })}
+                >
+                  Go to Sign In
+                </Button>
+              </>
+            ) : (
+              <>
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-800">Authentication Failed</h2>
+                  <p className="text-xs text-red-600 mt-1 max-w-xs mx-auto leading-relaxed">
+                    {errorMessage}
+                  </p>
+                </div>
+                <Button
+                  variant="primary"
+                  size="md"
+                  className="w-full mt-2"
+                  onClick={() => navigate('/signin', { replace: true })}
+                >
+                  Return to Sign In
+                </Button>
+              </>
+            )}
           </div>
         )}
       </div>

@@ -32,6 +32,13 @@ from backend.app.services.audit import log_audit_event
 logger = logging.getLogger("ADFIR_OAUTH")
 
 
+class OAuthPolicyException(HTTPException):
+    """Specific exception for OAuth policy rejections (e.g., account not found, already exists)."""
+    def __init__(self, status_code: int, detail: str, error_code: str):
+        super().__init__(status_code=status_code, detail=detail)
+        self.error_code = error_code
+
+
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -157,6 +164,7 @@ class GoogleOAuthService:
         db: Session,
         frontend_redirect_url: Optional[str] = None,
         purpose: str = "LOGIN",
+        intent: Optional[str] = "SIGN_IN",
         target_user: Optional[User] = None,
         frontend_origin: Optional[str] = None,
     ) -> GoogleAuthUrlResponse:
@@ -164,11 +172,12 @@ class GoogleOAuthService:
         Initiates Google OAuth 2.0 flow:
         1. Verifies configuration exists.
         2. Validates redirect path and origin against strict allowlists.
-        3. Generates cryptographically secure, random state (32 bytes urlsafe).
-        4. Generates PKCE code_verifier and code_challenge (S256).
-        5. Generates cryptographically random OIDC nonce (32 bytes urlsafe).
-        6. Persists OAuthState with purpose (LOGIN vs LINK) and target_user_id.
-        7. Constructs and returns the Google authorization URL.
+        3. Validates and enforces explicit OAuth intent (SIGN_IN vs SIGN_UP).
+        4. Generates cryptographically secure, random state (32 bytes urlsafe).
+        5. Generates PKCE code_verifier and code_challenge (S256).
+        6. Generates cryptographically random OIDC nonce (32 bytes urlsafe).
+        7. Persists OAuthState with purpose (LOGIN vs LINK), intent (SIGN_IN vs SIGN_UP), and target_user_id.
+        8. Constructs and returns the Google authorization URL.
         """
         if not cls.is_configured():
             raise HTTPException(
@@ -181,6 +190,19 @@ class GoogleOAuthService:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid OAuth purpose '{purpose}'. Must be 'LOGIN' or 'LINK'."
+            )
+
+        if not intent or not str(intent).strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing required OAuth intent. Must specify intent=SIGN_IN or intent=SIGN_UP."
+            )
+
+        clean_intent = str(intent).strip().upper()
+        if clean_intent not in ("SIGN_IN", "SIGN_UP"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid OAuth intent '{intent}'. Must be 'SIGN_IN' or 'SIGN_UP'."
             )
 
         if clean_purpose == "LINK" and not target_user:
@@ -208,6 +230,7 @@ class GoogleOAuthService:
             state=state_token,
             provider="google",
             purpose=clean_purpose,
+            intent=clean_intent,
             target_user_id=target_user.id if target_user else None,
             nonce=nonce,
             redirect_uri=redirect_uri,
@@ -241,7 +264,7 @@ class GoogleOAuthService:
             db=db,
             case_id=None,
             event_type=audit_event,
-            details=f"Google OAuth 2.0 {clean_purpose} flow initiated.",
+            details=f"Google OAuth 2.0 {clean_purpose} flow initiated with intent={clean_intent}.",
             actor_id=target_user.id if target_user else None,
             actor_name=target_user.name if target_user else None,
         )
@@ -661,18 +684,44 @@ class GoogleOAuthService:
     def resolve_or_create_user(
         cls,
         db: Session,
-        identity: Dict[str, Any]
+        identity: Dict[str, Any],
+        intent: str = "SIGN_IN",
     ) -> Tuple[User, bool]:
         """
-        Resolves or creates the ADFIP user based on Google identity:
-        Scenario A: New Google user -> creates investigator account (INVESTIGATOR role) + links identity.
-        Scenario B: Existing linked Google user -> authenticates account.
-        Scenario C: Email matches existing password user with NO Google link -> REJECTS silent takeover.
-        Handles concurrent user creation race conditions safely with database transactions.
+        Resolves or creates the ADFIP user based on Google identity and explicit intent:
+
+        Intent SIGN_IN:
+        - Case A: Existing linked Google user -> authenticates account and returns (user, False). Audit: USER_LOGIN_SUCCESSFUL.
+        - Case B: Unknown Google identity -> REJECTS without creating anything!
+          Audit: GOOGLE_SIGN_IN_ACCOUNT_NOT_FOUND.
+          Raises OAuthPolicyException(
+              status_code=status.HTTP_404_NOT_FOUND,
+              detail="This Google account is not registered with ADFIP. Please use Sign Up first.",
+              error_code="ACCOUNT_NOT_FOUND"
+          )
+
+        Intent SIGN_UP:
+        - Case C: Unknown Google identity -> registers new user + links Google identity.
+          Audit: USER_ACCOUNT_CREATED, GOOGLE_OAUTH_LINKED.
+          Returns (new_user, True).
+        - Case D: Existing linked Google user -> REJECTS duplicate creation!
+          Audit: GOOGLE_SIGN_UP_ACCOUNT_EXISTS.
+          Raises OAuthPolicyException(
+              status_code=status.HTTP_409_CONFLICT,
+              detail="An ADFIP account already exists for this Google account. Please use Sign In.",
+              error_code="ACCOUNT_ALREADY_EXISTS"
+          )
+        - Conflict: Matches existing password user with same email -> REJECTS silent takeover.
+          Raises OAuthPolicyException(
+              status_code=status.HTTP_409_CONFLICT,
+              detail="An account with this email address already exists. Please use Sign In.",
+              error_code="ACCOUNT_ALREADY_EXISTS"
+          )
         """
         google_sub = identity["sub"]
         google_email = identity["email"]
         google_name = identity["name"]
+        clean_intent = (intent or "SIGN_IN").upper().strip()
 
         # Check existing external identity link
         ext_identity = (
@@ -684,8 +733,24 @@ class GoogleOAuthService:
             .first()
         )
 
-        if ext_identity:
-            # Scenario B: Existing linked user
+        if clean_intent == "SIGN_IN":
+            # Flow: Sign In
+            if not ext_identity:
+                # Case B: Unknown Google identity on Sign In
+                # DO NOT create User, DO NOT create Google identity, DO NOT issue ticket.
+                log_audit_event(
+                    db=db,
+                    case_id=None,
+                    event_type="GOOGLE_SIGN_IN_ACCOUNT_NOT_FOUND",
+                    details=f"Google identity '{google_sub}' ({google_email}) is not registered with ADFIP. Sign-in rejected.",
+                )
+                raise OAuthPolicyException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="This Google account is not registered with ADFIP. Please use Sign Up first.",
+                    error_code="ACCOUNT_NOT_FOUND",
+                )
+
+            # Case A: Existing linked user
             user = ext_identity.user
             if not user or not user.is_active:
                 log_audit_event(
@@ -713,88 +778,111 @@ class GoogleOAuthService:
             )
             return user, False
 
-        # Check if an account already exists with this email address
-        existing_user = db.query(User).filter(User.email == google_email).first()
-        if existing_user:
-            # Scenario C: Existing account with same email, but NO Google link.
-            # DO NOT silently link! Require proof of account control.
-            log_audit_event(
-                db=db,
-                case_id=None,
-                event_type="OAUTH_LINK_DENIED",
-                details=f"Google identity '{google_sub}' matches existing password account '{google_email}'. Silent linking blocked.",
-                actor_id=existing_user.id,
-                actor_name=existing_user.name,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    f"An account with email '{google_email}' already exists. "
-                    "For security, please sign in with your investigator password, "
-                    "then link your Google account in Settings."
+        elif clean_intent == "SIGN_UP":
+            # Flow: Sign Up
+            if ext_identity:
+                # Case D: Existing linked user on Sign Up
+                # DO NOT create duplicate User or link.
+                log_audit_event(
+                    db=db,
+                    case_id=None,
+                    event_type="GOOGLE_SIGN_UP_ACCOUNT_EXISTS",
+                    details=f"Google account '{google_email}' ({google_sub}) already registered with ADFIP. Sign-up duplicate rejected.",
+                    actor_id=ext_identity.user_id,
+                    actor_name=ext_identity.user.name if ext_identity.user else None,
                 )
-            )
-
-        # Scenario A: New user registration via Google OAuth with race-condition safety
-        try:
-            new_user = User(
-                email=google_email,
-                name=google_name,
-                organization="",
-                role="INVESTIGATOR",  # Least-privileged investigator default; NEVER admin
-                is_active=True,
-                password_hash=None,  # External OAuth-authenticated user
-                last_login_at=utc_now(),
-            )
-            db.add(new_user)
-            db.flush()
-
-            new_ext = UserExternalIdentity(
-                user_id=new_user.id,
-                provider="google",
-                provider_subject=google_sub,
-                provider_email=google_email,
-                created_at=utc_now(),
-                updated_at=utc_now(),
-            )
-            db.add(new_ext)
-            db.commit()
-            db.refresh(new_user)
-
-            log_audit_event(
-                db=db,
-                case_id=None,
-                event_type="USER_ACCOUNT_CREATED",
-                details=f"User account '{new_user.email}' created via verified Google OAuth.",
-                actor_id=new_user.id,
-                actor_name=new_user.name,
-            )
-            log_audit_event(
-                db=db,
-                case_id=None,
-                event_type="GOOGLE_OAUTH_LINKED",
-                details=f"Google subject '{google_sub}' linked to user '{new_user.email}'.",
-                actor_id=new_user.id,
-                actor_name=new_user.name,
-            )
-
-            return new_user, True
-        except IntegrityError:
-            db.rollback()
-            # Concurrent registration happened: retry resolving existing identity
-            existing_ext = (
-                db.query(UserExternalIdentity)
-                .filter(
-                    UserExternalIdentity.provider == "google",
-                    UserExternalIdentity.provider_subject == google_sub
+                raise OAuthPolicyException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="An ADFIP account already exists for this Google account. Please use Sign In.",
+                    error_code="ACCOUNT_ALREADY_EXISTS",
                 )
-                .first()
-            )
-            if existing_ext and existing_ext.user and existing_ext.user.is_active:
-                return existing_ext.user, False
+
+            # Check if an account already exists with this email address
+            existing_user = db.query(User).filter(User.email == google_email).first()
+            if existing_user:
+                log_audit_event(
+                    db=db,
+                    case_id=None,
+                    event_type="OAUTH_LINK_DENIED",
+                    details=f"Google identity '{google_sub}' matches existing password account '{google_email}'. Silent linking blocked.",
+                    actor_id=existing_user.id,
+                    actor_name=existing_user.name,
+                )
+                raise OAuthPolicyException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="An account with this email address already exists. Please use Sign In.",
+                    error_code="ACCOUNT_ALREADY_EXISTS",
+                )
+
+            # Case C: New user registration via Google OAuth
+            try:
+                new_user = User(
+                    email=google_email,
+                    name=google_name,
+                    organization="",
+                    role="INVESTIGATOR",  # Least-privileged investigator default; NEVER admin
+                    is_active=True,
+                    password_hash=None,  # External OAuth-authenticated user
+                    last_login_at=utc_now(),
+                )
+                db.add(new_user)
+                db.flush()
+
+                new_ext = UserExternalIdentity(
+                    user_id=new_user.id,
+                    provider="google",
+                    provider_subject=google_sub,
+                    provider_email=google_email,
+                    created_at=utc_now(),
+                    updated_at=utc_now(),
+                )
+                db.add(new_ext)
+                db.commit()
+                db.refresh(new_user)
+
+                log_audit_event(
+                    db=db,
+                    case_id=None,
+                    event_type="USER_ACCOUNT_CREATED",
+                    details=f"User account '{new_user.email}' created via verified Google OAuth.",
+                    actor_id=new_user.id,
+                    actor_name=new_user.name,
+                )
+                log_audit_event(
+                    db=db,
+                    case_id=None,
+                    event_type="GOOGLE_OAUTH_LINKED",
+                    details=f"Google subject '{google_sub}' linked to user '{new_user.email}'.",
+                    actor_id=new_user.id,
+                    actor_name=new_user.name,
+                )
+
+                return new_user, True
+            except IntegrityError:
+                db.rollback()
+                # Concurrent registration conflict
+                existing_ext = (
+                    db.query(UserExternalIdentity)
+                    .filter(
+                        UserExternalIdentity.provider == "google",
+                        UserExternalIdentity.provider_subject == google_sub
+                    )
+                    .first()
+                )
+                if existing_ext:
+                    raise OAuthPolicyException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="An ADFIP account already exists for this Google account. Please use Sign In.",
+                        error_code="ACCOUNT_ALREADY_EXISTS",
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Concurrent user registration conflict. Please try signing in again."
+                )
+        else:
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Concurrent user registration conflict. Please try signing in again."
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid OAuth intent '{intent}'. Must be 'SIGN_IN' or 'SIGN_UP'."
             )
 
     @classmethod

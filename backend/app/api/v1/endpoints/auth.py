@@ -34,6 +34,7 @@ from backend.app.schemas.schemas import (
 from backend.app.services.audit import log_audit_event
 from backend.app.services.google_oauth import (
     GoogleOAuthService,
+    OAuthPolicyException,
     safe_json_for_script,
     OAuthRateLimiter,
 )
@@ -387,12 +388,26 @@ def make_secure_html_response(content: str, status_code: int = 200) -> HTMLRespo
     return resp
 
 
-def make_error_callback_html(err_msg: Any, target_origin: str, status_code: int = 400) -> HTMLResponse:
+def make_error_callback_html(
+    err_msg: Any,
+    target_origin: str,
+    status_code: int = 400,
+    error_code: Optional[str] = None,
+) -> HTMLResponse:
     err_text = str(err_msg)
+    err_code = error_code or "AUTHENTICATION_FAILED"
     escaped_html_err = html.escape(err_text)
     script_err = safe_json_for_script(err_text)
+    script_err_code = safe_json_for_script(err_code)
     script_target_origin = safe_json_for_script(target_origin)
-    script_fallback_url = safe_json_for_script(f"/signin?error={urllib.parse.quote(err_text)}")
+
+    if err_code == "ACCOUNT_NOT_FOUND":
+        fallback_dest = f"/signin?error_code={urllib.parse.quote(err_code)}&error={urllib.parse.quote(err_text)}"
+    elif err_code == "ACCOUNT_ALREADY_EXISTS":
+        fallback_dest = f"/signup?error_code={urllib.parse.quote(err_code)}&error={urllib.parse.quote(err_text)}"
+    else:
+        fallback_dest = f"/signin?error_code={urllib.parse.quote(err_code)}&error={urllib.parse.quote(err_text)}"
+    script_fallback_url = safe_json_for_script(fallback_dest)
 
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -414,9 +429,10 @@ def make_error_callback_html(err_msg: Any, target_origin: str, status_code: int 
   <script>
     const targetOrigin = {script_target_origin};
     const errMsg = {script_err};
+    const errCode = {script_err_code};
     const fallbackUrl = {script_fallback_url};
     if (window.opener && !window.opener.closed) {{
-      window.opener.postMessage({{ type: 'ADFIP_OAUTH_ERROR', error: errMsg }}, targetOrigin);
+      window.opener.postMessage({{ type: 'ADFIP_OAUTH_ERROR', error: errMsg, error_code: errCode }}, targetOrigin);
       setTimeout(() => window.close(), 600);
     }} else {{
       window.location.href = fallbackUrl;
@@ -474,15 +490,36 @@ def initiate_google_oauth_login(
     request: Request,
     redirect_url: Optional[str] = Query(None, description="Frontend post-login redirection path"),
     purpose: str = Query("LOGIN", description="OAuth flow purpose: LOGIN or LINK"),
+    intent: Optional[str] = Query(None, description="OAuth intent: SIGN_IN or SIGN_UP"),
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
     """
     Initiates Google OAuth 2.0 authorization code flow with PKCE S256, OIDC nonce, and state protection.
     Returns the Google consent URL, anti-CSRF state token, and configuration status.
+    Requires and strictly validates intent (SIGN_IN or SIGN_UP).
     """
     client_ip = request.client.host if request.client else "unknown"
     OAuthRateLimiter.check_rate_limit(client_ip)
+
+    if not GoogleOAuthService.is_configured():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Google OAuth is not configured for this deployment. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in deployment configuration."
+        )
+
+    if not intent or not intent.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing required OAuth intent. Must specify intent=SIGN_IN or intent=SIGN_UP."
+        )
+
+    clean_intent = intent.strip().upper()
+    if clean_intent not in ("SIGN_IN", "SIGN_UP"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid OAuth intent '{intent}'. Must be 'SIGN_IN' or 'SIGN_UP'."
+        )
 
     origin = request.headers.get("origin") or request.headers.get("referer")
     if origin:
@@ -503,6 +540,7 @@ def initiate_google_oauth_login(
         db=db,
         frontend_redirect_url=redirect_url,
         purpose=purpose,
+        intent=clean_intent,
         target_user=target_user,
         frontend_origin=origin,
     )
@@ -661,7 +699,11 @@ def handle_google_oauth_callback(
                 google_email=identity["email"],
             )
         else:
-            user, _ = GoogleOAuthService.resolve_or_create_user(db=db, identity=identity)
+            user, _ = GoogleOAuthService.resolve_or_create_user(
+                db=db,
+                identity=identity,
+                intent=oauth_state.intent,
+            )
             ticket = GoogleOAuthService.create_exchange_code(
                 db=db,
                 user=user,
@@ -670,11 +712,40 @@ def handle_google_oauth_callback(
 
         return make_success_callback_html(ticket, target_origin, oauth_state)
 
+    except OAuthPolicyException as policy_exc:
+        return make_error_callback_html(
+            policy_exc.detail,
+            target_origin,
+            status_code=policy_exc.status_code,
+            error_code=policy_exc.error_code,
+        )
     except HTTPException as http_exc:
-        return make_error_callback_html(http_exc.detail, target_origin, status_code=http_exc.status_code)
+        error_code = getattr(http_exc, "error_code", None)
+        if not error_code:
+            if http_exc.status_code == 502:
+                error_code = "GOOGLE_PROVIDER_UNAVAILABLE"
+            elif "state" in str(http_exc.detail).lower():
+                error_code = "OAUTH_STATE_INVALID"
+            elif any(k in str(http_exc.detail).lower() for k in ("identity", "token", "nonce", "audience", "issuer")):
+                error_code = "GOOGLE_IDENTITY_INVALID"
+            elif http_exc.status_code == 400:
+                error_code = "OAUTH_INVALID_REQUEST"
+            else:
+                error_code = "AUTHENTICATION_FAILED"
+        return make_error_callback_html(
+            http_exc.detail,
+            target_origin,
+            status_code=http_exc.status_code,
+            error_code=error_code,
+        )
     except Exception as exc:
         logger.exception("Unexpected error in Google OAuth callback: %s", exc)
-        return make_error_callback_html("Authentication failed due to an unexpected server error.", target_origin, status_code=500)
+        return make_error_callback_html(
+            "Authentication failed due to an unexpected server error.",
+            target_origin,
+            status_code=500,
+            error_code="AUTHENTICATION_FAILED",
+        )
 
 
 @router.post("/google/exchange", response_model=TokenResponse, status_code=status.HTTP_200_OK)

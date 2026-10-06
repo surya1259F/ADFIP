@@ -25,7 +25,8 @@ export const AuthModal: React.FC = () => {
 
   const handleGoogleSignIn = async () => {
     try {
-      const res = await authService.getGoogleLoginUrl();
+      const intent = tab === 'signup' ? 'SIGN_UP' : 'SIGN_IN';
+      const res = await authService.getGoogleLoginUrl(undefined, intent);
       if (res?.authorization_url) {
         window.location.href = res.authorization_url;
       } else {
@@ -258,7 +259,7 @@ export const AuthModal: React.FC = () => {
                 onClick={handleGoogleSignIn}
                 className="text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 text-[10px] hover:bg-emerald-500/20 cursor-pointer transition-colors"
               >
-                SIGN IN WITH GOOGLE
+                {tab === 'signup' ? 'SIGN UP WITH GOOGLE' : 'SIGN IN WITH GOOGLE'}
               </button>
             ) : (
               <span className="text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded text-[10px]">
