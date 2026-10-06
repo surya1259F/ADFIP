@@ -207,10 +207,6 @@ export const SignInPage: React.FC = () => {
     }
   };
 
-  const handleMicrosoftSignIn = () => {
-    setSocialNotice('Microsoft SSO is not configured for this deployment. Use your investigator credentials or Google sign in.');
-  };
-
 
   const handleForgotPassword = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -331,10 +327,9 @@ export const SignInPage: React.FC = () => {
           </span>
         </div>
 
-        {/* 10. Social Buttons: Google & Microsoft */}
+        {/* 10. Social Button: Google */}
         <SocialButtons
           onGoogle={handleGoogleSignIn}
-          onMicrosoft={handleMicrosoftSignIn}
           disabled={loading}
         />
         {socialNotice && (

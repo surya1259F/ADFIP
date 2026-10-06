@@ -146,7 +146,7 @@ client.interceptors.response.use(
   (error) => {
     if (error.response && error.response.status === 401) {
       // Do not trigger unauthorized handler on initial login attempt failure
-      const isLoginRequest = error.config && error.config.url && error.config.url.endsWith('/v1/auth/login');
+      const isLoginRequest = error.config && error.config.url && (error.config.url.endsWith('/auth/login') || error.config.url.endsWith('/v1/auth/login'));
       if (!isLoginRequest && unauthorizedHandler) {
         unauthorizedHandler();
       }
@@ -163,19 +163,19 @@ client.interceptors.response.use(
 export const api = {
   // Auth API Methods
   login: async (credentials: UserLoginRequest): Promise<TokenResponse> => {
-    const res = await client.post<TokenResponse>('/v1/auth/login', credentials);
+    const res = await client.post<TokenResponse>('/auth/login', credentials);
     setAccessToken(res.data.access_token);
     return res.data;
   },
 
   signup: async (data: UserRegisterRequest): Promise<UserProfile> => {
-    const res = await client.post<UserProfile>('/v1/auth/signup', data);
+    const res = await client.post<UserProfile>('/auth/signup', data);
     return res.data;
   },
 
   logout: async (): Promise<void> => {
     try {
-      await client.post('/v1/auth/logout');
+      await client.post('/auth/logout');
     } catch {
       // Ignore logout request errors (token may already be expired/revoked)
     } finally {
@@ -184,7 +184,7 @@ export const api = {
   },
 
   getMe: async (): Promise<UserProfile> => {
-    const res = await client.get<UserProfile>('/v1/auth/me');
+    const res = await client.get<UserProfile>('/auth/me');
     return res.data;
   },
   getHealth: async (): Promise<{ status: string; application: string; version: string }> => {
@@ -211,87 +211,87 @@ export const api = {
   },
 
   getInvestigations: async (): Promise<Investigation[]> => {
-    const res = await client.get<Investigation[]>('/v1/cases/');
+    const res = await client.get<Investigation[]>('/cases');
     return res.data;
   },
 
   getInvestigation: async (id: string): Promise<Investigation> => {
-    const res = await client.get<Investigation>(`/v1/cases/${id}`);
+    const res = await client.get<Investigation>(`/cases/${id}`);
     return res.data;
   },
 
   createInvestigation: async (data: { name: string; description?: string }): Promise<Investigation> => {
-    const res = await client.post<Investigation>('/v1/cases/', data);
+    const res = await client.post<Investigation>('/cases', data);
     return res.data;
   },
 
   getCases: async (): Promise<Case[]> => {
-    const res = await client.get<Case[]>('/v1/cases/');
+    const res = await client.get<Case[]>('/cases');
     return res.data;
   },
 
   getCase: async (id: string): Promise<Case> => {
-    const res = await client.get<Case>(`/v1/cases/${id}`);
+    const res = await client.get<Case>(`/cases/${id}`);
     return res.data;
   },
 
   createCase: async (data: any): Promise<Case> => {
-    const res = await client.post<Case>('/v1/cases/', data);
+    const res = await client.post<Case>('/cases', data);
     return res.data;
   },
 
   updateCase: async (id: string, data: any): Promise<Case> => {
-    const res = await client.patch<Case>(`/v1/cases/${id}`, data);
+    const res = await client.patch<Case>(`/cases/${id}`, data);
     return res.data;
   },
 
   initializeWorkspace: async (id: string): Promise<any> => {
-    const res = await client.post(`/v1/cases/${id}/workspace/initialize`);
+    const res = await client.post(`/cases/${id}/workspace/initialize`);
     return res.data;
   },
 
   getWorkspaceStatus: async (id: string): Promise<any> => {
-    const res = await client.get(`/v1/cases/${id}/workspace/status`);
+    const res = await client.get(`/cases/${id}/workspace/status`);
     return res.data;
   },
 
   getCaseMembers: async (id: string): Promise<any[]> => {
-    const res = await client.get(`/v1/cases/${id}/members`);
+    const res = await client.get(`/cases/${id}/members`);
     return res.data;
   },
 
   addCaseMember: async (id: string, member: any): Promise<any> => {
-    const res = await client.post(`/v1/cases/${id}/members`, member);
+    const res = await client.post(`/cases/${id}/members`, member);
     return res.data;
   },
 
   updateCaseMemberRole: async (id: string, userId: string, role: string): Promise<any> => {
-    const res = await client.patch(`/v1/cases/${id}/members/${userId}`, { role });
+    const res = await client.patch(`/cases/${id}/members/${userId}`, { role });
     return res.data;
   },
 
   removeCaseMember: async (id: string, userId: string): Promise<{ detail: string }> => {
-    const res = await client.delete<{ detail: string }>(`/v1/cases/${id}/members/${userId}`);
+    const res = await client.delete<{ detail: string }>(`/cases/${id}/members/${userId}`);
     return res.data;
   },
 
   getCasePermissions: async (id: string): Promise<Record<string, boolean>> => {
-    const res = await client.get<Record<string, boolean>>(`/v1/cases/${id}/permissions`);
+    const res = await client.get<Record<string, boolean>>(`/cases/${id}/permissions`);
     return res.data;
   },
 
   updateCasePermissions: async (id: string, permissions: Record<string, boolean>): Promise<Record<string, boolean>> => {
-    const res = await client.patch<Record<string, boolean>>(`/v1/cases/${id}/permissions`, { permissions });
+    const res = await client.patch<Record<string, boolean>>(`/cases/${id}/permissions`, { permissions });
     return res.data;
   },
 
   closeCase: async (id: string): Promise<Investigation> => {
-    const res = await client.patch<Investigation>(`/v1/cases/${id}`, { status: 'CLOSED' });
+    const res = await client.patch<Investigation>(`/cases/${id}`, { status: 'CLOSED' });
     return res.data;
   },
 
   archiveCase: async (id: string): Promise<Investigation> => {
-    const res = await client.patch<Investigation>(`/v1/cases/${id}`, { status: 'ARCHIVED' });
+    const res = await client.patch<Investigation>(`/cases/${id}`, { status: 'ARCHIVED' });
     return res.data;
   },
 
@@ -331,7 +331,7 @@ export const api = {
   },
 
   getEvidenceIntelligenceProfile: async (_investigationId: string, evidenceId: string): Promise<EvidenceIntelligenceProfile> => {
-    const res = await client.get<EvidenceIntelligenceProfile>(`/v1/evidence/${evidenceId}/intelligence/profile`);
+    const res = await client.get<EvidenceIntelligenceProfile>(`/evidence/${evidenceId}/intelligence/profile`);
     return res.data;
   },
 
@@ -396,52 +396,52 @@ export const api = {
   },
 
   planInvestigation: async (investigationId: string): Promise<InvestigationPlan> => {
-    const res = await client.post<InvestigationPlan>(`/v1/cases/${investigationId}/investigation-plans`);
+    const res = await client.post<InvestigationPlan>(`/cases/${investigationId}/investigation-plans`);
     return res.data;
   },
 
   createStrategyPlan: async (caseId: string): Promise<InvestigationPlan> => {
-    const res = await client.post<InvestigationPlan>(`/v1/cases/${caseId}/investigation-plans`);
+    const res = await client.post<InvestigationPlan>(`/cases/${caseId}/investigation-plans`);
     return res.data;
   },
 
   getStrategyPlan: async (planId: string): Promise<InvestigationPlan> => {
-    const res = await client.get<InvestigationPlan>(`/v1/investigation-plans/${planId}`);
+    const res = await client.get<InvestigationPlan>(`/investigation-plans/${planId}`);
     return res.data;
   },
 
   getStrategyPlanTasks: async (planId: string): Promise<any[]> => {
-    const res = await client.get<any[]>(`/v1/investigation-plans/${planId}/tasks`);
+    const res = await client.get<any[]>(`/investigation-plans/${planId}/tasks`);
     return res.data;
   },
 
   getStrategyPlanGraph: async (planId: string): Promise<DependencyGraph> => {
-    const res = await client.get<DependencyGraph>(`/v1/investigation-plans/${planId}/graph`);
+    const res = await client.get<DependencyGraph>(`/investigation-plans/${planId}/graph`);
     return res.data;
   },
 
   reviewStrategyPlan: async (planId: string): Promise<{ plan_id: string; validation_status: string; status: string; adjustments_applied: any[] }> => {
-    const res = await client.post<{ plan_id: string; validation_status: string; status: string; adjustments_applied: any[] }>(`/v1/investigation-plans/${planId}/review`);
+    const res = await client.post<{ plan_id: string; validation_status: string; status: string; adjustments_applied: any[] }>(`/investigation-plans/${planId}/review`);
     return res.data;
   },
 
   recalculateStrategyPlan: async (planId: string): Promise<InvestigationPlan> => {
-    const res = await client.post<InvestigationPlan>(`/v1/investigation-plans/${planId}/recalculate`);
+    const res = await client.post<InvestigationPlan>(`/investigation-plans/${planId}/recalculate`);
     return res.data;
   },
 
   getCaseStrategyPlans: async (caseId: string): Promise<InvestigationPlan[]> => {
-    const res = await client.get<InvestigationPlan[]>(`/v1/cases/${caseId}/investigation-plans`);
+    const res = await client.get<InvestigationPlan[]>(`/cases/${caseId}/investigation-plans`);
     return res.data;
   },
 
   getStrategyCapabilities: async (): Promise<ForensicCapability[]> => {
-    const res = await client.get<ForensicCapability[]>(`/v1/strategy/capabilities`);
+    const res = await client.get<ForensicCapability[]>('/strategy/capabilities');
     return res.data;
   },
 
   getStrategyTools: async (): Promise<ForensicTool[]> => {
-    const res = await client.get<ForensicTool[]>(`/v1/strategy/tools`);
+    const res = await client.get<ForensicTool[]>('/strategy/tools');
     return res.data;
   },
 
@@ -507,63 +507,63 @@ export const api = {
 
   // User Administration API Methods
   getUsers: async (): Promise<UserProfile[]> => {
-    const res = await client.get<UserProfile[]>('/v1/users/');
+    const res = await client.get<UserProfile[]>('/users');
     return res.data;
   },
 
   getUser: async (id: string): Promise<UserProfile> => {
-    const res = await client.get<UserProfile>(`/v1/users/${id}`);
+    const res = await client.get<UserProfile>(`/users/${id}`);
     return res.data;
   },
 
   createUser: async (data: UserRegisterRequest & { role?: string }): Promise<UserProfile> => {
-    const res = await client.post<UserProfile>('/v1/users/', data);
+    const res = await client.post<UserProfile>('/users', data);
     return res.data;
   },
 
   updateUser: async (id: string, data: Partial<UserProfile>): Promise<UserProfile> => {
-    const res = await client.patch<UserProfile>(`/v1/users/${id}`, data);
+    const res = await client.patch<UserProfile>(`/users/${id}`, data);
     return res.data;
   },
 
   updateSelfProfile: async (data: { name?: string; badge_id?: string }): Promise<UserProfile> => {
-    const res = await client.patch<UserProfile>('/v1/auth/me', data);
+    const res = await client.patch<UserProfile>('/auth/me', data);
     return res.data;
   },
 
   enableUser: async (id: string): Promise<UserProfile> => {
-    const res = await client.post<UserProfile>(`/v1/users/${id}/enable`);
+    const res = await client.post<UserProfile>(`/users/${id}/enable`);
     return res.data;
   },
 
   disableUser: async (id: string): Promise<UserProfile> => {
-    const res = await client.post<UserProfile>(`/v1/users/${id}/disable`);
+    const res = await client.post<UserProfile>(`/users/${id}/disable`);
     return res.data;
   },
 
   deactivateUser: async (id: string): Promise<UserProfile> => {
-    const res = await client.delete<UserProfile>(`/v1/users/${id}`);
+    const res = await client.delete<UserProfile>(`/users/${id}`);
     return res.data;
   },
 
   // Task 9 AI Copilot API Methods
   copilotQuery: async (data: AICopilotRequest): Promise<AICopilotResponse> => {
-    const res = await client.post<AICopilotResponse>('/v1/ai/copilot', data);
+    const res = await client.post<AICopilotResponse>('/ai/copilot', data);
     return res.data;
   },
 
   explainFinding: async (data: AIExplainFindingRequest): Promise<AIExplanationResponse> => {
-    const res = await client.post<AIExplanationResponse>('/v1/ai/explain-finding', data);
+    const res = await client.post<AIExplanationResponse>('/ai/explain-finding', data);
     return res.data;
   },
 
   testAIProvider: async (data: AIProviderTestRequest): Promise<AIProviderTestResponse> => {
-    const res = await client.post<AIProviderTestResponse>('/v1/ai/provider/test', data);
+    const res = await client.post<AIProviderTestResponse>('/ai/provider/test', data);
     return res.data;
   },
 
   getAIProviderModels: async (provider?: string): Promise<string[]> => {
-    const res = await client.get<string[]>('/v1/ai/provider/models', {
+    const res = await client.get<string[]>('/ai/provider/models', {
       params: provider ? { provider } : undefined,
     });
     return res.data;
@@ -571,65 +571,65 @@ export const api = {
 
   // Step 19 Investigator Review API Methods
   getReviewItems: async (caseId: string): Promise<ReviewItemsResponse> => {
-    const res = await client.get<ReviewItemsResponse>(`/v1/cases/${caseId}/review/items`);
+    const res = await client.get<ReviewItemsResponse>(`/cases/${caseId}/review/items`);
     return res.data;
   },
 
   submitReviewDecision: async (caseId: string, data: InvestigatorReviewCreateRequest): Promise<InvestigatorReviewResponse> => {
-    const res = await client.post<InvestigatorReviewResponse>(`/v1/cases/${caseId}/review/decisions`, data);
+    const res = await client.post<InvestigatorReviewResponse>(`/cases/${caseId}/review/decisions`, data);
     return res.data;
   },
 
   listReviewDecisions: async (caseId: string, params?: { target_id?: string; decision?: string }): Promise<InvestigatorReviewResponse[]> => {
-    const res = await client.get<InvestigatorReviewResponse[]>(`/v1/cases/${caseId}/review/decisions`, { params });
+    const res = await client.get<InvestigatorReviewResponse[]>(`/cases/${caseId}/review/decisions`, { params });
     return res.data;
   },
 
   verifyReviewIntegrity: async (caseId: string, reviewId: string): Promise<InvestigatorReviewIntegrityResponse> => {
-    const res = await client.get<InvestigatorReviewIntegrityResponse>(`/v1/cases/${caseId}/review/decisions/${reviewId}/integrity`);
+    const res = await client.get<InvestigatorReviewIntegrityResponse>(`/cases/${caseId}/review/decisions/${reviewId}/integrity`);
     return res.data;
   },
 
   getClaimProvenance: async (caseId: string, targetId: string, targetType?: string): Promise<ClaimProvenanceResponse> => {
-    const res = await client.get<ClaimProvenanceResponse>(`/v1/cases/${caseId}/review/provenance/${targetId}`, {
+    const res = await client.get<ClaimProvenanceResponse>(`/cases/${caseId}/review/provenance/${targetId}`, {
       params: targetType ? { target_type: targetType } : undefined
     });
     return res.data;
   },
 
   requestMoreEvidence: async (caseId: string, data: RequestMoreEvidenceRequest): Promise<RequestMoreEvidenceResponse> => {
-    const res = await client.post<RequestMoreEvidenceResponse>(`/v1/cases/${caseId}/review/request-more-evidence`, data);
+    const res = await client.post<RequestMoreEvidenceResponse>(`/cases/${caseId}/review/request-more-evidence`, data);
     return res.data;
   },
 
   // Step 20 Final Forensic Report API Methods
   generateForensicReport: async (caseId: string, data?: ForensicReportGenerateRequest): Promise<ForensicReportResponse> => {
-    const res = await client.post<ForensicReportResponse>(`/v1/cases/${caseId}/reports/generate`, data || {});
+    const res = await client.post<ForensicReportResponse>(`/cases/${caseId}/reports/generate`, data || {});
     return res.data;
   },
 
   listForensicReports: async (caseId: string): Promise<ForensicReportVersionItem[]> => {
-    const res = await client.get<ForensicReportVersionItem[]>(`/v1/cases/${caseId}/reports`);
+    const res = await client.get<ForensicReportVersionItem[]>(`/cases/${caseId}/reports`);
     return res.data;
   },
 
   getForensicReport: async (caseId: string, reportId: string): Promise<ForensicReportResponse> => {
-    const res = await client.get<ForensicReportResponse>(`/v1/cases/${caseId}/reports/${reportId}`);
+    const res = await client.get<ForensicReportResponse>(`/cases/${caseId}/reports/${reportId}`);
     return res.data;
   },
 
   getLatestForensicReport: async (caseId: string): Promise<ForensicReportResponse> => {
-    const res = await client.get<ForensicReportResponse>(`/v1/cases/${caseId}/reports/latest`);
+    const res = await client.get<ForensicReportResponse>(`/cases/${caseId}/reports/latest`);
     return res.data;
   },
 
   verifyForensicReportIntegrity: async (caseId: string, reportId: string): Promise<ForensicReportIntegrityResponse> => {
-    const res = await client.get<ForensicReportIntegrityResponse>(`/v1/cases/${caseId}/reports/${reportId}/integrity`);
+    const res = await client.get<ForensicReportIntegrityResponse>(`/cases/${caseId}/reports/${reportId}/integrity`);
     return res.data;
   },
 
   getForensicReportProvenance: async (caseId: string, reportId: string): Promise<ForensicReportProvenanceResponse> => {
-    const res = await client.get<ForensicReportProvenanceResponse>(`/v1/cases/${caseId}/reports/${reportId}/provenance`);
+    const res = await client.get<ForensicReportProvenanceResponse>(`/cases/${caseId}/reports/${reportId}/provenance`);
     return res.data;
   },
 
@@ -638,7 +638,7 @@ export const api = {
     reportId: string,
     format: 'markdown' | 'json' = 'markdown'
   ): Promise<{ data: any; filename: string; contentType: string }> => {
-    const res = await client.get(`/v1/cases/${caseId}/reports/${reportId}/export`, {
+    const res = await client.get(`/cases/${caseId}/reports/${reportId}/export`, {
       params: { format },
       responseType: format === 'json' ? 'json' : 'text'
     });

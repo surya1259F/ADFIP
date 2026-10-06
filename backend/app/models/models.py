@@ -29,7 +29,7 @@ class User(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     email = Column(String, unique=True, nullable=False, index=True)
     name = Column(String, nullable=False)
-    organization = Column(String, default="Digital Forensics Unit", nullable=False)
+    organization = Column(String, default="", nullable=False)
     badge_id = Column(String, nullable=True)
     avatar_url = Column(String, nullable=True)
     role = Column(String, default="INVESTIGATOR", nullable=False) # ADMIN, INVESTIGATOR, ANALYST, VIEWER

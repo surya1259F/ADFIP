@@ -922,7 +922,7 @@ class UserRegisterRequest(BaseModel):
     email: str
     password: str = Field(..., min_length=8)
     name: str
-    organization: Optional[str] = "Digital Forensics Unit"
+    organization: Optional[str] = None
     badge_id: Optional[str] = None
 
 
@@ -935,7 +935,7 @@ class UserAdminCreateRequest(BaseModel):
     email: str
     password: str = Field(..., min_length=8)
     name: str
-    organization: Optional[str] = "Digital Forensics Unit"
+    organization: Optional[str] = None
     role: Optional[str] = "INVESTIGATOR"
     badge_id: Optional[str] = None
 

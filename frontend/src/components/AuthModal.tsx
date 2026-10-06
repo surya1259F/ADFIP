@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useInvestigationStore } from '../stores/investigationStore';
+import { authService, type GoogleStatusResponse } from '../services/auth';
 import { ShieldCheck, Lock, Mail, User, X, ShieldAlert, Building2, BadgeCheck } from 'lucide-react';
 
 export const AuthModal: React.FC = () => {
@@ -8,10 +9,32 @@ export const AuthModal: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
-  const [organization, setOrganization] = useState('Digital Forensics Unit');
+  const [organization, setOrganization] = useState('');
   const [badgeId, setBadgeId] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [googleStatus, setGoogleStatus] = useState<GoogleStatusResponse | null>(null);
+
+  useEffect(() => {
+    if (isAuthModalOpen) {
+      authService.getGoogleStatus()
+        .then(setGoogleStatus)
+        .catch(() => setGoogleStatus({ google_configured: false, client_id_configured: false, redirect_uri: '' }));
+    }
+  }, [isAuthModalOpen]);
+
+  const handleGoogleSignIn = async () => {
+    try {
+      const res = await authService.getGoogleLoginUrl();
+      if (res?.authorization_url) {
+        window.location.href = res.authorization_url;
+      } else {
+        setErrorMsg('Google OAuth is not configured on this workstation.');
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to connect to Google OAuth service.');
+    }
+  };
 
   if (!isAuthModalOpen) return null;
 
@@ -45,7 +68,7 @@ export const AuthModal: React.FC = () => {
           email,
           name,
           password,
-          organization: organization || 'Digital Forensics Unit',
+          organization: organization.trim() || undefined,
           badge_id: badgeId || undefined
         });
         setSuccessMsg('Account registered and authenticated.');
@@ -152,7 +175,7 @@ export const AuthModal: React.FC = () => {
                   <div className="relative">
                     <input
                       type="text"
-                      placeholder="Digital Forensics Unit"
+                      placeholder="Organization / Agency (Optional)"
                       value={organization}
                       onChange={(e) => setOrganization(e.target.value)}
                       className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-3 py-2 text-slate-200 focus:outline-none focus:border-indigo-500"
@@ -183,7 +206,7 @@ export const AuthModal: React.FC = () => {
                 <input
                   type="email"
                   required
-                  placeholder="investigator@adfir.local"
+                  placeholder="investigator@agency.gov"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-3 py-2 text-slate-200 focus:outline-none focus:border-indigo-500"
@@ -227,9 +250,21 @@ export const AuthModal: React.FC = () => {
             <span>Local Workstation Auth:</span>
             <span className="text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 text-[10px]">VERIFIED BACKEND</span>
           </div>
-          <div className="flex items-center justify-between text-slate-500">
+          <div className="flex items-center justify-between text-slate-400">
             <span>Enterprise Google SSO:</span>
-            <span className="text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded text-[10px]">NOT CONFIGURED</span>
+            {googleStatus?.google_configured ? (
+              <button
+                type="button"
+                onClick={handleGoogleSignIn}
+                className="text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 text-[10px] hover:bg-emerald-500/20 cursor-pointer transition-colors"
+              >
+                SIGN IN WITH GOOGLE
+              </button>
+            ) : (
+              <span className="text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded text-[10px]">
+                {googleStatus === null ? 'CHECKING...' : 'NOT CONFIGURED'}
+              </span>
+            )}
           </div>
         </div>
       </div>

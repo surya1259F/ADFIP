@@ -185,7 +185,7 @@ export const AccountPage: React.FC = () => {
                   <div className="flex items-center gap-2 mt-1.5">
                     <StatusBadge status={user.role || 'INVESTIGATOR'} />
                     <span className="text-[11px] text-slate-400 font-sans">
-                      {user.organization || 'Digital Forensics Unit'}
+                      {user.organization || 'Not specified'}
                     </span>
                   </div>
                 </div>
@@ -296,7 +296,7 @@ export const AccountPage: React.FC = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Input
                   label="Forensic Unit / Organization"
-                  value={user.organization || 'Digital Forensics Unit'}
+                  value={user.organization || 'Not specified'}
                   readOnly
                   disabled
                 />

@@ -380,10 +380,10 @@ class GoogleOAuthService:
                 )
             return resp.json()
         except httpx.RequestError as exc:
-            logger.error("Network error during Google token exchange: %s", exc)
+            logger.error("Network error during Google token exchange (%s): %s", type(exc).__name__, exc)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Unable to reach Google OAuth services. Verify network connectivity."
+                detail=f"Unable to reach Google OAuth services ({type(exc).__name__}). Verify network connectivity."
             )
         finally:
             if http_client is None:
@@ -648,10 +648,10 @@ class GoogleOAuthService:
         except HTTPException:
             raise
         except httpx.RequestError as exc:
-            logger.error("Network error during Google identity verification: %s", exc)
+            logger.error("Network error during Google identity verification (%s): %s", type(exc).__name__, exc)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Unable to verify identity with Google services."
+                detail=f"Unable to verify identity with Google services ({type(exc).__name__}). Verify network connectivity."
             )
         finally:
             if http_client is None:
@@ -740,7 +740,7 @@ class GoogleOAuthService:
             new_user = User(
                 email=google_email,
                 name=google_name,
-                organization="Digital Forensics Unit",
+                organization="",
                 role="INVESTIGATOR",  # Least-privileged investigator default; NEVER admin
                 is_active=True,
                 password_hash=None,  # External OAuth-authenticated user

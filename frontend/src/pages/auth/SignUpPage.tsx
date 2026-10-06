@@ -78,9 +78,6 @@ export const SignUpPage: React.FC = () => {
       errs.email = 'Please enter a valid work email address';
     }
 
-    if (!organization.trim()) {
-      errs.organization = 'Organization / Agency is required';
-    }
 
     if (!password) {
       errs.password = 'Password is required';
@@ -253,10 +250,6 @@ export const SignUpPage: React.FC = () => {
     }
   };
 
-  const handleMicrosoftSignUp = () => {
-    setSocialNotice('Microsoft SSO is not configured for this deployment. Complete the registration form below or use Google.');
-  };
-
 
   return (
     <div className="min-h-screen bg-white flex items-center justify-center p-4 sm:p-6 py-10 overflow-y-auto">
@@ -331,7 +324,7 @@ export const SignUpPage: React.FC = () => {
 
           {/* Organization / Agency */}
           <AuthInput
-            placeholder="Organization / Agency (e.g. Law Enforcement, SOC)"
+            placeholder="Organization / Agency (Optional)"
             value={organization}
             onChange={(e) => {
               setOrganization(e.target.value);
@@ -509,10 +502,9 @@ export const SignUpPage: React.FC = () => {
           </span>
         </div>
 
-        {/* Social Buttons: Google & Microsoft */}
+        {/* Social Button: Google */}
         <SocialButtons
           onGoogle={handleGoogleSignUp}
-          onMicrosoft={handleMicrosoftSignUp}
           disabled={loading}
         />
         {socialNotice && (

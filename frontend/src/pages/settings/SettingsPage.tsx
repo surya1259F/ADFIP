@@ -725,7 +725,7 @@ export const SettingsPage: React.FC = () => {
               </div>
               <div className="p-3 bg-stone-50 rounded-lg">
                 <span className="text-slate-400 block font-sans text-[11px]">Agency / Organization</span>
-                <span className="font-semibold text-slate-800 font-sans">{user?.organization || 'Digital Forensics Unit'}</span>
+                <span className="font-semibold text-slate-800 font-sans">{user?.organization || 'Not specified'}</span>
               </div>
               <div className="p-3 bg-stone-50 rounded-lg">
                 <span className="text-slate-400 block font-sans text-[11px]">Assigned Role</span>

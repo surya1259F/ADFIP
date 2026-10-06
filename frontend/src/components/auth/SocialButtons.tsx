@@ -2,23 +2,21 @@ import React from 'react';
 
 export interface SocialButtonsProps {
   onGoogle?: () => void;
-  onMicrosoft?: () => void;
   disabled?: boolean;
 }
 
 export const SocialButtons: React.FC<SocialButtonsProps> = ({
   onGoogle,
-  onMicrosoft,
   disabled = false,
 }) => (
-  <div className="flex flex-col sm:flex-row items-center gap-3 w-full">
+  <div className="flex flex-col items-center gap-3 w-full">
     {/* Continue with Google */}
     <button
       type="button"
       onClick={onGoogle}
       disabled={disabled}
       aria-label="Continue with Google"
-      className="flex-1 w-full h-[46px] rounded-[14px] bg-white border border-[#e5e7eb] flex items-center justify-center gap-2.5 px-4 hover:bg-gray-50 hover:border-gray-300 active:scale-[0.99] transition-all focus:outline-none focus:ring-2 focus:ring-slate-300 disabled:opacity-50 cursor-pointer text-xs font-medium text-slate-700 shadow-sm"
+      className="w-full h-[46px] rounded-[14px] bg-white border border-[#e5e7eb] flex items-center justify-center gap-2.5 px-4 hover:bg-gray-50 hover:border-gray-300 active:scale-[0.99] transition-all focus:outline-none focus:ring-2 focus:ring-slate-300 disabled:opacity-50 cursor-pointer text-xs font-medium text-slate-700 shadow-sm"
     >
       <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
         <path
@@ -39,23 +37,6 @@ export const SocialButtons: React.FC<SocialButtonsProps> = ({
         />
       </svg>
       <span>Continue with Google</span>
-    </button>
-
-    {/* Continue with Microsoft */}
-    <button
-      type="button"
-      onClick={onMicrosoft}
-      disabled={disabled}
-      aria-label="Continue with Microsoft"
-      className="flex-1 w-full h-[46px] rounded-[14px] bg-white border border-[#e5e7eb] flex items-center justify-center gap-2.5 px-4 hover:bg-gray-50 hover:border-gray-300 active:scale-[0.99] transition-all focus:outline-none focus:ring-2 focus:ring-slate-300 disabled:opacity-50 cursor-pointer text-xs font-medium text-slate-700 shadow-sm"
-    >
-      <svg className="w-4 h-4 shrink-0" viewBox="0 0 21 21" aria-hidden="true">
-        <rect x="1" y="1" width="9" height="9" fill="#f25022" />
-        <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
-        <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
-        <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
-      </svg>
-      <span>Continue with Microsoft</span>
     </button>
   </div>
 );
