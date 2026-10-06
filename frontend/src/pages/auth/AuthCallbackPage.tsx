@@ -57,10 +57,10 @@ export const AuthCallbackPage: React.FC = () => {
 
         login(token, user);
 
-        // Notify parent if inside a popup
+        // Notify parent if inside a popup (include authenticated token & user to prevent double consumption)
         if (window.opener && !window.opener.closed) {
           try {
-            window.opener.postMessage({ type: 'ADFIP_OAUTH_SUCCESS', code }, window.location.origin);
+            window.opener.postMessage({ type: 'ADFIP_OAUTH_SUCCESS', code, token, user }, window.location.origin);
             setTimeout(() => window.close(), 300);
             return;
           } catch {

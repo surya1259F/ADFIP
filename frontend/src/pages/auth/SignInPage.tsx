@@ -156,12 +156,25 @@ export const SignInPage: React.FC = () => {
         }
 
         if (event.data.type === 'ADFIP_OAUTH_SUCCESS') {
-          // 4. Strict Code Payload Validation
+          window.removeEventListener('message', handleMessage);
+
+          // Fast path: Token and user were already resolved by popup
+          if (event.data.token && typeof event.data.token === 'string') {
+            const token = event.data.token;
+            const user = event.data.user;
+            if (user) {
+              login(token, user);
+              navigate('/dashboard', { replace: true });
+              return;
+            }
+          }
+
+          // Authoritative single-use ticket exchange
           if (typeof event.data.code !== 'string' || event.data.code.length < 16 || event.data.code.length > 256) {
+            setLoading(false);
             return;
           }
 
-          window.removeEventListener('message', handleMessage);
           const exchangeCode = event.data.code;
           try {
             const tokenRes = await authService.exchangeGoogleCode(exchangeCode);

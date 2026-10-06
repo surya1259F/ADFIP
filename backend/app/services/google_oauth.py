@@ -1000,13 +1000,29 @@ class GoogleOAuthService:
                 detail="Investigator account is deactivated."
             )
 
-        token = create_access_token(user_id=user.id, email=user.email, role=user.role)
+        try:
+            token = create_access_token(user_id=user.id, email=user.email, role=user.role)
+        except Exception as exc:
+            logger.error("Failed to create access token during OAuth exchange: %s", exc, exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Authentication signing service is temporarily unavailable. Please try again."
+            )
+
+        try:
+            user_resp = UserResponse.model_validate(user)
+        except Exception as exc:
+            logger.error("Failed to validate user response during OAuth exchange: %s", exc, exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Authentication completed but user profile formatting failed. Please contact your system administrator."
+            )
 
         return TokenResponse(
             access_token=token,
             token_type="bearer",
             expires_in_seconds=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-            user=UserResponse.model_validate(user),
+            user=user_resp,
         )
 
     @classmethod

@@ -14,15 +14,9 @@ client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def setup_db():
-    settings.JWT_SECRET_KEY = "adfir-test-jwt-secret-key-production-hardening-32bytes"
     Base.metadata.create_all(bind=engine)
     ensure_user_auth_schema(engine)
     ensure_case_auth_schema(engine)
-    with SessionLocal() as db:
-        db.query(CaseMember).delete()
-        db.query(Case).delete()
-        db.query(User).delete()
-        db.commit()
     yield
 
 
@@ -57,9 +51,10 @@ def test_create_case_full_workflow(tmp_path, monkeypatch):
     user_id, email, headers = create_test_user("inv_lead", "Lead Investigator", role="INVESTIGATOR")
 
     # Create case
+    case_num = f"CASE-2026-APEX-{uuid.uuid4().hex[:6]}"
     case_payload = {
         "title": "Operation Apex Cyber Intrusion",
-        "case_number": "CASE-2026-APEX",
+        "case_number": case_num,
         "description": "APT intrusion investigation into domain controller",
         "objective": "Determine initial access vector, scope lateral movement, and isolate compromised hosts",
         "case_type": "INCIDENT_RESPONSE",
@@ -76,7 +71,7 @@ def test_create_case_full_workflow(tmp_path, monkeypatch):
     assert resp.status_code in (200, 201)
     data = resp.json()
 
-    assert data["case_number"] == "CASE-2026-APEX"
+    assert data["case_number"] == case_num
     assert data["title"] == "Operation Apex Cyber Intrusion"
     assert data["objective"] == case_payload["objective"]
     assert data["case_type"] == "INCIDENT_RESPONSE"

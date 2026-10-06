@@ -351,7 +351,15 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user = db.query(User).filter(User.id == user_id).first()
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+    except Exception as exc:
+        _ensure_security_logger().error(f"Database error resolving user from token: {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication service encountered a database error. Please try again."
+        )
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -392,8 +400,12 @@ def get_current_user_optional(
     user_id = payload.get("sub")
     if not user_id:
         return None
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user or not user.is_active:
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user or not user.is_active:
+            return None
+        return user
+    except Exception as exc:
+        _ensure_security_logger().warning(f"Database error in optional user resolution: {exc}")
         return None
-    return user
 

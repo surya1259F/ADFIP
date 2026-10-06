@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status, UploadFile, File
 from fastapi.responses import HTMLResponse, FileResponse
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 
 from backend.app.core.config import settings
 from backend.app.core.database import get_db
@@ -66,7 +67,15 @@ def register_user(req: UserRegisterRequest, db: Session = Depends(get_db)):
             detail=f"Password must be at least {settings.PASSWORD_MIN_LENGTH} characters long.",
         )
 
-    existing_user = db.query(User).filter(User.email == email_clean).first()
+    try:
+        existing_user = db.query(User).filter(User.email == email_clean).first()
+    except SQLAlchemyError as db_err:
+        logger.error(f"Database error checking existing user: {db_err}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Registration service encountered a database error. Please try again."
+        )
+
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -90,16 +99,34 @@ def register_user(req: UserRegisterRequest, db: Session = Depends(get_db)):
         is_active=True,
         password_hash=pwd_hash,
     )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
+    try:
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    except SQLAlchemyError as db_err:
+        db.rollback()
+        logger.error(f"Database error during user registration: {db_err}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Registration service encountered a database error. Please try again."
+        )
+    except Exception as exc:
+        db.rollback()
+        logger.error(f"Unexpected error creating user account: {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Registration failed due to an unexpected server error. Please try again."
+        )
 
-    log_audit_event(
-        db=db,
-        case_id=None,
-        event_type="USER_ACCOUNT_CREATED",
-        details=f"User account '{user.email}' ({user.name}) registered successfully.",
-    )
+    try:
+        log_audit_event(
+            db=db,
+            case_id=None,
+            event_type="USER_ACCOUNT_CREATED",
+            details=f"User account '{user.email}' ({user.name}) registered successfully.",
+        )
+    except Exception as audit_err:
+        logger.warning(f"Failed to record audit event for user creation: {audit_err}")
 
     return user
 
@@ -111,7 +138,14 @@ def login_user(req: UserLoginRequest, db: Session = Depends(get_db)):
     Prevents user enumeration by returning a generic 401 Unauthorized error on any failure.
     """
     email_clean = req.email.lower().strip() if req.email else ""
-    user = db.query(User).filter(User.email == email_clean).first()
+    try:
+        user = db.query(User).filter(User.email == email_clean).first()
+    except SQLAlchemyError as db_err:
+        logger.error(f"Database error querying user during login: {db_err}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication service encountered a database error. Please try again."
+        )
 
     # Prevent user enumeration: verify against dummy hash if user does not exist
     if not user or not user.password_hash or not verify_password(req.password, user.password_hash):
@@ -128,24 +162,48 @@ def login_user(req: UserLoginRequest, db: Session = Depends(get_db)):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user.last_login_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(user)
+    try:
+        user.last_login_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(user)
+    except SQLAlchemyError as db_err:
+        db.rollback()
+        logger.warning(f"Failed to update last_login_at for user {user.id}: {db_err}")
+        # Non-fatal for authentication: continue session creation
 
-    token = create_access_token(user_id=user.id, email=user.email, role=user.role)
+    try:
+        token = create_access_token(user_id=user.id, email=user.email, role=user.role)
+    except Exception as token_err:
+        logger.error(f"Failed to create access token for user {user.id}: {token_err}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication signing service is temporarily unavailable. Please try again."
+        )
 
-    log_audit_event(
-        db=db,
-        case_id=None,
-        event_type="USER_LOGIN_SUCCESSFUL",
-        details=f"User '{user.email}' authenticated successfully.",
-    )
+    try:
+        log_audit_event(
+            db=db,
+            case_id=None,
+            event_type="USER_LOGIN_SUCCESSFUL",
+            details=f"User '{user.email}' authenticated successfully.",
+        )
+    except Exception as audit_err:
+        logger.warning(f"Failed to record audit event for login: {audit_err}")
+
+    try:
+        user_resp = UserResponse.model_validate(user)
+    except Exception as val_err:
+        logger.error(f"Failed to validate user response model: {val_err}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication completed but user profile formatting failed. Please contact your system administrator."
+        )
 
     return TokenResponse(
         access_token=token,
         token_type="bearer",
         expires_in_seconds=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        user=UserResponse.model_validate(user),
+        user=user_resp,
     )
 
 
@@ -165,7 +223,16 @@ def get_current_user_profile(current_user: User = Depends(get_current_active_use
     """
     Returns authenticated investigator profile for the active session.
     """
-    return current_user
+    try:
+        return current_user
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Error returning current user profile: {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to load user profile."
+        )
 
 
 @router.patch("/me", response_model=UserResponse, status_code=status.HTTP_200_OK)
@@ -195,17 +262,28 @@ def update_current_user_profile(
     if req.avatar_url is not None:
         current_user.avatar_url = req.avatar_url.strip() if req.avatar_url else None
 
-    db.commit()
-    db.refresh(current_user)
+    try:
+        db.commit()
+        db.refresh(current_user)
+    except SQLAlchemyError as db_err:
+        db.rollback()
+        logger.error(f"Database error updating user profile: {db_err}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database error updating profile. Please try again."
+        )
 
-    log_audit_event(
-        db=db,
-        case_id=None,
-        actor_id=current_user.id,
-        actor_name=current_user.name,
-        event_type="USER_PROFILE_UPDATED",
-        details=f"User '{current_user.email}' updated profile.",
-    )
+    try:
+        log_audit_event(
+            db=db,
+            case_id=None,
+            actor_id=current_user.id,
+            actor_name=current_user.name,
+            event_type="USER_PROFILE_UPDATED",
+            details=f"User '{current_user.email}' updated profile.",
+        )
+    except Exception as audit_err:
+        logger.warning(f"Failed to record audit event for profile update: {audit_err}")
 
     return current_user
 
@@ -760,7 +838,29 @@ def exchange_oauth_code_for_jwt(
     """
     client_ip = request.client.host if request.client else "unknown"
     OAuthRateLimiter.check_rate_limit(client_ip)
-    return GoogleOAuthService.exchange_code_for_jwt(db=db, code=req.code)
+    try:
+        return GoogleOAuthService.exchange_code_for_jwt(db=db, code=req.code)
+    except HTTPException:
+        raise
+    except OAuthPolicyException as policy_exc:
+        raise HTTPException(
+            status_code=policy_exc.status_code,
+            detail=policy_exc.detail,
+        )
+    except SQLAlchemyError as db_err:
+        db.rollback()
+        logger.error(f"Database error during OAuth code exchange: {db_err}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="OAuth exchange service encountered a database error. Please try again."
+        )
+    except Exception as exc:
+        db.rollback()
+        logger.error(f"Unexpected error during OAuth code exchange: {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="OAuth code exchange failed due to an unexpected server error. Please try again."
+        )
 
 
 @router.post("/google/link", response_model=UserExternalIdentityResponse, status_code=status.HTTP_200_OK)
@@ -781,34 +881,54 @@ def link_google_identity(
     # 1. Verify current account password if password exists
     if current_user.password_hash:
         if not verify_password(req.password, current_user.password_hash):
-            log_audit_event(
-                db=db,
-                case_id=None,
-                event_type="OAUTH_LINK_DENIED",
-                details="Incorrect account password during account linking attempt.",
-                actor_id=current_user.id,
-                actor_name=current_user.name,
-            )
+            try:
+                log_audit_event(
+                    db=db,
+                    case_id=None,
+                    event_type="OAUTH_LINK_DENIED",
+                    details="Incorrect account password during account linking attempt.",
+                    actor_id=current_user.id,
+                    actor_name=current_user.name,
+                )
+            except Exception as audit_err:
+                logger.warning(f"Failed to record audit event for link denial: {audit_err}")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect account password. Proof of account control failed."
             )
 
-    # 2. Verify and atomically consume link ticket (enforces purpose == 'LINK' and target_user_id == current_user.id)
-    ticket_record = GoogleOAuthService.verify_and_consume_link_ticket(
-        db=db,
-        code=req.exchange_code,
-        current_user=current_user,
-    )
+    try:
+        # 2. Verify and atomically consume link ticket (enforces purpose == 'LINK' and target_user_id == current_user.id)
+        ticket_record = GoogleOAuthService.verify_and_consume_link_ticket(
+            db=db,
+            code=req.exchange_code,
+            current_user=current_user,
+        )
 
-    # 3. Link Google identity to current_user
-    linked = GoogleOAuthService.link_google_account_to_user(
-        db=db,
-        current_user=current_user,
-        google_sub=ticket_record.google_sub,
-        google_email=ticket_record.google_email or current_user.email,
-    )
-    return linked
+        # 3. Link Google identity to current_user
+        linked = GoogleOAuthService.link_google_account_to_user(
+            db=db,
+            current_user=current_user,
+            google_sub=ticket_record.google_sub,
+            google_email=ticket_record.google_email or current_user.email,
+        )
+        return linked
+    except HTTPException:
+        raise
+    except SQLAlchemyError as db_err:
+        db.rollback()
+        logger.error(f"Database error during account linking: {db_err}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Account linking service encountered a database error. Please try again."
+        )
+    except Exception as exc:
+        db.rollback()
+        logger.error(f"Unexpected error during account linking: {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Account linking failed due to an unexpected server error. Please try again."
+        )
 
 
 @router.get("/external-identities", response_model=List[UserExternalIdentityResponse], status_code=status.HTTP_200_OK)
@@ -819,7 +939,20 @@ def list_user_external_identities(
     """
     Lists external identity provider accounts linked to the authenticated investigator.
     """
-    return db.query(UserExternalIdentity).filter(UserExternalIdentity.user_id == current_user.id).all()
+    try:
+        return db.query(UserExternalIdentity).filter(UserExternalIdentity.user_id == current_user.id).all()
+    except SQLAlchemyError as db_err:
+        logger.error(f"Database error listing external identities: {db_err}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database error retrieving external identities. Please try again."
+        )
+    except Exception as exc:
+        logger.error(f"Unexpected error listing external identities: {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve external identities."
+        )
 
 
 @router.delete("/google/unlink", status_code=status.HTTP_200_OK)
@@ -832,45 +965,65 @@ def unlink_google_identity(
     Fails safely if user has no password configured AND no other external identity
     (prevents permanent account lockout).
     """
-    link = (
-        db.query(UserExternalIdentity)
-        .filter(UserExternalIdentity.user_id == current_user.id, UserExternalIdentity.provider == "google")
-        .first()
-    )
-    if not link:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No linked Google identity found for this account."
-        )
-
-    if not current_user.password_hash:
-        other_identities_count = (
+    try:
+        link = (
             db.query(UserExternalIdentity)
-            .filter(
-                UserExternalIdentity.user_id == current_user.id,
-                UserExternalIdentity.provider != "google"
-            )
-            .count()
+            .filter(UserExternalIdentity.user_id == current_user.id, UserExternalIdentity.provider == "google")
+            .first()
         )
-        if other_identities_count == 0:
+        if not link:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot unlink Google account without first setting a password or having another external identity linked. You would be locked out of your account."
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No linked Google identity found for this account."
             )
 
-    db.delete(link)
-    db.commit()
+        if not current_user.password_hash:
+            other_identities_count = (
+                db.query(UserExternalIdentity)
+                .filter(
+                    UserExternalIdentity.user_id == current_user.id,
+                    UserExternalIdentity.provider != "google"
+                )
+                .count()
+            )
+            if other_identities_count == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot unlink Google account without first setting a password or having another external identity linked. You would be locked out of your account."
+                )
 
-    log_audit_event(
-        db=db,
-        case_id=None,
-        event_type="GOOGLE_OAUTH_UNLINKED",
-        details=f"Google account unlinked from user '{current_user.email}'.",
-        actor_id=current_user.id,
-        actor_name=current_user.name,
-    )
+        db.delete(link)
+        db.commit()
 
-    return {"message": "Google account successfully unlinked."}
+        try:
+            log_audit_event(
+                db=db,
+                case_id=None,
+                event_type="GOOGLE_OAUTH_UNLINKED",
+                details=f"Google account unlinked from user '{current_user.email}'.",
+                actor_id=current_user.id,
+                actor_name=current_user.name,
+            )
+        except Exception as audit_err:
+            logger.warning(f"Failed to record audit event for unlinking: {audit_err}")
+
+        return {"message": "Google account successfully unlinked."}
+    except HTTPException:
+        raise
+    except SQLAlchemyError as db_err:
+        db.rollback()
+        logger.error(f"Database error unlinking Google identity: {db_err}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database error unlinking Google account. Please try again."
+        )
+    except Exception as exc:
+        db.rollback()
+        logger.error(f"Unexpected error unlinking Google identity: {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to unlink Google identity."
+        )
 
 
 

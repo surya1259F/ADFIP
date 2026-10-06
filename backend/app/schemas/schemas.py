@@ -27,9 +27,20 @@ class UserResponse(BaseModel):
     name: str
     organization: str
     badge_id: Optional[str] = None
+    badge_number: Optional[str] = None
+    avatar_url: Optional[str] = None
     role: str
     is_active: bool
     created_at: datetime
+    last_login_at: Optional[datetime] = None
+
+    @model_validator(mode="after")
+    def sync_badge_number(self):
+        if not self.badge_number and self.badge_id:
+            self.badge_number = self.badge_id
+        elif not self.badge_id and self.badge_number:
+            self.badge_id = self.badge_number
+        return self
 
     @computed_field
     @property
@@ -954,40 +965,6 @@ class UserProfileUpdateRequest(BaseModel):
     badge_number: Optional[str] = None
     avatar_url: Optional[str] = None
 
-
-class UserResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    email: str
-    name: str
-    organization: str
-    badge_id: Optional[str] = None
-    badge_number: Optional[str] = None
-    avatar_url: Optional[str] = None
-    role: str
-    is_active: bool
-    created_at: datetime
-    last_login_at: Optional[datetime] = None
-
-    @model_validator(mode="after")
-    def sync_badge_number(self):
-        if not self.badge_number and self.badge_id:
-            self.badge_number = self.badge_id
-        elif not self.badge_id and self.badge_number:
-            self.badge_id = self.badge_number
-        return self
-
-    @computed_field
-    @property
-    def roles(self) -> List[str]:
-        return [self.role] if self.role else ["INVESTIGATOR"]
-
-    @computed_field
-    @property
-    def permissions(self) -> List[str]:
-        from backend.app.services.authorization import get_role_permissions
-        return get_role_permissions(self.role)
 
 
 class TokenResponse(BaseModel):
