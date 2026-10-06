@@ -67,16 +67,47 @@ class LocalLLMProvider(LLMProvider):
         return f"Investigation identified {len(findings)} technical findings across analyzed forensic artifacts."
 
 class GeminiProvider(LLMProvider):
-    def __init__(self, api_key: Optional[str] = None):
+    """
+    Production Google Gemini provider integrating directly with GeminiAdapter.
+    Executes real generateContent requests against Google Generative Language API.
+    Never returns fake or synthetic responses.
+    """
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
+        from backend.app.services.ai_provider import GeminiAdapter
         self.api_key = api_key
+        self.model = model or "gemini-2.5-flash"
+        self._adapter = GeminiAdapter()
 
     async def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
-        if not self.api_key:
-            return "[Gemini Provider]: API Key not configured. Using local fallback reasoning."
-        return "[Gemini Reasoner]: Analysis generated."
+        from backend.app.services.ai_provider import ProviderRequest, AIErrorCode, ProviderError
+        from backend.app.core.config import settings
+
+        key = self.api_key or (settings.GEMINI_API_KEY if settings.GEMINI_API_KEY else None)
+        if not key:
+            raise ProviderError(
+                self._adapter.provider_id,
+                "API key is not configured for Google Gemini provider.",
+                error_code=AIErrorCode.CONFIGURATION_ERROR
+            )
+
+        req = ProviderRequest(
+            provider=self._adapter.provider_id,
+            model=self.model,
+            prompt=prompt,
+            system_prompt=system_prompt,
+            api_key=key,
+        )
+        res = await self._adapter.generate(req)
+        return res.content
 
     async def analyze(self, verified_context: Dict[str, Any]) -> Dict[str, Any]:
-        return {"status": "analyzed"}
+        prompt = f"Analyze verified forensic context and provide technical classification:\n{json.dumps(verified_context, default=str)}"
+        content = await self.generate(prompt)
+        return {"status": "analyzed", "content": content}
 
     async def summarize(self, findings: List[Dict[str, Any]]) -> str:
-        return f"Summary of {len(findings)} findings."
+        if not findings:
+            return "No verified findings available for summary."
+        prompt = f"Summarize technical findings for forensic report:\n{json.dumps(findings, default=str)}"
+        return await self.generate(prompt)
+

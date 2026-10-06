@@ -26,6 +26,7 @@ def auto_authenticate_tests(request):
         "test_case_authorization",
         "test_user_administration",
         "test_ai_api",
+        "test_gemini",
         "test_case_creation_workflow",
         "test_investigation_strategy_engine",
         "test_tool_selection",

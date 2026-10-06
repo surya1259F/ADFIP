@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { PageContainer } from '../components/PageContainer';
 import { useInvestigationStore } from '../stores/investigationStore';
-import { api } from '../services/api';
+import { aiService, type AIProviderConfigRequest } from '../services/ai';
+import { normalizeError } from '../services/client';
 import {
   Key,
   ShieldAlert,
@@ -14,20 +15,26 @@ import {
 
 export const AIProviderPage: React.FC = () => {
   const {
-    aiConfig,
     updateAIConfig,
-    aiProviderTest,
-    aiProviderTestLoading,
-    aiProviderTestError,
-    testAIProvider
   } = useInvestigationStore();
 
-  const [provider, setProvider] = useState<'openai' | 'anthropic' | 'google' | 'local_stub'>(aiConfig.provider || 'google');
-  const [model, setModel] = useState<string>(aiConfig.model || 'gemini-2.5-flash');
+  const [provider, setProvider] = useState<'openai' | 'anthropic' | 'gemini' | 'local_stub'>('gemini');
+  const [model, setModel] = useState<string>('gemini-2.5-flash');
   const [apiKey, setApiKey] = useState<string>('');
   const [baseUrl, setBaseUrl] = useState<string>('');
   const [saveStatusMsg, setSaveStatusMsg] = useState<string>('');
   const [dynamicModels, setDynamicModels] = useState<string[]>([]);
+  const [isTesting, setIsTesting] = useState<boolean>(false);
+  const [testResult, setTestResult] = useState<{
+    status: 'SUCCESS' | 'FAILED';
+    provider: string;
+    model: string;
+    details: string;
+    latency_ms?: number | null;
+  } | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [backendConfig, setBackendConfig] = useState<any>(null);
 
   const modelOptions = {
     openai: [
@@ -40,7 +47,7 @@ export const AIProviderPage: React.FC = () => {
       { id: 'claude-3-5-haiku', label: 'Claude 3.5 Haiku (Fast)' },
       { id: 'claude-3-opus', label: 'Claude 3 Opus (Deep Analysis)' }
     ],
-    google: [
+    gemini: [
       { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash (Recommended)' },
       { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (Fast Reasoning)' },
       { id: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash (Legacy Fast)' },
@@ -51,11 +58,41 @@ export const AIProviderPage: React.FC = () => {
     ]
   };
 
+  // Load existing configuration from backend on mount
+  useEffect(() => {
+    let active = true;
+    const fetchConfig = async () => {
+      try {
+        const cfg = await aiService.getConfig();
+        if (active && cfg) {
+          setBackendConfig(cfg);
+          const p = cfg.provider === 'google' ? 'gemini' : cfg.provider;
+          setProvider(p as any);
+          if (cfg.model) setModel(cfg.model);
+          if (cfg.endpoint) setBaseUrl(cfg.endpoint);
+          updateAIConfig({
+            provider: p as any,
+            model: cfg.model,
+            has_key: cfg.has_api_key,
+            is_tested: cfg.last_test_status === 'SUCCESS',
+            status: cfg.configured ? 'CONFIGURED' : 'NOT_CONFIGURED',
+            last_tested: cfg.last_tested_at || undefined,
+          });
+        }
+      } catch {
+        // Unconfigured or error
+      }
+    };
+    fetchConfig();
+    return () => { active = false; };
+  }, []);
+
+  // Fetch models for selected provider
   useEffect(() => {
     let active = true;
     const fetchModels = async () => {
       try {
-        const models = await api.getAIProviderModels(provider);
+        const models = await aiService.getModels(provider);
         if (active && models && models.length > 0) {
           setDynamicModels(models);
         } else if (active) {
@@ -77,34 +114,83 @@ export const AIProviderPage: React.FC = () => {
   }, [dynamicModels, provider]);
 
   const handleTestConnection = async () => {
-    if (aiProviderTestLoading) return;
+    if (isTesting) return;
+    setIsTesting(true);
+    setTestError(null);
+    setTestResult(null);
     try {
-      await testAIProvider({
+      const res = await aiService.testConnection({
         provider,
         model,
         api_key: apiKey.trim() || undefined,
-        base_url: baseUrl.trim() || undefined
+        endpoint: baseUrl.trim() || undefined,
       });
-    } catch {
-      // Error captured in aiProviderTestError state
+      setTestResult({
+        status: res.success ? 'SUCCESS' : 'FAILED',
+        provider: res.provider,
+        model: res.model,
+        details: res.status_message,
+        latency_ms: res.latency_ms,
+      });
+    } catch (err: any) {
+      const msg = normalizeError(err);
+      setTestError(msg);
+      setTestResult({
+        status: 'FAILED',
+        provider,
+        model,
+        details: msg,
+      });
+    } finally {
+      setIsTesting(false);
     }
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    updateAIConfig({
-      provider,
-      model,
-      has_key: Boolean(apiKey.trim() || provider === 'local_stub'),
-      is_tested: aiProviderTest?.status === 'SUCCESS',
-      status: (apiKey.trim() || provider === 'local_stub') ? 'CONFIGURED' : 'NOT_CONFIGURED',
-      last_tested: new Date().toISOString()
-    });
-    // CRITICAL CREDENTIAL RULE: Clear transient API key input state after save
-    setApiKey('');
-    setSaveStatusMsg('AI Provider configuration saved securely.');
-    setTimeout(() => setSaveStatusMsg(''), 4000);
+    if (isSaving) return;
+    setIsSaving(true);
+    setSaveStatusMsg('');
+    setTestError(null);
+
+    try {
+      const payload: AIProviderConfigRequest = {
+        provider,
+        model,
+        endpoint: baseUrl.trim() || undefined,
+        api_key: apiKey.trim() || undefined,
+        is_enabled: true,
+      };
+
+      const saved = await aiService.saveConfig(payload);
+      setBackendConfig(saved);
+
+      // Clear transient API key input immediately
+      setApiKey('');
+
+      updateAIConfig({
+        provider: (saved.provider === 'google' ? 'gemini' : saved.provider) as any,
+        model: saved.model,
+        has_key: saved.has_api_key,
+        is_tested: testResult?.status === 'SUCCESS',
+        status: saved.configured ? 'CONFIGURED' : 'NOT_CONFIGURED',
+        last_tested: new Date().toISOString(),
+      });
+
+      setSaveStatusMsg('AI Provider configuration encrypted and persisted to backend successfully.');
+      setTimeout(() => setSaveStatusMsg(''), 4000);
+    } catch (err) {
+      setTestError(normalizeError(err));
+    } finally {
+      setIsSaving(false);
+    }
   };
+
+  const statusLabel = backendConfig?.configured
+    ? 'CONFIGURED'
+    : (apiKey.trim() || provider === 'local_stub')
+      ? 'READY_TO_SAVE'
+      : 'NOT_CONFIGURED';
 
   return (
     <PageContainer
@@ -121,7 +207,8 @@ export const AIProviderPage: React.FC = () => {
           <p className="text-slate-300 leading-relaxed font-sans text-xs">
             The LLM is <strong>NOT</strong> the source of forensic truth. Forensic tools (TSK, Volatility 3, YARA, python-evtx)
             extract facts and produce artifacts. The backend Verification Layer determines whether findings are supported.
-            API keys submitted for testing exist <strong>transiently in-memory only</strong> and are never saved to disk, browser storage, or backend logs.
+            Your API key is encrypted at rest using authenticated cryptography and stored securely for your ADFIP account.
+            The plaintext key is never returned by the backend after saving and is never stored in browser storage.
           </p>
         </div>
 
@@ -133,32 +220,35 @@ export const AIProviderPage: React.FC = () => {
         )}
 
         {/* Backend Provider Test Error */}
-        {aiProviderTestError && (
+        {testError && (
           <div className="p-3 rounded-lg border text-xs font-mono flex items-center gap-2 bg-rose-500/10 border-rose-500/30 text-rose-300">
             <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-            <span>Provider Test Failed: {aiProviderTestError}</span>
+            <span>Provider Test Failed: {testError}</span>
           </div>
         )}
 
         {/* Backend Provider Test Response Display */}
-        {aiProviderTest && (
+        {testResult && (
           <div className={`p-4 rounded-xl border text-xs font-mono space-y-2 ${
-            aiProviderTest.status === 'SUCCESS'
+            testResult.status === 'SUCCESS'
               ? 'bg-emerald-950/30 border-emerald-800/80 text-emerald-300'
               : 'bg-rose-950/30 border-rose-800/80 text-rose-300'
           }`}>
             <div className="flex items-center justify-between font-bold">
               <div className="flex items-center gap-2">
-                {aiProviderTest.status === 'SUCCESS' ? (
+                {testResult.status === 'SUCCESS' ? (
                   <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                 ) : (
                   <AlertCircle className="w-4 h-4 text-rose-400" />
                 )}
-                <span>Provider Test Result: [{aiProviderTest.status}]</span>
+                <span>Provider Test Result: [{testResult.status}]</span>
+                {testResult.latency_ms !== undefined && testResult.latency_ms !== null && (
+                  <span className="text-xs font-normal text-slate-400">({testResult.latency_ms} ms)</span>
+                )}
               </div>
-              <span className="text-[10px] text-slate-400">Provider: {aiProviderTest.provider} ({aiProviderTest.model})</span>
+              <span className="text-[10px] text-slate-400">Provider: {testResult.provider} ({testResult.model})</span>
             </div>
-            <p className="text-[11px] text-slate-300 leading-relaxed font-sans">{aiProviderTest.details}</p>
+            <p className="text-[11px] text-slate-300 leading-relaxed font-sans">{testResult.details}</p>
           </div>
         )}
 
@@ -167,11 +257,13 @@ export const AIProviderPage: React.FC = () => {
           <div className="flex items-center justify-between border-b border-slate-800 pb-3">
             <h3 className="font-mono text-slate-200 font-bold uppercase">Provider Credentials & Target</h3>
             <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
-              aiConfig.status === 'CONFIGURED'
+              statusLabel === 'CONFIGURED'
                 ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                : statusLabel === 'READY_TO_SAVE'
+                ? 'text-blue-400 bg-blue-500/10 border-blue-500/20'
                 : 'text-amber-400 bg-amber-500/10 border-amber-500/20'
             }`}>
-              {aiConfig.status}
+              {statusLabel}
             </span>
           </div>
 
@@ -182,7 +274,7 @@ export const AIProviderPage: React.FC = () => {
                 { id: 'local_stub', label: 'Local Engine' },
                 { id: 'openai', label: 'OpenAI' },
                 { id: 'anthropic', label: 'Anthropic' },
-                { id: 'google', label: 'Google Gemini' }
+                { id: 'gemini', label: 'Google Gemini' }
               ].map((p) => (
                 <button
                   type="button"
@@ -190,6 +282,8 @@ export const AIProviderPage: React.FC = () => {
                   onClick={() => {
                     setProvider(p.id as any);
                     setModel(modelOptions[p.id as keyof typeof modelOptions][0].id);
+                    setTestResult(null);
+                    setTestError(null);
                   }}
                   className={`p-2.5 rounded-lg border text-center transition-all ${
                     provider === p.id
@@ -222,15 +316,25 @@ export const AIProviderPage: React.FC = () => {
             <div className="space-y-4">
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="font-mono text-slate-400 uppercase text-[11px]">API Key (Runtime Only)</label>
+                  <label className="font-mono text-slate-400 uppercase text-[11px]">
+                    API Key {backendConfig?.has_api_key && backendConfig?.provider === provider && (
+                      <span className="text-emerald-400 font-normal">
+                        (Configured: {backendConfig.masked_api_key || 'Encrypted on Server'})
+                      </span>
+                    )}
+                  </label>
                   <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
-                    <Lock className="w-3 h-3" /> Never stored in disk, localStorage or logs
+                    <Lock className="w-3 h-3" /> Encrypted at rest; never stored in browser
                   </span>
                 </div>
                 <div className="relative">
                   <input
                     type="password"
-                    placeholder="sk-••••••••••••••••••••••••••••••••"
+                    placeholder={
+                      backendConfig?.has_api_key && backendConfig?.provider === provider
+                        ? 'Enter new API key to replace existing saved key'
+                        : 'Enter API key (e.g. AIzaSy...)'
+                    }
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
@@ -247,7 +351,7 @@ export const AIProviderPage: React.FC = () => {
                 <div className="relative">
                   <input
                     type="text"
-                    placeholder="https://api.openai.com/v1"
+                    placeholder="https://generativelanguage.googleapis.com"
                     value={baseUrl}
                     onChange={(e) => setBaseUrl(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-8 pr-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-indigo-500"
@@ -262,10 +366,10 @@ export const AIProviderPage: React.FC = () => {
             <button
               type="button"
               onClick={handleTestConnection}
-              disabled={aiProviderTestLoading}
+              disabled={isTesting}
               className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 rounded-lg text-xs transition-colors"
             >
-              {aiProviderTestLoading ? (
+              {isTesting ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   <span>Testing Connection...</span>
@@ -276,9 +380,17 @@ export const AIProviderPage: React.FC = () => {
             </button>
             <button
               type="submit"
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-lg text-xs shadow-md shadow-indigo-500/20 transition-colors"
+              disabled={isSaving}
+              className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium rounded-lg text-xs shadow-md shadow-indigo-500/20 transition-colors"
             >
-              Save Configuration
+              {isSaving ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Saving...</span>
+                </>
+              ) : (
+                <span>Save Configuration</span>
+              )}
             </button>
           </div>
         </form>

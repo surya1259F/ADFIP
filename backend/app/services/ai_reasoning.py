@@ -62,6 +62,7 @@ from backend.app.services.ai_provider import (
     ProviderRequest,
     ProviderResponse,
     ProviderError,
+    AIErrorCode,
     get_ai_adapter
 )
 from backend.app.services.audit import log_audit_event
@@ -161,6 +162,8 @@ class AIReasoningService:
         Encrypts API keys at rest and never logs them.
         """
         provider_clean = data.provider.lower().strip()
+        if provider_clean == "google":
+            provider_clean = "gemini"
         allowed_providers = {"openai", "anthropic", "gemini", "local_openai", "local_stub"}
         if provider_clean not in allowed_providers:
             raise HTTPException(
@@ -296,13 +299,18 @@ class AIReasoningService:
 
         if req and req.provider:
             provider_name = req.provider.lower().strip()
+            if provider_name == "google":
+                provider_name = "gemini"
             model_name = req.model or "default"
             api_key_plain = req.api_key.strip() if req.api_key else None
             endpoint_url = req.endpoint.strip() if req.endpoint else None
             if not api_key_plain:
                 # User did not provide key in test request; check their saved DB configuration
                 cfg = cls.get_provider_config(db, user, case_id)
-                if cfg and cfg.provider == provider_name and cfg.api_key_encrypted:
+                cfg_p = (cfg.provider.lower().strip() if cfg else "")
+                if cfg_p == "google":
+                    cfg_p = "gemini"
+                if cfg and cfg_p == provider_name and cfg.api_key_encrypted:
                     api_key_plain = decrypt_credential(cfg.api_key_encrypted)
                     if not req.model or req.model == "default":
                         model_name = cfg.model
@@ -311,17 +319,21 @@ class AIReasoningService:
         else:
             cfg = cls.get_provider_config(db, user, case_id)
             if cfg:
-                provider_name = cfg.provider
+                provider_name = cfg.provider.lower().strip()
+                if provider_name == "google":
+                    provider_name = "gemini"
                 model_name = cfg.model
                 api_key_plain = decrypt_credential(cfg.api_key_encrypted)
                 endpoint_url = cfg.endpoint
             elif settings.GEMINI_API_KEY:
                 provider_name = settings.DEFAULT_LLM_PROVIDER
+                if provider_name == "google":
+                    provider_name = "gemini"
                 model_name = getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash")
                 api_key_plain = settings.GEMINI_API_KEY
                 endpoint_url = None
 
-        if not api_key_plain and provider_name in ("gemini", "google") and settings.GEMINI_API_KEY:
+        if not api_key_plain and provider_name == "gemini" and settings.GEMINI_API_KEY:
             api_key_plain = settings.GEMINI_API_KEY
 
         if provider_name in ("local_stub", "none"):
@@ -362,7 +374,7 @@ class AIReasoningService:
 
         # Update health status if config exists
         cfg = cls.get_provider_config(db, user, case_id)
-        if cfg and cfg.provider == provider_name:
+        if cfg and (cfg.provider == provider_name or (provider_name == "gemini" and cfg.provider == "google")):
             cfg.last_tested_at = utc_now()
             cfg.last_test_status = "SUCCESS" if success else "FAILED"
             db.commit()
@@ -406,8 +418,11 @@ class AIReasoningService:
         """
         cfg = cls.get_provider_config(db, user, case_id)
         effective_provider = (provider or (cfg.provider if cfg else settings.DEFAULT_LLM_PROVIDER)).lower().strip()
+        if effective_provider == "google":
+            effective_provider = "gemini"
+
         api_key_plain = decrypt_credential(cfg.api_key_encrypted) if cfg and cfg.api_key_encrypted else None
-        if not api_key_plain and effective_provider in ("gemini", "google") and settings.GEMINI_API_KEY:
+        if not api_key_plain and effective_provider == "gemini" and settings.GEMINI_API_KEY:
             api_key_plain = settings.GEMINI_API_KEY
         endpoint_url = cfg.endpoint if cfg else None
 
@@ -423,7 +438,7 @@ class AIReasoningService:
         except Exception as e:
             logger.warning(f"Error listing models for provider '{effective_provider}': {ProviderError._sanitize(str(e))}")
             if effective_provider in ("gemini", "google"):
-                return [getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash"), "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+                return [getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash")]
             elif effective_provider == "openai":
                 return ["gpt-4o", "gpt-4o-mini", "o3-mini"]
             elif effective_provider == "anthropic":
@@ -706,42 +721,72 @@ class AIReasoningService:
 
         # 3. Determine Execution Mode (External LLM vs. Deterministic Fallback)
         provider_cfg = cls.get_provider_config(db, user, case.id)
-        target_provider = (request.provider or (provider_cfg.provider if provider_cfg else settings.DEFAULT_LLM_PROVIDER)).lower().strip()
+        if request.provider:
+            target_provider = request.provider.lower().strip()
+        elif not request.allow_external_egress:
+            target_provider = "local_stub"
+        elif provider_cfg and provider_cfg.provider:
+            target_provider = provider_cfg.provider.lower().strip()
+        else:
+            target_provider = settings.DEFAULT_LLM_PROVIDER.lower().strip()
+
+        if target_provider == "google":
+            target_provider = "gemini"
+
         target_model = request.model or (provider_cfg.model if provider_cfg else getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash"))
         api_key_plain = decrypt_credential(provider_cfg.api_key_encrypted) if provider_cfg else None
-        if not api_key_plain and target_provider in ("gemini", "google") and settings.GEMINI_API_KEY:
+        if not api_key_plain and target_provider == "gemini" and settings.GEMINI_API_KEY:
             api_key_plain = settings.GEMINI_API_KEY
         endpoint_url = provider_cfg.endpoint if provider_cfg else None
 
-        use_external = (
-            request.allow_external_egress
-            and target_provider not in ("local_stub", "none")
-            and bool(api_key_plain)
-            and (provider_cfg.is_enabled if provider_cfg else True)
-        )
-
-        execution_mode = "EXTERNAL_LLM" if use_external else "DETERMINISTIC_FALLBACK"
         statements: List[Dict[str, Any]] = []
         raw_llm_summary = None
 
-        if use_external:
+        if target_provider not in ("local_stub", "none"):
+            if not request.allow_external_egress and target_provider != "local_openai":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"External provider '{target_provider}' requires allow_external_egress=True."
+                )
+            if provider_cfg and not provider_cfg.is_enabled:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"[{AIErrorCode.CONFIGURATION_ERROR.value}] Provider '{target_provider}' is currently disabled in Settings."
+                )
+            if not api_key_plain and target_provider != "local_openai":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"[{AIErrorCode.CONFIGURATION_ERROR.value}] API key is not configured for provider '{target_provider}'. Please configure your API key in Settings."
+                )
+
+            execution_mode = "EXTERNAL_LLM" if target_provider != "local_openai" else "LOCAL_LLM"
             try:
                 statements, raw_llm_summary = await cls._execute_external_reasoning(
                     provider=target_provider,
                     model=target_model,
-                    api_key=api_key_plain,
+                    api_key=api_key_plain or "",
                     base_url=endpoint_url,
                     objective=request.objective,
                     context=context_data
                 )
+            except ProviderError as pe:
+                status_code = status.HTTP_502_BAD_GATEWAY
+                if pe.error_code == AIErrorCode.INVALID_API_KEY:
+                    status_code = status.HTTP_401_UNAUTHORIZED
+                elif pe.error_code == AIErrorCode.MODEL_UNAVAILABLE:
+                    status_code = status.HTTP_404_NOT_FOUND
+                elif pe.error_code in (AIErrorCode.QUOTA_EXCEEDED, AIErrorCode.RATE_LIMITED):
+                    status_code = status.HTTP_429_TOO_MANY_REQUESTS
+                elif pe.error_code == AIErrorCode.CONFIGURATION_ERROR:
+                    status_code = status.HTTP_400_BAD_REQUEST
+                raise HTTPException(status_code=status_code, detail=f"[{pe.error_code.value}] {pe.message}")
+            except HTTPException:
+                raise
             except Exception as e:
-                # Graceful Fallback if external provider fails
-                execution_mode = "DETERMINISTIC_FALLBACK"
-                statements = cls._execute_deterministic_fallback(
-                    objective=request.objective,
-                    context=context_data
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"[{AIErrorCode.PROVIDER_UNREACHABLE.value}] Provider '{target_provider}' execution failed: {ProviderError._sanitize(str(e))}"
                 )
-                raw_llm_summary = f"External provider '{target_provider}' failed ({ProviderError._sanitize(str(e))}); deterministic fallback used."
         else:
             execution_mode = "DETERMINISTIC_FALLBACK"
             statements = cls._execute_deterministic_fallback(

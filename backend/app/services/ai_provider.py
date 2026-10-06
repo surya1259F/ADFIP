@@ -96,7 +96,7 @@ class ProviderError(Exception):
         sanitized = re.sub(r'x-api-key["\']?\s*[:=]\s*["\']?[A-Za-z0-9_\-\.]+', 'x-api-key: [REDACTED]', sanitized, flags=re.IGNORECASE)
         sanitized = re.sub(r'x-goog-api-key["\']?\s*[:=]\s*["\']?[A-Za-z0-9_\-\.]+', 'x-goog-api-key: [REDACTED]', sanitized, flags=re.IGNORECASE)
         sanitized = re.sub(r'key=[A-Za-z0-9_\-\.]{10,}', 'key=[REDACTED]', sanitized, flags=re.IGNORECASE)
-        sanitized = re.sub(r'AIza[A-Za-z0-9_\-]{35}', '[REDACTED_GEMINI_KEY]', sanitized)
+        sanitized = re.sub(r'AIza[A-Za-z0-9_\-]{20,}', '[REDACTED_GEMINI_KEY]', sanitized)
         sanitized = re.sub(r'sk-[A-Za-z0-9_-]{8,}', 'sk-[REDACTED]', sanitized)
         return sanitized
 
@@ -476,22 +476,13 @@ class GeminiAdapter(BaseAIAdapter):
         api_key: Optional[str] = None,
         base_url: Optional[str] = None
     ) -> List[str]:
+        default_model_name = self._normalize_model(getattr(settings, "GEMINI_MODEL", self.DEFAULT_MODEL) or self.DEFAULT_MODEL)
         effective_key = api_key or (settings.GEMINI_API_KEY if settings.GEMINI_API_KEY else None)
-        fallback_models = [
-            getattr(settings, "GEMINI_MODEL", self.DEFAULT_MODEL),
-            "gemini-2.0-flash",
-            "gemini-1.5-flash",
-            "gemini-1.5-pro"
-        ]
-        seen = set()
-        deduped_fallbacks = []
-        for m in fallback_models:
-            if m not in seen:
-                seen.add(m)
-                deduped_fallbacks.append(m)
 
         if not effective_key:
-            return deduped_fallbacks
+            # Without a configured API key, return only the configured default model.
+            # Do NOT pretend that unverified fallback models were discovered from the Google API.
+            return [default_model_name]
 
         target_url = (base_url or self.DEFAULT_BASE_URL).rstrip("/")
         self._validate_https_url(target_url, is_local=False)
@@ -510,7 +501,7 @@ class GeminiAdapter(BaseAIAdapter):
                             clean_name = m.get("name", "").replace("models/", "")
                             if clean_name and not clean_name.endswith("-tuning") and not clean_name.startswith("text-embedding"):
                                 discovered.append(clean_name)
-                    return discovered if discovered else deduped_fallbacks
+                    return discovered if discovered else [default_model_name]
                 else:
                     category = self._categorize_http_status(res.status_code, res.text)
                     detail = self._extract_error_detail(res.text)

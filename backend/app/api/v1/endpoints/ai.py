@@ -245,6 +245,8 @@ async def provider_test_endpoint(
     current_user: User = Depends(get_current_active_user)
 ):
     p_clean = request.provider.lower().strip()
+    if p_clean == "google":
+        p_clean = "gemini"
     if not p_clean:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provider name is required.")
 
@@ -260,10 +262,13 @@ async def provider_test_endpoint(
             effective_base_url = request.base_url
             if not effective_key:
                 cfg = AIReasoningService.get_provider_config(db, current_user)
-                if cfg and cfg.provider == p_clean and cfg.api_key_encrypted:
+                cfg_p = (cfg.provider.lower().strip() if cfg else "")
+                if cfg_p == "google":
+                    cfg_p = "gemini"
+                if cfg and cfg_p == p_clean and cfg.api_key_encrypted:
                     effective_key = decrypt_credential(cfg.api_key_encrypted)
                     effective_base_url = effective_base_url or cfg.endpoint
-                elif p_clean in ("gemini", "google") and settings.GEMINI_API_KEY:
+                elif p_clean == "gemini" and settings.GEMINI_API_KEY:
                     effective_key = settings.GEMINI_API_KEY
 
             test_req = ProviderRequest(

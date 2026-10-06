@@ -604,7 +604,7 @@ export interface TokenResponse {
 }
 
 export interface AIProviderConfig {
-  provider: 'openai' | 'anthropic' | 'google' | 'local_stub' | null;
+  provider: 'openai' | 'anthropic' | 'google' | 'gemini' | 'local_stub' | null;
   model: string | null;
   has_key: boolean;
   is_tested: boolean;

@@ -367,6 +367,8 @@ async def run_copilot_query(
     context, context_truncated, valid_finding_ids, valid_artifact_ids = build_case_copilot_context(case_id, db)
 
     p_clean = provider.lower().strip()
+    if p_clean == "google":
+        p_clean = "gemini"
     if p_clean in ("local_stub", "none", ""):
         return run_deterministic_copilot_fallback(context, query, context_truncated, valid_finding_ids, valid_artifact_ids)
 
@@ -464,6 +466,8 @@ async def explain_case_finding(
     mitre_techs = finding.mitre_techniques or []
 
     p_clean = provider.lower().strip()
+    if p_clean == "google":
+        p_clean = "gemini"
     if p_clean in ("local_stub", "none", ""):
         return AIExplanationResponse(
             finding_id=finding.id,
