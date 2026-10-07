@@ -2109,12 +2109,28 @@ class InvestigatorDecisionType(str, Enum):
     REQUEST_MORE_EVIDENCE = "REQUEST_MORE_EVIDENCE"
 
 
+class ChallengeCategory(str, Enum):
+    EVIDENCE_ASSOCIATION = "EVIDENCE_ASSOCIATION"
+    TOOL_RESULT = "TOOL_RESULT"
+    RULE_RELEVANCE = "RULE_RELEVANCE"
+    ARTIFACT_INTERPRETATION = "ARTIFACT_INTERPRETATION"
+    CLASSIFICATION = "CLASSIFICATION"
+    CONFIDENCE = "CONFIDENCE"
+    INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
+    CONTRADICTORY_EVIDENCE = "CONTRADICTORY_EVIDENCE"
+    TIMELINE = "TIMELINE"
+    PROVENANCE = "PROVENANCE"
+    AI_INFERENCE = "AI_INFERENCE"
+    OTHER = "OTHER"
+
+
 class InvestigatorReviewCreateRequest(BaseModel):
     target_type: str = Field(..., description="Target type: FINDING, AI_REASONING, CLAIM")
     target_id: str = Field(..., min_length=1, description="Target finding or reasoning record ID")
     statement_id: Optional[str] = Field(None, description="Optional specific AI statement ID")
     decision: str = Field(..., description="ACCEPT, CHALLENGE, REJECT, or REQUEST_MORE_EVIDENCE")
     comment: Optional[str] = Field(None, description="Investigator rationale and notes")
+    challenge_category: Optional[str] = Field(None, description="Structured category for CHALLENGE decision")
     supporting_references: List[str] = Field(default_factory=list, description="Referenced evidence/artifact/finding IDs")
 
 
@@ -2129,6 +2145,7 @@ class InvestigatorReviewResponse(BaseModel):
     target_id: str
     statement_id: Optional[str] = None
     decision: str
+    challenge_category: Optional[str] = None
     comment: Optional[str] = None
     supporting_references: List[str] = Field(default_factory=list)
     resulting_workflow_action: Optional[str] = None
@@ -2162,6 +2179,8 @@ class RequestMoreEvidenceRequest(BaseModel):
     requested_capability: str = Field(..., min_length=1)
     parameters: Dict[str, Any] = Field(default_factory=dict)
     comment: str = Field(..., min_length=1)
+    insufficient_reason: Optional[str] = Field(None, description="Why the current finding is insufficient")
+    missing_information: Optional[str] = Field(None, description="What forensic information is missing")
     supporting_references: List[str] = Field(default_factory=list)
 
 

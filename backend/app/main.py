@@ -60,8 +60,13 @@ async def lifespan(app: FastAPI):
             if "intent" not in state_cols:
                 conn.execute(text("ALTER TABLE oauth_states ADD COLUMN intent VARCHAR(20) DEFAULT 'SIGN_IN' NOT NULL"))
                 conn.commit()
+
+            rev_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(investigator_reviews)"))]
+            if rev_cols and "challenge_category" not in rev_cols:
+                conn.execute(text("ALTER TABLE investigator_reviews ADD COLUMN challenge_category VARCHAR"))
+                conn.commit()
     except Exception as exc:
-        logger.warning(f"Could not ensure auth tables/columns: {exc}")
+        logger.warning(f"Could not ensure auth/review tables/columns: {exc}")
 
 
     yield

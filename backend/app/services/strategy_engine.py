@@ -226,7 +226,7 @@ DEFAULT_CAPABILITIES: List[Dict[str, Any]] = [
         "name": "YARA Pattern & Rule Signature Scanning",
         "description": "Pattern matching across files and binary samples against compiled YARA threat detection rules.",
         "category": "MALWARE",
-        "supported_evidence_categories": ["executable", "suspicious_file", "malware", "pe_executable", "elf_executable", "memory_dump"],
+        "supported_evidence_categories": ["executable", "suspicious_file", "malware", "pe_executable", "elf_executable", "macho_executable", "suspicious_binary", "generic_binary", "malware_sample", "memory_dump"],
         "supported_evidence_subtypes": ["pe32", "pe64", "elf", "raw_memory"],
         "supported_formats": ["all"],
         "supported_platforms": ["WINDOWS", "LINUX", "MACOS"],
@@ -374,7 +374,7 @@ class EvidenceStrategyAnalyzer:
             domains.extend(["NETWORK_DECODING", "PROTOCOL_ANALYSIS", "SESSION_RECONSTRUCTION"])
         elif classification in ["browser_artifact", "sqlite_database", "history"] or evidence.source_kind == "BROWSER_DB":
             domains.extend(["BROWSER_HISTORY", "DOWNLOADS", "SQLITE_QUERY"])
-        elif classification in ["executable", "suspicious_file", "malware", "pe_executable", "elf_executable", "macho_executable"] or evidence.source_kind == "MALWARE_SAMPLE":
+        elif classification in ["executable", "suspicious_file", "malware", "pe_executable", "elf_executable", "macho_executable", "suspicious_binary", "generic_binary", "malware_sample"] or evidence.source_kind in ["MALWARE_SAMPLE", "GENERIC_BINARY"]:
             domains.extend(["STATIC_BINARY", "PE_HEADER", "YARA_SCANNING"])
         else:
             domains.extend(["METADATA_EXTRACTION", "HASH_LOOKUP"])

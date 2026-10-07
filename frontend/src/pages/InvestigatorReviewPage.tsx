@@ -30,6 +30,21 @@ import {
   X
 } from 'lucide-react';
 
+const CHALLENGE_CATEGORIES = [
+  { value: 'EVIDENCE_ASSOCIATION', label: 'Evidence Association' },
+  { value: 'TOOL_RESULT', label: 'Tool Result Anomaly' },
+  { value: 'RULE_RELEVANCE', label: 'Rule Relevance' },
+  { value: 'ARTIFACT_INTERPRETATION', label: 'Artifact Interpretation' },
+  { value: 'CLASSIFICATION', label: 'Evidence / Fact Classification' },
+  { value: 'CONFIDENCE', label: 'Confidence Score Discrepancy' },
+  { value: 'INSUFFICIENT_EVIDENCE', label: 'Insufficient Supporting Evidence' },
+  { value: 'CONTRADICTORY_EVIDENCE', label: 'Contradictory Evidence Identified' },
+  { value: 'TIMELINE', label: 'Timeline Inconsistency' },
+  { value: 'PROVENANCE', label: 'Provenance Lineage Defect' },
+  { value: 'AI_INFERENCE', label: 'Unsupported AI Inference' },
+  { value: 'OTHER', label: 'Other Methodological Challenge' }
+];
+
 export const InvestigatorReviewPage: React.FC = () => {
   const {
     activeInvestigation,
@@ -51,19 +66,23 @@ export const InvestigatorReviewPage: React.FC = () => {
     decision: InvestigatorDecisionType;
   } | null>(null);
   const [decisionComment, setDecisionComment] = useState('');
+  const [challengeCategory, setChallengeCategory] = useState<string>('EVIDENCE_ASSOCIATION');
   const [submittingDecision, setSubmittingDecision] = useState(false);
 
-  // Request More Evidence Modal
+  // Request More Evidence Modal (Dynamic recommendations, no blind defaults)
   const [rmeModal, setRmeModal] = useState<{
     target_type: string;
     target_id: string;
     statement_id?: string | null;
     title: string;
     evidence_id?: string;
+    recommended_capabilities?: string[];
   } | null>(null);
-  const [rmeCapability, setRmeCapability] = useState('YARA_SCAN');
+  const [rmeCapability, setRmeCapability] = useState('');
   const [rmeObjective, setRmeObjective] = useState('');
   const [rmeComment, setRmeComment] = useState('');
+  const [rmeInsufficientReason, setRmeInsufficientReason] = useState('');
+  const [rmeMissingInfo, setRmeMissingInfo] = useState('');
   const [submittingRme, setSubmittingRme] = useState(false);
 
   // Provenance Drawer
@@ -125,6 +144,16 @@ export const InvestigatorReviewPage: React.FC = () => {
   // Submit Decision Handler
   const handleDecisionSubmit = async () => {
     if (!decisionModal || !activeInvestigation) return;
+    if (decisionModal.decision === 'CHALLENGE') {
+      if (!challengeCategory) {
+        showNotification('error', 'Please select a challenge category.');
+        return;
+      }
+      if (!decisionComment.trim()) {
+        showNotification('error', 'A mandatory rationale is required when challenging a finding or AI claim.');
+        return;
+      }
+    }
     setSubmittingDecision(true);
     try {
       const payload: InvestigatorReviewCreateRequest = {
@@ -132,6 +161,7 @@ export const InvestigatorReviewPage: React.FC = () => {
         target_id: decisionModal.target_id,
         statement_id: decisionModal.statement_id,
         decision: decisionModal.decision,
+        challenge_category: decisionModal.decision === 'CHALLENGE' ? challengeCategory : undefined,
         comment: decisionComment,
         supporting_references: [decisionModal.target_id]
       };
@@ -139,6 +169,7 @@ export const InvestigatorReviewPage: React.FC = () => {
       showNotification('success', `Decision ${decisionModal.decision} successfully recorded with immutable cryptographic hash.`);
       setDecisionModal(null);
       setDecisionComment('');
+      setChallengeCategory('EVIDENCE_ASSOCIATION');
       await loadData();
     } catch (err: any) {
       console.error('Decision submission error:', err);
@@ -151,6 +182,10 @@ export const InvestigatorReviewPage: React.FC = () => {
   // Request More Evidence Handler
   const handleRmeSubmit = async () => {
     if (!rmeModal || !activeInvestigation) return;
+    if (!rmeCapability) {
+      showNotification('error', 'Please select a requested capability.');
+      return;
+    }
     if (!rmeObjective.trim()) {
       showNotification('error', 'Please define an analysis objective for requesting further evidence.');
       return;
@@ -166,16 +201,21 @@ export const InvestigatorReviewPage: React.FC = () => {
         requested_capability: rmeCapability,
         parameters: { fast_mode: true },
         comment: rmeComment,
+        insufficient_reason: rmeInsufficientReason.trim() || undefined,
+        missing_information: rmeMissingInfo.trim() || undefined,
         supporting_references: [rmeModal.target_id]
       };
       const resp = await api.requestMoreEvidence(activeInvestigation.id, payload);
       showNotification(
         'success',
-        `Evidence request approved by Governance Gate and queued in Scheduler (Task: ${resp.task_key}).`
+        `Evidence request approved by Governance Gate and queued in Scheduler (Task: ${resp.task_key || resp.analysis_request_id}).`
       );
       setRmeModal(null);
       setRmeObjective('');
       setRmeComment('');
+      setRmeInsufficientReason('');
+      setRmeMissingInfo('');
+      setRmeCapability('');
       await loadData();
     } catch (err: any) {
       console.error('Request more evidence error:', err);
@@ -488,6 +528,30 @@ export const InvestigatorReviewPage: React.FC = () => {
                     <div>{getDecisionBadge(f.latest_decision)}</div>
                   </div>
 
+                  {/* Confidence Inputs Breakdown */}
+                  {f.confidence_inputs && Object.keys(f.confidence_inputs).length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400 bg-slate-950/70 p-2.5 rounded-lg border border-slate-800">
+                      <span className="text-slate-500 font-mono font-semibold uppercase">Confidence Factors:</span>
+                      {Object.entries(f.confidence_inputs).map(([k, v]) => (
+                        <span key={k} className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300 font-mono">
+                          {k}: <strong className="text-indigo-300">{typeof v === 'number' ? v.toFixed(2) : String(v)}</strong>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Recommended Capabilities based on Target Evidence */}
+                  {f.recommended_capabilities && f.recommended_capabilities.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                      <span className="text-slate-500 uppercase font-mono">Recommended Actions:</span>
+                      {f.recommended_capabilities.map((cap: string) => (
+                        <span key={cap} className="px-1.5 py-0.5 rounded bg-cyan-950/60 border border-cyan-800/50 text-cyan-300 font-mono">
+                          {cap}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
                   <div className="flex flex-wrap items-center justify-between border-t border-slate-800/80 pt-3 gap-3 text-xs font-mono text-slate-400">
                     <div className="flex items-center gap-4 text-[11px]">
                       <span>Confidence: {(f.confidence * 100).toFixed(0)}%</span>
@@ -521,15 +585,16 @@ export const InvestigatorReviewPage: React.FC = () => {
                         Accept
                       </button>
                       <button
-                        onClick={() =>
+                        onClick={() => {
                           setDecisionModal({
                             target_type: 'FINDING',
                             target_id: f.id,
                             statement_id: null,
                             title: f.title,
                             decision: 'CHALLENGE'
-                          })
-                        }
+                          });
+                          setChallengeCategory('EVIDENCE_ASSOCIATION');
+                        }}
                         className="px-2.5 py-1 bg-amber-950 hover:bg-amber-900 text-amber-300 border border-amber-700/60 rounded text-[11px] font-mono font-semibold transition"
                       >
                         Challenge
@@ -549,15 +614,22 @@ export const InvestigatorReviewPage: React.FC = () => {
                         Reject
                       </button>
                       <button
-                        onClick={() =>
+                        onClick={() => {
+                          const recCaps = f.recommended_capabilities || [];
                           setRmeModal({
                             target_type: 'FINDING',
                             target_id: f.id,
                             statement_id: null,
                             title: f.title,
-                            evidence_id: f.supporting_evidence_ids[0]
-                          })
-                        }
+                            evidence_id: f.supporting_evidence_ids?.[0],
+                            recommended_capabilities: recCaps
+                          });
+                          setRmeCapability(recCaps.length > 0 ? recCaps[0] : 'METADATA_EXTRACTION');
+                          setRmeObjective('');
+                          setRmeComment('');
+                          setRmeInsufficientReason('');
+                          setRmeMissingInfo('');
+                        }}
                         className="px-2.5 py-1 bg-cyan-950 hover:bg-cyan-900 text-cyan-300 border border-cyan-700/60 rounded text-[11px] font-mono font-semibold transition"
                       >
                         More Evidence
@@ -646,15 +718,16 @@ export const InvestigatorReviewPage: React.FC = () => {
                               Accept
                             </button>
                             <button
-                              onClick={() =>
+                              onClick={() => {
                                 setDecisionModal({
                                   target_type: 'AI_REASONING',
                                   target_id: r.id,
                                   statement_id: s.statement_id,
                                   title: s.insight,
                                   decision: 'CHALLENGE'
-                                })
-                              }
+                                });
+                                setChallengeCategory('AI_INFERENCE');
+                              }}
                               className="px-2 py-0.5 bg-amber-950/70 hover:bg-amber-900 text-amber-300 border border-amber-700/50 rounded text-[10px] font-semibold"
                             >
                               Challenge
@@ -674,14 +747,21 @@ export const InvestigatorReviewPage: React.FC = () => {
                               Reject
                             </button>
                             <button
-                              onClick={() =>
+                              onClick={() => {
+                                const recCaps = ['EVIDENCE_VERIFICATION', 'LOG_INSPECTION', 'METADATA_EXTRACTION'];
                                 setRmeModal({
                                   target_type: 'AI_REASONING',
                                   target_id: r.id,
                                   statement_id: s.statement_id,
-                                  title: s.insight
-                                })
-                              }
+                                  title: s.insight,
+                                  recommended_capabilities: recCaps
+                                });
+                                setRmeCapability(recCaps[0]);
+                                setRmeObjective('');
+                                setRmeComment('');
+                                setRmeInsufficientReason('');
+                                setRmeMissingInfo('');
+                              }}
                               className="px-2 py-0.5 bg-cyan-950/70 hover:bg-cyan-900 text-cyan-300 border border-cyan-700/50 rounded text-[10px] font-semibold"
                             >
                               More Evidence
@@ -836,14 +916,40 @@ export const InvestigatorReviewPage: React.FC = () => {
                 </div>
               </div>
 
+              {/* Challenge Category Selector (Required for CHALLENGE) */}
+              {decisionModal.decision === 'CHALLENGE' && (
+                <div className="space-y-2">
+                  <label className="text-amber-400 font-mono text-[11px] block uppercase font-bold">
+                    Challenge Category (Required):
+                  </label>
+                  <select
+                    value={challengeCategory}
+                    onChange={(e) => setChallengeCategory(e.target.value)}
+                    className="w-full bg-slate-950 border border-amber-600/70 rounded-lg p-2.5 text-xs font-mono text-amber-200 focus:outline-none focus:border-amber-400"
+                  >
+                    {CHALLENGE_CATEGORIES.map((c) => (
+                      <option key={c.value} value={c.value}>
+                        {c.label} ({c.value})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <label className="text-slate-400 font-mono text-[11px] block uppercase">
-                  Investigator Rationale / Notes (Mandatory for Court Readiness):
+                  {decisionModal.decision === 'CHALLENGE'
+                    ? 'Investigator Challenge Rationale (Mandatory):'
+                    : 'Investigator Rationale / Notes (Mandatory for Court Readiness):'}
                 </label>
                 <textarea
                   value={decisionComment}
                   onChange={(e) => setDecisionComment(e.target.value)}
-                  placeholder="Enter detailed forensic rationale, observed facts, or challenge notes..."
+                  placeholder={
+                    decisionModal.decision === 'CHALLENGE'
+                      ? 'Specify why this finding is challenged (e.g., misidentified binary type, contradictory log timeline, insufficient confidence threshold)...'
+                      : 'Enter detailed forensic rationale, observed facts, or investigative notes...'
+                  }
                   rows={3}
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs text-slate-200 font-sans focus:outline-none focus:border-indigo-500"
                 />
@@ -904,11 +1010,27 @@ export const InvestigatorReviewPage: React.FC = () => {
                   onChange={(e) => setRmeCapability(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500"
                 >
-                  <option value="YARA_SCAN">YARA Signature Scan (Memory &amp; Disk)</option>
-                  <option value="MEMORY_ANALYSIS">Volatility Volatile Memory Analysis</option>
-                  <option value="DISK_INSPECTION">SleuthKit Detailed Filesystem Inspection</option>
-                  <option value="NETWORK_CARVING">Network Packet Carving &amp; Stream Reconstruction</option>
-                  <option value="LOG_INSPECTION">EVTX / Syslog Structured Log Extraction</option>
+                  <option value="" disabled>Select capability...</option>
+                  {rmeModal.recommended_capabilities && rmeModal.recommended_capabilities.length > 0 && (
+                    <optgroup label="Recommended for this Evidence / Finding">
+                      {rmeModal.recommended_capabilities.map((cap) => (
+                        <option key={cap} value={cap}>
+                          {cap} (Recommended)
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  <optgroup label="All Forensic Capabilities">
+                    <option value="METADATA_EXTRACTION">METADATA_EXTRACTION — File Metadata & Structure</option>
+                    <option value="STRINGS_ANALYSIS">STRINGS_ANALYSIS — Printable Strings & IOC Carving</option>
+                    <option value="HASHING">HASHING — Cryptographic Hash Verification</option>
+                    <option value="YARA_SCAN">YARA_SCAN — Pattern & Signature Matching</option>
+                    <option value="MEMORY_ANALYSIS">MEMORY_ANALYSIS — Volatile Memory Forensics</option>
+                    <option value="DISK_INSPECTION">DISK_INSPECTION — Filesystem & Partition Carving</option>
+                    <option value="NETWORK_CARVING">NETWORK_CARVING — PCAP & Stream Reconstruction</option>
+                    <option value="LOG_INSPECTION">LOG_INSPECTION — Event Log & Audit Parsing</option>
+                    <option value="EVIDENCE_VERIFICATION">EVIDENCE_VERIFICATION — Vault Integrity Check</option>
+                  </optgroup>
                 </select>
               </div>
 
@@ -920,7 +1042,33 @@ export const InvestigatorReviewPage: React.FC = () => {
                   type="text"
                   value={rmeObjective}
                   onChange={(e) => setRmeObjective(e.target.value)}
-                  placeholder="e.g., Scan /tmp for malicious cron payload binaries matching known YARA rules"
+                  placeholder="e.g., Scan binary for specific pattern or extract additional strings"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-200 font-sans focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-slate-400 font-mono text-[11px] block uppercase">
+                  Why is Current Finding Insufficient? (Optional Context):
+                </label>
+                <input
+                  type="text"
+                  value={rmeInsufficientReason}
+                  onChange={(e) => setRmeInsufficientReason(e.target.value)}
+                  placeholder="e.g., Single indicator observed; requires correlation or deeper string carving"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-200 font-sans focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-slate-400 font-mono text-[11px] block uppercase">
+                  What Information is Missing? (Optional Context):
+                </label>
+                <input
+                  type="text"
+                  value={rmeMissingInfo}
+                  onChange={(e) => setRmeMissingInfo(e.target.value)}
+                  placeholder="e.g., Exact rule match offsets, export table details, persistence indicators"
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-200 font-sans focus:outline-none focus:border-indigo-500"
                 />
               </div>

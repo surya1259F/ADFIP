@@ -6,6 +6,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from agents.base.agent import Agent, CapabilityRequest, AgentAnalysisResult, AgentSafetyProfile
 from agents.log.parsers.evtx_parser import EvtxParser
+from forensic_tools.evidence_types import calculate_deterministic_confidence
 
 class LogAgent(Agent):
     """
@@ -253,6 +254,13 @@ class LogAgent(Agent):
             elif event.event_id in [4697, 7045]:
                 # Service Installation
                 svc_title = event.service_name or "Unknown Service"
+                conf_score, conf_inputs = calculate_deterministic_confidence(
+                    source_integrity=1.0,
+                    artifact_confidence=0.90,
+                    identifier_match_confidence=0.85,
+                    supporting_source_count=1,
+                    contradictory_evidence=False
+                )
                 findings.append({
                     "id": str(uuid.uuid4()),
                     "investigation_id": inv_id,
@@ -262,7 +270,8 @@ class LogAgent(Agent):
                     "finding_type": "windows_service_installation",
                     "title": f"New Service Installed (Event {event.event_id}): {svc_title} on {event.computer or 'Host'}",
                     "description": f"Windows Event {event.event_id}: Service '{svc_title}' installed with binary image path '{event.service_file_name or 'N/A'}'.",
-                    "confidence": 0.85,
+                    "confidence": conf_score,
+                    "confidence_inputs": conf_inputs,
                     "evidence_reference": source_ref,
                     "verification_status": "UNVERIFIED",
                     "raw_output_reference": f"{raw_output_path}:{source_ref}"
@@ -270,6 +279,13 @@ class LogAgent(Agent):
             elif event.event_id == 4720:
                 # User Account Created
                 tgt = event.target_user or "Unknown Account"
+                conf_score, conf_inputs = calculate_deterministic_confidence(
+                    source_integrity=1.0,
+                    artifact_confidence=0.90,
+                    identifier_match_confidence=0.85,
+                    supporting_source_count=1,
+                    contradictory_evidence=False
+                )
                 findings.append({
                     "id": str(uuid.uuid4()),
                     "investigation_id": inv_id,
@@ -279,7 +295,8 @@ class LogAgent(Agent):
                     "finding_type": "windows_account_creation",
                     "title": f"New User Account Created (Event 4720): {tgt} on {event.computer or 'Host'}",
                     "description": f"Windows Event 4720: User account '{tgt}' created by subject user '{event.user or 'System'}'.",
-                    "confidence": 0.85,
+                    "confidence": conf_score,
+                    "confidence_inputs": conf_inputs,
                     "evidence_reference": source_ref,
                     "verification_status": "UNVERIFIED",
                     "raw_output_reference": f"{raw_output_path}:{source_ref}"
@@ -288,6 +305,13 @@ class LogAgent(Agent):
                 # Member Added to Security Group
                 grp = event.group_name or "Security Group"
                 mbr = event.member_name or "Member"
+                conf_score, conf_inputs = calculate_deterministic_confidence(
+                    source_integrity=1.0,
+                    artifact_confidence=0.90,
+                    identifier_match_confidence=0.85,
+                    supporting_source_count=1,
+                    contradictory_evidence=False
+                )
                 findings.append({
                     "id": str(uuid.uuid4()),
                     "investigation_id": inv_id,
@@ -297,7 +321,8 @@ class LogAgent(Agent):
                     "finding_type": "windows_group_membership_change",
                     "title": f"Member Added to Security Group (Event {event.event_id}): {mbr} to {grp} on {event.computer or 'Host'}",
                     "description": f"Windows Event {event.event_id}: Member '{mbr}' added to group '{grp}' by subject user '{event.user or 'System'}'.",
-                    "confidence": 0.85,
+                    "confidence": conf_score,
+                    "confidence_inputs": conf_inputs,
                     "evidence_reference": source_ref,
                     "verification_status": "UNVERIFIED",
                     "raw_output_reference": f"{raw_output_path}:{source_ref}"

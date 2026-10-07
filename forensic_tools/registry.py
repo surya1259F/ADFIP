@@ -36,7 +36,18 @@ class ToolDefinition(BaseModel):
     def supports_evidence_type(self, evidence_type: str) -> bool:
         if not evidence_type:
             return False
-        return evidence_type.lower().strip() in [t.lower().strip() for t in self.supported_evidence_types]
+        from forensic_tools.evidence_types import normalize_evidence_type, is_rule_resource
+        if is_rule_resource(evidence_type):
+            return False
+        clean = evidence_type.lower().strip()
+        supported_clean = [t.lower().strip() for t in self.supported_evidence_types]
+        if clean in supported_clean:
+            return True
+        canonical_class, _, _ = normalize_evidence_type(evidence_type)
+        return any(
+            normalize_evidence_type(t)[0] == canonical_class
+            for t in self.supported_evidence_types
+        )
 
     def has_capability(self, capability: str) -> bool:
         if not capability:
@@ -255,7 +266,11 @@ class PlatformAwareToolRegistry:
             path=yara_path,
             version=yara_ver,
             is_available=yara_path is not None,
-            supported_evidence_types=["executable", "suspicious_file", "malware", "file"],
+            supported_evidence_types=[
+                "executable", "suspicious_file", "malware", "file",
+                "suspicious_binary", "generic_binary", "pe_executable",
+                "elf_executable", "macho_executable", "malware_sample", "binary"
+            ],
             capabilities=["signature_scan"],
             description="Pattern matching tool for malware researchers and binary analysis."
         )

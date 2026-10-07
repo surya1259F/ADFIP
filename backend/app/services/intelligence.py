@@ -637,12 +637,12 @@ class EvidenceIntelligenceEngine:
                 status=status_val,
                 rationale="RAM memory dump suitable for process enumeration and kernel analysis."
             ))
-        elif classification in ["PE_EXECUTABLE", "ELF_EXECUTABLE", "MACHO_EXECUTABLE"]:
+        elif classification in ["PE_EXECUTABLE", "ELF_EXECUTABLE", "MACHO_EXECUTABLE", "SUSPICIOUS_BINARY", "MALWARE_SAMPLE"]:
             status_val = "RECOMMENDED" if "yara" in avail_tools else "POSSIBLE"
             families.append(AnalysisFamilyRecommendation(
                 family_name="MALWARE_ANALYSIS",
                 status=status_val,
-                rationale="Executable binary file suitable for signature scanning and static disassembly."
+                rationale="Executable binary or malware sample suitable for signature scanning and static analysis."
             ))
         elif classification == "WINDOWS_EVENT_LOG":
             status_val = "RECOMMENDED" if "python-evtx" in avail_tools else "REQUIRES_TOOL"

@@ -1892,6 +1892,7 @@ class InvestigatorReviewRecord(Base):
 
     # Decision
     decision = Column(String, nullable=False, index=True) # ACCEPT, CHALLENGE, REJECT, REQUEST_MORE_EVIDENCE
+    challenge_category = Column(String, nullable=True, index=True) # EVIDENCE_ASSOCIATION, TOOL_RESULT, etc.
     comment = Column(Text, nullable=False) # Investigator explanation / rationale
 
     # Context & supporting links

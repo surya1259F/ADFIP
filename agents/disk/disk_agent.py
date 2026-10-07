@@ -8,6 +8,7 @@ from agents.base.agent import Agent, AgentAnalysisResult, CapabilityRequest
 from forensic_tools.sleuthkit.adapter import SleuthKitAdapter
 from forensic_tools.exiftool.adapter import ExifToolAdapter
 from agents.disk.parsers.fls_parser import FlsParser, FlsParserResult
+from forensic_tools.evidence_types import calculate_deterministic_confidence
 
 SUSPICIOUS_EXTENSIONS = {".bat", ".ps1", ".vbs", ".cmd", ".scr", ".pif", ".exe", ".dll", ".hta"}
 SUSPICIOUS_PATHS = {"temp", "tmp", "appdata", "public", "downloads", "perflogs"}
@@ -113,25 +114,41 @@ class DiskAgent(Agent):
 
                 # 2. Suspicious path
                 if any(p in path_lower for p in SUSPICIOUS_PATHS):
+                    conf_score, conf_inputs = calculate_deterministic_confidence(
+                        source_integrity=1.0,
+                        artifact_confidence=0.85,
+                        identifier_match_confidence=0.80,
+                        supporting_source_count=1,
+                        contradictory_evidence=False
+                    )
                     observations.append({
                         "fact_type": "SUSPICIOUS_FILE_LOCATION",
                         "description": f"Filesystem entry located in suspicious/temporary directory: '{file_path}'.",
                         "supporting_evidence_ids": [ev_id] if ev_id else [],
                         "supporting_artifact_ids": [art_id],
                         "details": {"file_path": file_path, "suspicious_paths_matched": [p for p in SUSPICIOUS_PATHS if p in path_lower]},
-                        "confidence": 0.85
+                        "confidence": conf_score,
+                        "confidence_inputs": conf_inputs
                     })
 
                 # 3. Suspicious extension
                 ext = Path(file_path).suffix.lower() if file_path else ""
                 if ext in SUSPICIOUS_EXTENSIONS:
+                    conf_score, conf_inputs = calculate_deterministic_confidence(
+                        source_integrity=1.0,
+                        artifact_confidence=0.85,
+                        identifier_match_confidence=0.75,
+                        supporting_source_count=1,
+                        contradictory_evidence=False
+                    )
                     observations.append({
                         "fact_type": "SUSPICIOUS_FILE_EXTENSION",
                         "description": f"Filesystem entry possesses executable/script extension '{ext}': '{file_path}'.",
                         "supporting_evidence_ids": [ev_id] if ev_id else [],
                         "supporting_artifact_ids": [art_id],
                         "details": {"file_path": file_path, "extension": ext},
-                        "confidence": 0.85
+                        "confidence": conf_score,
+                        "confidence_inputs": conf_inputs
                     })
 
         # Generate capability requests for disk/file evidence items
@@ -551,6 +568,13 @@ class DiskAgent(Agent):
 
             # Case B: Executable/Script in Suspicious Path
             elif file_ext in SUSPICIOUS_EXTENSIONS and (path_parts & SUSPICIOUS_PATHS):
+                conf_score, conf_inputs = calculate_deterministic_confidence(
+                    source_integrity=1.0,
+                    artifact_confidence=0.85,
+                    identifier_match_confidence=0.80,
+                    supporting_source_count=1,
+                    contradictory_evidence=False
+                )
                 findings.append({
                     "id": str(uuid.uuid4()),
                     "investigation_id": inv_id,
@@ -560,7 +584,8 @@ class DiskAgent(Agent):
                     "finding_type": "suspicious_file_location",
                     "title": f"Suspicious Executable Location: {entry.file_path}",
                     "description": f"Executable file '{file_name}' located in temporary/suspicious directory path at inode {entry.inode}.",
-                    "confidence": 0.85,
+                    "confidence": conf_score,
+                    "confidence_inputs": conf_inputs,
                     "evidence_reference": source_ref,
                     "verification_status": "UNVERIFIED",
                     "raw_output_reference": entry.raw_line

@@ -62,6 +62,7 @@ from backend.app.services.governance import (
     GovernanceDecisionType
 )
 from backend.app.services.audit import log_audit_event
+from forensic_tools.evidence_types import get_recommended_capabilities_for_evidence
 
 logger = logging.getLogger("ADFIR_INVESTIGATOR_REVIEW")
 
@@ -97,7 +98,9 @@ class InvestigatorReviewService:
         """
         # 1. Evidence Items
         evidence_items = []
+        evidence_map = {}
         for ev in case.evidence_items:
+            evidence_map[ev.id] = ev
             # Query custody events count
             custody_count = db.query(ChainOfCustodyEvent).filter(
                 ChainOfCustodyEvent.evidence_id == ev.id
@@ -132,6 +135,17 @@ class InvestigatorReviewService:
                 ).all()
                 supp_arts = [{"id": a.id, "type": a.artifact_type, "label": a.source_reference or a.artifact_type} for a in arts]
 
+            rec_caps = set()
+            for ev_id in (f.supporting_evidence_ids or []):
+                ev_obj = evidence_map.get(ev_id)
+                if ev_obj and ev_obj.evidence_type:
+                    for cap in get_recommended_capabilities_for_evidence(ev_obj.evidence_type):
+                        cap_id = cap.get("id") if isinstance(cap, dict) else str(cap)
+                        if cap_id:
+                            rec_caps.add(cap_id)
+            if not rec_caps:
+                rec_caps = {"STRINGS_ANALYSIS", "METADATA_EXTRACTION", "HASHING"}
+
             findings_items.append({
                 "id": f.id,
                 "case_id": f.case_id,
@@ -141,6 +155,8 @@ class InvestigatorReviewService:
                 "severity": f.severity,
                 "severity_rule": f.severity_rule,
                 "confidence": f.confidence,
+                "confidence_inputs": f.confidence_inputs or {},
+                "recommended_capabilities": sorted(list(rec_caps)),
                 "observed_facts": f.observed_facts or [],
                 "supporting_artifact_ids": f.supporting_artifact_ids or [],
                 "supporting_artifacts": supp_arts,
@@ -162,6 +178,18 @@ class InvestigatorReviewService:
             if sf.artifact_id:
                 sf_supp_arts.append({"id": sf.artifact_id, "type": "tool_artifact", "label": sf.tool or "Artifact"})
             sf_hash = hashlib.sha256(f"{sf.id}:{sf.title}".encode()).hexdigest()
+
+            sf_rec_caps = set()
+            if sf.evidence_id:
+                ev_obj = evidence_map.get(sf.evidence_id)
+                if ev_obj and ev_obj.evidence_type:
+                    for cap in get_recommended_capabilities_for_evidence(ev_obj.evidence_type):
+                        cap_id = cap.get("id") if isinstance(cap, dict) else str(cap)
+                        if cap_id:
+                            sf_rec_caps.add(cap_id)
+            if not sf_rec_caps:
+                sf_rec_caps = {"STRINGS_ANALYSIS", "METADATA_EXTRACTION", "HASHING"}
+
             findings_items.append({
                 "id": sf.id,
                 "case_id": sf.case_id,
@@ -171,6 +199,8 @@ class InvestigatorReviewService:
                 "severity": sf.severity or "MEDIUM",
                 "severity_rule": f"Specialist tool: {sf.tool}" if sf.tool else "Specialist finding",
                 "confidence": sf.confidence,
+                "confidence_inputs": getattr(sf, "confidence_inputs", {}) or {},
+                "recommended_capabilities": sorted(list(sf_rec_caps)),
                 "observed_facts": [sf.evidence_reference] if sf.evidence_reference else [],
                 "supporting_artifact_ids": [sf.artifact_id] if sf.artifact_id else [],
                 "supporting_artifacts": sf_supp_arts,
@@ -348,6 +378,29 @@ class InvestigatorReviewService:
                 detail=f"Invalid target type '{payload.target_type}'. Allowed: {sorted(list(allowed_targets))}"
             )
 
+        if decision_upper == "CHALLENGE":
+            valid_categories = {
+                "EVIDENCE_ASSOCIATION", "TOOL_RESULT", "RULE_RELEVANCE",
+                "ARTIFACT_INTERPRETATION", "CLASSIFICATION", "CONFIDENCE",
+                "INSUFFICIENT_EVIDENCE", "CONTRADICTORY_EVIDENCE", "TIMELINE",
+                "PROVENANCE", "AI_INFERENCE", "OTHER"
+            }
+            if not payload.challenge_category:
+                payload.challenge_category = "AI_INFERENCE" if target_type_upper == "AI_REASONING" else "OTHER"
+            else:
+                cat_upper = payload.challenge_category.upper().strip()
+                if cat_upper not in valid_categories:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Invalid challenge category '{payload.challenge_category}'. Allowed: {sorted(list(valid_categories))}"
+                    )
+                payload.challenge_category = cat_upper
+            if not payload.comment or not payload.comment.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Challenge decision requires a mandatory rationale/comment explaining the challenge."
+                )
+
         # IDOR and target existence validation
         target_name = payload.target_id
         if target_type_upper == "FINDING":
@@ -422,6 +475,7 @@ class InvestigatorReviewService:
             "target_id": payload.target_id,
             "statement_id": payload.statement_id,
             "decision": decision_upper,
+            "challenge_category": payload.challenge_category,
             "comment": payload.comment or "",
             "supporting_references": sorted(payload.supporting_references or []),
             "resulting_workflow_action": resulting_action,
@@ -440,6 +494,7 @@ class InvestigatorReviewService:
             "target_label": target_name,
             "statement_id": payload.statement_id,
             "decision": decision_upper,
+            "challenge_category": payload.challenge_category,
             "action": resulting_action,
             "timestamp": timestamp_dt.isoformat(),
             "sha256_hash": computed_hash
@@ -470,6 +525,7 @@ class InvestigatorReviewService:
             target_id=payload.target_id,
             statement_id=payload.statement_id,
             decision=decision_upper,
+            challenge_category=payload.challenge_category,
             comment=payload.comment or "",
             supporting_references=payload.supporting_references or [],
             resulting_workflow_action=resulting_action,
@@ -541,6 +597,7 @@ class InvestigatorReviewService:
             "target_id": record.target_id,
             "statement_id": record.statement_id,
             "decision": record.decision,
+            "challenge_category": getattr(record, "challenge_category", None),
             "comment": record.comment or "",
             "supporting_references": sorted(record.supporting_references or []),
             "resulting_workflow_action": record.resulting_workflow_action,
@@ -880,12 +937,21 @@ class InvestigatorReviewService:
         db.refresh(analysis_request)
 
         # 3. Persist Investigator Review Decision
+        full_comment = payload.comment
+        notes = []
+        if payload.insufficient_reason:
+            notes.append(f"Insufficient Reason: {payload.insufficient_reason}")
+        if payload.missing_information:
+            notes.append(f"Missing Info: {payload.missing_information}")
+        if notes:
+            full_comment = f"{payload.comment} | " + " | ".join(notes)
+
         review_req = InvestigatorReviewCreateRequest(
             target_type=payload.target_type,
             target_id=payload.target_id,
             statement_id=payload.statement_id,
             decision="REQUEST_MORE_EVIDENCE",
-            comment=payload.comment,
+            comment=full_comment,
             supporting_references=payload.supporting_references or ([evidence_id] if evidence_id else [])
         )
 

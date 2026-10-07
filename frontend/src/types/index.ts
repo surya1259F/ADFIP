@@ -794,6 +794,7 @@ export interface InvestigatorReviewCreateRequest {
   target_id: string;
   statement_id?: string | null;
   decision: InvestigatorDecisionType;
+  challenge_category?: string;
   comment?: string;
   supporting_references?: string[];
 }
@@ -807,6 +808,7 @@ export interface InvestigatorReviewResponse {
   target_id: string;
   statement_id?: string | null;
   decision: InvestigatorDecisionType;
+  challenge_category?: string | null;
   comment?: string;
   supporting_references: string[];
   resulting_workflow_action: string;
@@ -839,6 +841,8 @@ export interface RequestMoreEvidenceRequest {
   requested_capability: string;
   parameters?: Record<string, any>;
   comment?: string;
+  insufficient_reason?: string;
+  missing_information?: string;
   supporting_references?: string[];
 }
 
@@ -872,6 +876,8 @@ export interface ReviewFindingItem {
   finding_type: string;
   rule_name?: string | null;
   confidence: number;
+  confidence_inputs?: Record<string, any>;
+  recommended_capabilities?: string[];
   supporting_artifact_ids: string[];
   supporting_evidence_ids: string[];
   sha256_hash: string;

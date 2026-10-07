@@ -57,6 +57,23 @@ class YaraAdapter:
             )
             return err_res, rule_info
 
+        from pathlib import Path
+        ev_p = Path(evidence_path).resolve()
+        rule_p = Path(rule_info.absolute_path).resolve()
+
+        if ev_p == rule_p:
+            err_res = ToolExecutionResult(
+                tool_name=self.tool_name,
+                success=False,
+                return_code=-1,
+                stdout="",
+                stderr="Forensic contract violation: Target evidence is the YARA rule itself. A YARA rule cannot be scanned as evidence target.",
+                execution_time_ms=0,
+                evidence_path=evidence_path,
+                error_message="Forensic contract violation: Target evidence is the YARA rule itself. A YARA rule cannot be scanned as evidence target."
+            )
+            return err_res, rule_info
+
         # Arguments: -s (print strings), -m (print metadata), -g (print tags), <rule_path>
         args = ["-s", "-m", "-g", rule_info.absolute_path]
 

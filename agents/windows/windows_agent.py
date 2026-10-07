@@ -6,6 +6,7 @@ import uuid
 
 from agents.base.agent import Agent, CapabilityRequest, AgentAnalysisResult, AgentSafetyProfile
 from agents.log.parsers.evtx_parser import EvtxParser
+from forensic_tools.evidence_types import calculate_deterministic_confidence
 
 
 class WindowsForensicsAgent(Agent):
@@ -191,13 +192,21 @@ class WindowsForensicsAgent(Agent):
             elif any(k in entity_type for k in ["SRUM", "LNK", "JUMPLIST"]):
                 supporting_art_ids.append(art_id)
                 target_path = str(fields.get("target_path") or fields.get("path") or "")
+                conf_score, conf_inputs = calculate_deterministic_confidence(
+                    source_integrity=1.0,
+                    artifact_confidence=0.85,
+                    identifier_match_confidence=0.80,
+                    supporting_source_count=1,
+                    contradictory_evidence=False
+                )
                 observations.append({
                     "fact_type": "USER_ACTIVITY_ARTIFACT",
                     "description": f"User interaction artifact ({entity_type}) pointing to target '{target_path}'.",
                     "supporting_evidence_ids": [ev_id] if ev_id else [],
                     "supporting_artifact_ids": [art_id],
                     "details": {"target_path": target_path, "entity_type": entity_type},
-                    "confidence": 0.85
+                    "confidence": conf_score,
+                    "confidence_inputs": conf_inputs
                 })
 
         # Generate capability requests for Windows evidence items

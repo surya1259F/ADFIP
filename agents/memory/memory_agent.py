@@ -8,6 +8,7 @@ from forensic_tools.volatility.adapter import VolatilityAdapter, ALLOWED_PLUGINS
 from agents.memory.parsers.pslist_parser import PsListParser
 from agents.memory.parsers.pstree_parser import PsTreeParser
 from agents.memory.parsers.netscan_parser import NetScanParser
+from forensic_tools.evidence_types import calculate_deterministic_confidence
 
 SUSPICIOUS_PROCESS_NAMES = {
     "mimikatz.exe", "nc.exe", "ncat.exe", "psexec.exe",
@@ -383,6 +384,13 @@ class MemoryAgent(Agent):
                 # Finding Rule 2: Established connection to external public IP
                 is_private = any(entry.foreign_addr.startswith(prefix) for prefix in PRIVATE_IP_PREFIXES)
                 if entry.state.upper() == "ESTABLISHED" and not is_private:
+                    conf_score, conf_inputs = calculate_deterministic_confidence(
+                        source_integrity=1.0,
+                        artifact_confidence=0.90,
+                        identifier_match_confidence=0.85,
+                        supporting_source_count=1,
+                        contradictory_evidence=False
+                    )
                     findings.append({
                         "id": str(uuid.uuid4()),
                         "investigation_id": inv_id,
@@ -392,7 +400,8 @@ class MemoryAgent(Agent):
                         "finding_type": "external_network_connection",
                         "title": f"Active External Socket: {entry.owner} (PID {entry.pid}) -> {entry.foreign_addr}:{entry.foreign_port}",
                         "description": f"Established network connection to external IP {entry.foreign_addr} on port {entry.foreign_port} by owner process '{entry.owner}'.",
-                        "confidence": 0.85,
+                        "confidence": conf_score,
+                        "confidence_inputs": conf_inputs,
                         "evidence_reference": source_ref,
                         "verification_status": "UNVERIFIED",
                         "raw_output_reference": entry.raw_line
