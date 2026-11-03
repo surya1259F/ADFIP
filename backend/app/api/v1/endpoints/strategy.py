@@ -44,6 +44,7 @@ from backend.app.services.strategy_engine import (
     DEFAULT_CAPABILITIES,
     seed_forensic_capabilities
 )
+from backend.app.services.decision_engine import EvidenceDecisionEngine
 from backend.app.services.tool_selector import (
     ToolSelectorEngine,
     CapabilityMatcher,
@@ -73,6 +74,28 @@ def create_investigation_plan(
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate investigation plan: {str(e)}")
+
+
+@router.get("/cases/{case_id}/investigative-questions")
+def get_case_investigative_questions(
+    case_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Evaluates and returns structured investigative questions, operational hypotheses,
+    and evidence feasibility ratings for an authorized case based on case objective and evidence.
+    """
+    case = get_authorized_case(case_id, db, current_user)
+    questions = EvidenceDecisionEngine.get_case_investigative_questions(db, case.id)
+    return {
+        "case_id": case.id,
+        "case_number": case.case_number,
+        "case_type": case.case_type,
+        "objective": case.objective,
+        "total_questions": len(questions),
+        "questions": questions
+    }
 
 
 @router.get("/cases/{case_id}/investigation-plans", response_model=List[InvestigationPlanResponse])
@@ -110,7 +133,28 @@ def get_investigation_plan_details(
 
     # Authorize case access
     get_authorized_case(plan.case_id, db, current_user)
-    return plan
+    plan_dict = {
+        "id": plan.id,
+        "plan_id": plan.id,
+        "case_id": plan.case_id,
+        "investigation_id": plan.case_id,
+        "parent_plan_id": plan.parent_plan_id,
+        "title": plan.title,
+        "strategy_summary": plan.strategy_summary,
+        "tasks": plan.tasks or [],
+        "scope_definition": plan.scope_definition,
+        "priority": plan.priority,
+        "status": plan.status,
+        "validation_status": plan.validation_status,
+        "evidence_snapshot": plan.evidence_snapshot,
+        "resource_snapshot": plan.resource_snapshot,
+        "stopping_conditions_summary": plan.stopping_conditions_summary,
+        "version": plan.version,
+        "created_at": plan.created_at,
+        "completed_at": plan.completed_at,
+        "investigative_questions": EvidenceDecisionEngine.get_case_investigative_questions(db, plan.case_id)
+    }
+    return InvestigationPlanResponse(**plan_dict)
 
 
 @router.get("/investigation-plans/{plan_id}/tasks")

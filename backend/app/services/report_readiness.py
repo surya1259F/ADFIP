@@ -26,6 +26,7 @@ from backend.app.models.models import (
     ToolExecution,
     ExecutionOutput,
     InvestigationPlan,
+    AnalysisRequest,
     InvestigatorReviewRecord,
     InvestigatorDecision,
     CorrelationGroup,

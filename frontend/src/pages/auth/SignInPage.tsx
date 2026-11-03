@@ -296,7 +296,12 @@ export const SignInPage: React.FC = () => {
         {/* General Error Banner */}
         {errors.general && (
           <div className="mt-4 p-3 bg-red-50/80 border border-red-200 rounded-[14px] text-xs text-red-700 text-left">
-            {errors.general}
+            <div>{errors.general}</div>
+            {errors.general.toLowerCase().includes('invalid email or password') && (
+              <div className="mt-1.5 text-slate-600 font-normal border-t border-red-100 pt-1.5">
+                If your account was registered with Google, please use the <strong>Continue with Google</strong> option below.
+              </div>
+            )}
           </div>
         )}
 

@@ -11,7 +11,10 @@ import type {
   InvestigatorReviewIntegrityResponse,
   RequestMoreEvidenceRequest,
   ClaimProvenanceResponse,
-  InvestigatorDecisionType
+  InvestigatorDecisionType,
+  FindingLifecycleState,
+  StorageBudgetResponse,
+  ResourceEstimationResponse
 } from '../types';
 import {
   ShieldCheck,
@@ -85,6 +88,24 @@ export const InvestigatorReviewPage: React.FC = () => {
   const [rmeMissingInfo, setRmeMissingInfo] = useState('');
   const [submittingRme, setSubmittingRme] = useState(false);
 
+  // Storage Budget State
+  const [storageBudget, setStorageBudget] = useState<StorageBudgetResponse | null>(null);
+
+  // Challenge Resolution Modal
+  const [resolutionModal, setResolutionModal] = useState<{
+    finding_id: string;
+    title: string;
+    evidence_id?: string;
+    disputed_claim?: string;
+    challenge_category?: string;
+    recommended_capabilities?: string[];
+  } | null>(null);
+  const [resolutionCapability, setResolutionCapability] = useState('');
+  const [resolutionGap, setResolutionGap] = useState('');
+  const [resolutionJustification, setResolutionJustification] = useState('');
+  const [resolutionEstimate, setResolutionEstimate] = useState<ResourceEstimationResponse | null>(null);
+  const [submittingResolution, setSubmittingResolution] = useState(false);
+
   // Provenance Drawer
   const [provenanceTarget, setProvenanceTarget] = useState<{
     target_id: string;
@@ -111,12 +132,14 @@ export const InvestigatorReviewPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [items, history] = await Promise.all([
+      const [items, history, budget] = await Promise.all([
         api.getReviewItems(activeInvestigation.id),
-        api.listReviewDecisions(activeInvestigation.id)
+        api.listReviewDecisions(activeInvestigation.id),
+        api.getStorageBudget(activeInvestigation.id).catch(() => null)
       ]);
       setReviewItems(items);
       setReviewsHistory(history);
+      if (budget) setStorageBudget(budget);
     } catch (err: any) {
       console.error('Failed to load review items:', err);
       setError(err?.response?.data?.detail || 'Failed to load investigator review workspace data.');
@@ -295,6 +318,127 @@ export const InvestigatorReviewPage: React.FC = () => {
     }
   };
 
+  const getLifecycleBadge = (lifecycle?: FindingLifecycleState | string | null, decision?: InvestigatorDecisionType | null) => {
+    const state = lifecycle || (decision === 'ACCEPT' ? 'ACCEPTED' : decision === 'REJECT' ? 'REJECTED' : decision === 'CHALLENGE' ? 'CHALLENGED' : decision === 'REQUEST_MORE_EVIDENCE' ? 'EVIDENCE_REQUESTED' : 'CANDIDATE');
+
+    switch (state) {
+      case 'ACCEPTED':
+        return (
+          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-emerald-950 text-emerald-300 border border-emerald-700 flex items-center gap-1">
+            <CheckCircle2 className="w-3 h-3 text-emerald-400" /> ACCEPTED
+          </span>
+        );
+      case 'REJECTED':
+        return (
+          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-rose-950 text-rose-300 border border-rose-700 flex items-center gap-1">
+            <XCircle className="w-3 h-3 text-rose-400" /> REJECTED
+          </span>
+        );
+      case 'CHALLENGED':
+        return (
+          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-amber-950 text-amber-300 border border-amber-700 flex items-center gap-1">
+            <AlertCircle className="w-3 h-3 text-amber-400" /> CHALLENGED
+          </span>
+        );
+      case 'EVIDENCE_REQUESTED':
+        return (
+          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-cyan-950 text-cyan-300 border border-cyan-700 flex items-center gap-1">
+            <RefreshCw className="w-3 h-3 text-cyan-400" /> EVIDENCE REQ
+          </span>
+        );
+      case 'RESOLUTION_PENDING':
+        return (
+          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-blue-950 text-blue-300 border border-blue-700 flex items-center gap-1">
+            <Clock className="w-3 h-3 text-blue-400" /> RESOLUTION QUEUED
+          </span>
+        );
+      case 'RESOLUTION_RUNNING':
+        return (
+          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-indigo-950 text-indigo-300 border border-indigo-700 flex items-center gap-1">
+            <RefreshCw className="w-3 h-3 text-indigo-400 animate-spin" /> RESOLUTION RUNNING
+          </span>
+        );
+      case 'RESOLVED':
+        return (
+          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-teal-950 text-teal-300 border border-teal-700 flex items-center gap-1">
+            <FileCheck className="w-3 h-3 text-teal-400" /> RESOLVED (READY)
+          </span>
+        );
+      case 'CANDIDATE':
+      default:
+        return (
+          <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-800 text-slate-400 border border-slate-700">
+            CANDIDATE (UNREVIEWED)
+          </span>
+        );
+    }
+  };
+
+  const handleOpenResolutionModal = (finding: any) => {
+    const recCaps = finding.recommended_capabilities || ['YARA_SCAN', 'STRINGS_ANALYSIS', 'TSK_FLS', 'METADATA_EXTRACTION'];
+    const cap = recCaps[0] || 'STRINGS_ANALYSIS';
+    setResolutionModal({
+      finding_id: finding.id,
+      title: finding.title,
+      evidence_id: finding.supporting_evidence_ids?.[0],
+      disputed_claim: finding.description,
+      challenge_category: finding.latest_review_category || 'EVIDENCE_ASSOCIATION',
+      recommended_capabilities: recCaps
+    });
+    setResolutionCapability(cap);
+    setResolutionGap('');
+    setResolutionJustification('');
+    setResolutionEstimate(null);
+    handleEstimateResolutionStorage(cap, finding.supporting_evidence_ids?.[0]);
+  };
+
+  const handleEstimateResolutionStorage = async (cap: string, evId?: string) => {
+    if (!activeInvestigation) return;
+    try {
+      const res = await api.estimateStorage(activeInvestigation.id, {
+        capability: cap,
+        evidence_id: evId
+      });
+      setResolutionEstimate(res);
+    } catch (err) {
+      console.warn('Storage estimate failed:', err);
+    }
+  };
+
+  const handleResolutionSubmit = async () => {
+    if (!activeInvestigation || !resolutionModal) return;
+    if (!resolutionGap.trim()) {
+      showNotification('error', 'Please describe the identified evidentiary gap.');
+      return;
+    }
+    if (!resolutionJustification.trim()) {
+      showNotification('error', 'Please provide an investigator justification for this resolution.');
+      return;
+    }
+
+    setSubmittingResolution(true);
+    try {
+      const res = await api.resolveChallenge(activeInvestigation.id, {
+        finding_id: resolutionModal.finding_id,
+        disputed_claim: resolutionModal.disputed_claim,
+        challenge_category: resolutionModal.challenge_category,
+        evidentiary_gap: resolutionGap.trim(),
+        selected_capability: resolutionCapability,
+        evidence_id: resolutionModal.evidence_id,
+        justification: resolutionJustification.trim()
+      });
+
+      showNotification('success', res.message || 'Challenge resolution task queued in scheduler.');
+      setResolutionModal(null);
+      await loadData();
+    } catch (err: any) {
+      console.error('Challenge resolution error:', err);
+      showNotification('error', err?.response?.data?.detail || 'Failed to submit challenge resolution.');
+    } finally {
+      setSubmittingResolution(false);
+    }
+  };
+
   const getClassificationBadge = (classification: 'FACT' | 'INFERENCE' | 'UNVERIFIED') => {
     switch (classification) {
       case 'FACT':
@@ -399,6 +543,73 @@ export const InvestigatorReviewPage: React.FC = () => {
             </span>
           </div>
         </div>
+
+        {/* Storage Budget Accounting Card */}
+        {storageBudget && (
+          <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
+              <div className="flex items-center gap-2.5">
+                <Database className="w-4 h-4 text-cyan-400" />
+                <span className="text-xs font-mono font-bold tracking-wider text-slate-200 uppercase">
+                  Investigation Storage Budget & Reserve
+                </span>
+                <span className="text-[10px] font-mono text-slate-500">
+                  (ADFIP Safety Reserve: 2,048 MB / 2.0 GB)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-mono text-slate-400">Storage Health:</span>
+                <span
+                  className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border ${
+                    storageBudget.status === 'SAFE'
+                      ? 'bg-emerald-950 text-emerald-300 border-emerald-700'
+                      : storageBudget.status === 'WARNING'
+                      ? 'bg-amber-950 text-amber-300 border-amber-700'
+                      : 'bg-rose-950 text-rose-300 border-rose-700'
+                  }`}
+                >
+                  {storageBudget.status}
+                </span>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-3">
+              <div>
+                <div className="text-[10px] font-mono text-slate-400">Physical Free Disk</div>
+                <div className="text-sm font-mono font-bold text-slate-200">
+                  {(storageBudget.physical_free_mb / 1024).toFixed(2)} GB
+                </div>
+                <div className="text-[9px] font-mono text-slate-500">
+                  {storageBudget.physical_free_mb.toLocaleString()} MB total free
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] font-mono text-slate-400">ADFIP Safety Reserve</div>
+                <div className="text-sm font-mono font-bold text-cyan-300">
+                  2.00 GB
+                </div>
+                <div className="text-[9px] font-mono text-slate-500">2,048 MB protected</div>
+              </div>
+              <div>
+                <div className="text-[10px] font-mono text-slate-400">Safe Available Headroom</div>
+                <div className={`text-sm font-mono font-bold ${storageBudget.safe_available_mb > 1024 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {(storageBudget.safe_available_mb / 1024).toFixed(2)} GB
+                </div>
+                <div className="text-[9px] font-mono text-slate-500">
+                  {storageBudget.safe_available_mb.toLocaleString()} MB usable
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] font-mono text-slate-400">Workspace / Vault Used</div>
+                <div className="text-sm font-mono font-bold text-slate-200">
+                  {(storageBudget.workspace_used_mb + storageBudget.vault_used_mb).toFixed(1)} MB
+                </div>
+                <div className="text-[9px] font-mono text-slate-500">
+                  Vault: {storageBudget.vault_used_mb.toFixed(1)} MB | WS: {storageBudget.workspace_used_mb.toFixed(1)} MB
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Summary Metric Cards */}
         {reviewItems && (
@@ -525,7 +736,7 @@ export const InvestigatorReviewPage: React.FC = () => {
                       </div>
                       <p className="text-xs text-slate-300">{f.description}</p>
                     </div>
-                    <div>{getDecisionBadge(f.latest_decision)}</div>
+                    <div>{getLifecycleBadge((f as any).lifecycle_state, f.latest_decision)}</div>
                   </div>
 
                   {/* Confidence Inputs Breakdown */}
@@ -599,6 +810,15 @@ export const InvestigatorReviewPage: React.FC = () => {
                       >
                         Challenge
                       </button>
+                      {((f as any).lifecycle_state === 'CHALLENGED' || f.latest_decision === 'CHALLENGE') && (
+                        <button
+                          onClick={() => handleOpenResolutionModal(f)}
+                          className="px-2.5 py-1 bg-blue-950 hover:bg-blue-900 text-blue-300 border border-blue-700/60 rounded text-[11px] font-mono font-semibold flex items-center gap-1 transition shadow-sm"
+                        >
+                          <Clock className="w-3 h-3 text-blue-400" />
+                          <span>Resolve Challenge</span>
+                        </button>
+                      )}
                       <button
                         onClick={() =>
                           setDecisionModal({
@@ -686,7 +906,7 @@ export const InvestigatorReviewPage: React.FC = () => {
                             {getClassificationBadge(s.classification)}
                             <p className="text-xs text-slate-200 leading-relaxed font-sans">{s.insight}</p>
                           </div>
-                          <div>{getDecisionBadge(s.latest_decision)}</div>
+                          <div>{getLifecycleBadge((s as any).lifecycle_state, s.latest_decision)}</div>
                         </div>
 
                         <div className="flex flex-wrap items-center justify-between border-t border-slate-900 pt-2 gap-2 text-[11px] font-mono text-slate-400">
@@ -1108,6 +1328,139 @@ export const InvestigatorReviewPage: React.FC = () => {
                 >
                   {submittingRme && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
                   <span>Queue in Scheduler</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal: Challenge Resolution & Governed Capability Queue */}
+        {resolutionModal && (
+          <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-xl w-full p-6 space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <span className="font-mono text-sm font-bold text-slate-100 flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-blue-400" />
+                  Resolve Challenged Finding
+                </span>
+                <button
+                  onClick={() => setResolutionModal(null)}
+                  className="text-slate-400 hover:text-white"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-3 bg-slate-950 rounded-lg border border-slate-800/80 space-y-1">
+                <span className="text-[10px] text-slate-500 uppercase font-mono block">Challenged Claim:</span>
+                <span className="text-xs text-slate-200 font-mono font-semibold block">{resolutionModal.title}</span>
+                {resolutionModal.disputed_claim && (
+                  <p className="text-[11px] text-slate-400 font-sans mt-1 line-clamp-2">{resolutionModal.disputed_claim}</p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-slate-400 font-mono text-[11px] block uppercase">
+                  Select Resolution Capability:
+                </label>
+                <select
+                  value={resolutionCapability}
+                  onChange={(e) => {
+                    const newCap = e.target.value;
+                    setResolutionCapability(newCap);
+                    handleEstimateResolutionStorage(newCap, resolutionModal.evidence_id);
+                  }}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-blue-500"
+                >
+                  {resolutionModal.recommended_capabilities && resolutionModal.recommended_capabilities.length > 0 && (
+                    <optgroup label="Recommended Capabilities">
+                      {resolutionModal.recommended_capabilities.map((cap) => (
+                        <option key={cap} value={cap}>
+                          {cap} (Recommended)
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  <optgroup label="All Forensic Capabilities">
+                    <option value="STRINGS_ANALYSIS">STRINGS_ANALYSIS — Printable Strings &amp; IOC Extraction</option>
+                    <option value="YARA_SCAN">YARA_SCAN — Pattern &amp; Signature Verification</option>
+                    <option value="TSK_FLS">TSK_FLS — Filesystem Body &amp; Deleted Inode Parsing</option>
+                    <option value="METADATA_EXTRACTION">METADATA_EXTRACTION — Structural Metadata Parsing</option>
+                    <option value="VOLATILITY_PSLIST">VOLATILITY_PSLIST — Process Tree &amp; Memory Structure</option>
+                    <option value="HASHING">HASHING — Cryptographic Byte Verification</option>
+                  </optgroup>
+                </select>
+              </div>
+
+              {/* Resource & Storage Budget Estimation */}
+              {resolutionEstimate && (
+                <div className="p-3 bg-slate-950/90 rounded border border-slate-800 text-xs font-mono space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 text-[10px] uppercase font-semibold">Storage Pre-Flight Check:</span>
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${
+                        resolutionEstimate.status === 'SAFE'
+                          ? 'bg-emerald-950 text-emerald-300 border-emerald-700'
+                          : resolutionEstimate.status === 'WARNING'
+                          ? 'bg-amber-950 text-amber-300 border-amber-700'
+                          : 'bg-rose-950 text-rose-300 border-rose-700'
+                      }`}
+                    >
+                      {resolutionEstimate.status}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-300 pt-1 border-t border-slate-800/60">
+                    <div>Est. Artifact: <strong>{resolutionEstimate.estimated_artifact_mb} MB</strong></div>
+                    <div>Safe Available: <strong>{resolutionEstimate.safe_available_mb} MB</strong></div>
+                  </div>
+                  {resolutionEstimate.warning_message && (
+                    <div className="text-[10px] text-amber-400 pt-1">{resolutionEstimate.warning_message}</div>
+                  )}
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <label className="text-slate-400 font-mono text-[11px] block uppercase">
+                  Identified Evidentiary Gap (Mandatory):
+                </label>
+                <textarea
+                  value={resolutionGap}
+                  onChange={(e) => setResolutionGap(e.target.value)}
+                  placeholder="Specify what evidence is missing or contradicted by this finding..."
+                  rows={2}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-200 font-sans focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-slate-400 font-mono text-[11px] block uppercase">
+                  Resolution Justification (Mandatory):
+                </label>
+                <textarea
+                  value={resolutionJustification}
+                  onChange={(e) => setResolutionJustification(e.target.value)}
+                  placeholder="Explain why this capability will definitively settle the challenge..."
+                  rows={2}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-slate-200 font-sans focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setResolutionModal(null)}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-xs font-mono transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleResolutionSubmit}
+                  disabled={submittingResolution || (resolutionEstimate ? !resolutionEstimate.is_admissible : false)}
+                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded text-xs font-mono font-semibold transition flex items-center gap-1.5"
+                >
+                  {submittingResolution && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  <span>Queue Resolution Task</span>
                 </button>
               </div>
             </div>

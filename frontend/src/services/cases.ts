@@ -1,5 +1,12 @@
 import { apiClient } from './client';
-import type { Case, CaseCreateRequest, ExecutionRecord, InvestigatorDecision, InvestigatorDecisionCreateRequest } from '../types';
+import type {
+  Case,
+  CaseCreateRequest,
+  ExecutionRecord,
+  InvestigatorDecision,
+  InvestigatorDecisionCreateRequest,
+  InvestigativeQuestion
+} from '../types';
 
 export const casesService = {
   list: async (): Promise<Case[]> => {
@@ -9,6 +16,15 @@ export const casesService = {
 
   get: async (caseId: string): Promise<Case> => {
     const res = await apiClient.get<Case>(`/cases/${caseId}`);
+    return res.data;
+  },
+
+  getInvestigativeQuestions: async (caseId: string): Promise<{
+    case_id: string;
+    total_questions: number;
+    questions: InvestigativeQuestion[];
+  }> => {
+    const res = await apiClient.get(`/cases/${caseId}/investigative-questions`);
     return res.data;
   },
 

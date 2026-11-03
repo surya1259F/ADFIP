@@ -49,6 +49,7 @@ from backend.app.models.models import (
 )
 from backend.app.schemas.schemas import (
     InvestigatorDecisionType,
+    FindingLifecycleState,
     InvestigatorReviewCreateRequest,
     InvestigatorReviewResponse,
     InvestigatorReviewIntegrityResponse,
@@ -266,7 +267,10 @@ class InvestigatorReviewService:
             if r.target_id not in latest_review_per_target:
                 latest_review_per_target[r.target_id] = r
 
-        # Attach latest review state to each finding item
+        # Pre-fetch analysis requests for lifecycle resolution
+        ar_map = {ar.id: ar for ar in db.query(AnalysisRequest).filter(AnalysisRequest.case_id == case.id).all()}
+
+        # Attach latest review state and lifecycle state to each finding item
         for f_item in findings_items:
             latest = latest_review_per_target.get(f_item["id"])
             f_item["latest_decision"] = latest.decision if latest else None
@@ -275,11 +279,47 @@ class InvestigatorReviewService:
             f_item["latest_reviewed_at"] = latest.created_at.isoformat() if latest else None
             f_item["is_reviewed"] = bool(latest)
 
+            if not latest:
+                lifecycle_state = FindingLifecycleState.CANDIDATE
+            else:
+                dec = (latest.decision or "").upper()
+                if dec == "ACCEPT":
+                    lifecycle_state = FindingLifecycleState.ACCEPTED
+                elif dec == "REJECT":
+                    lifecycle_state = FindingLifecycleState.REJECTED
+                else:
+                    action_ref = latest.action_reference_id
+                    ar_obj = ar_map.get(action_ref) if action_ref else None
+                    if ar_obj:
+                        ar_status = (ar_obj.scheduler_status or "").upper()
+                        if ar_status in ("RUNNING", "EXECUTING"):
+                            lifecycle_state = FindingLifecycleState.RESOLUTION_RUNNING
+                        elif ar_status in ("QUEUED", "READY", "WAITING_DEPENDENCY", "WAITING_RESOURCE"):
+                            lifecycle_state = FindingLifecycleState.RESOLUTION_PENDING
+                        elif ar_status in ("COMPLETED", "SUCCEEDED"):
+                            lifecycle_state = FindingLifecycleState.RESOLVED
+                        else:
+                            lifecycle_state = FindingLifecycleState.CHALLENGED if dec == "CHALLENGE" else FindingLifecycleState.EVIDENCE_REQUESTED
+                    else:
+                        lifecycle_state = FindingLifecycleState.CHALLENGED if dec == "CHALLENGE" else FindingLifecycleState.EVIDENCE_REQUESTED
+
+            f_item["lifecycle_state"] = lifecycle_state.value
+
         # Attach latest review state to each AI reasoning item
         for ar_item in ai_items:
             latest = latest_review_per_target.get(ar_item["id"])
             ar_item["latest_decision"] = latest.decision if latest else None
             ar_item["is_reviewed"] = bool(latest)
+            if not latest:
+                ar_item["lifecycle_state"] = FindingLifecycleState.CANDIDATE.value
+            elif latest.decision == "ACCEPT":
+                ar_item["lifecycle_state"] = FindingLifecycleState.ACCEPTED.value
+            elif latest.decision == "REJECT":
+                ar_item["lifecycle_state"] = FindingLifecycleState.REJECTED.value
+            elif latest.decision == "CHALLENGE":
+                ar_item["lifecycle_state"] = FindingLifecycleState.CHALLENGED.value
+            else:
+                ar_item["lifecycle_state"] = FindingLifecycleState.EVIDENCE_REQUESTED.value
 
         # 5. Strict Unique Summary Statistics
         finding_ids = {f["id"] for f in findings_items}
@@ -1031,3 +1071,51 @@ class InvestigatorReviewService:
                 detail=f"Review record '{review_id}' not found in case '{case_id}'."
             )
         return InvestigatorReviewResponse.model_validate(record)
+
+    @classmethod
+    def determine_finding_lifecycle_state(
+        cls,
+        db: Session,
+        finding_id: str,
+        case_id: str
+    ) -> FindingLifecycleState:
+        """
+        Calculates the authoritative lifecycle state of a finding based on
+        investigator review history and linked resolution task executions.
+        """
+        latest_review = db.query(InvestigatorReviewRecord).filter(
+            InvestigatorReviewRecord.target_id == finding_id,
+            InvestigatorReviewRecord.case_id == case_id
+        ).order_by(InvestigatorReviewRecord.created_at.desc()).first()
+
+        if not latest_review:
+            return FindingLifecycleState.CANDIDATE
+
+        dec = (latest_review.decision or "").upper()
+        if dec == "ACCEPT":
+            return FindingLifecycleState.ACCEPTED
+        if dec == "REJECT":
+            return FindingLifecycleState.REJECTED
+
+        # Handle CHALLENGE and REQUEST_MORE_EVIDENCE with resolution tracking
+        action_ref = latest_review.action_reference_id
+        if action_ref:
+            ar = db.query(AnalysisRequest).filter(
+                AnalysisRequest.id == action_ref,
+                AnalysisRequest.case_id == case_id
+            ).first()
+            if ar:
+                status_str = (ar.scheduler_status or "").upper()
+                if status_str in ("RUNNING", "EXECUTING"):
+                    return FindingLifecycleState.RESOLUTION_RUNNING
+                if status_str in ("QUEUED", "READY", "WAITING_DEPENDENCY", "WAITING_RESOURCE"):
+                    return FindingLifecycleState.RESOLUTION_PENDING
+                if status_str in ("COMPLETED", "SUCCEEDED"):
+                    return FindingLifecycleState.RESOLVED
+
+        if dec == "CHALLENGE":
+            return FindingLifecycleState.CHALLENGED
+        if dec == "REQUEST_MORE_EVIDENCE":
+            return FindingLifecycleState.EVIDENCE_REQUESTED
+
+        return FindingLifecycleState.CANDIDATE

@@ -485,6 +485,7 @@ class FindingResponse(FindingCreate):
     id: str
     case_id: str
     verification_status: Optional[str] = "UNVERIFIED"
+    lifecycle_state: Optional[str] = "CANDIDATE"
     created_at: Optional[datetime] = None
 
     @property
@@ -709,6 +710,7 @@ class InvestigationPlanResponse(BaseModel):
     resource_snapshot: Optional[Dict[str, Any]] = None
     stopping_conditions: Optional[List[Any]] = None
     stopping_conditions_summary: Optional[List[Any]] = None
+    investigative_questions: Optional[List[Any]] = None
     adjustments: Optional[List[Any]] = None
     status: str = "PLANNED"
     version: int = 1
@@ -1692,6 +1694,7 @@ class DeterministicFindingResponse(BaseModel):
     provenance: Dict[str, Any] = {}
     sha256_hash: str
     storage_path: Optional[str] = None
+    lifecycle_state: Optional[str] = "CANDIDATE"
     created_at: datetime
 
 
@@ -1979,6 +1982,7 @@ class AIStatementItem(BaseModel):
     statement_id: str
     insight: str
     classification: str  # FACT, INFERENCE, UNVERIFIED
+    claim_tier: Optional[str] = None  # RAW_OBSERVATION, DERIVED_OBSERVATION, ANALYTICAL_INTERPRETATION, INVESTIGATIVE_HYPOTHESIS, CONFIRMED_CONCLUSION
     confidence: Optional[float] = None
     supporting_evidence_ids: List[str] = Field(default_factory=list)
     supporting_artifact_ids: List[str] = Field(default_factory=list)
@@ -2044,6 +2048,7 @@ class AIReasoningRequest(BaseModel):
     correlation_ids: Optional[List[str]] = None
     provider: Optional[str] = None
     model: Optional[str] = None
+    agent_role: Optional[str] = "FORENSIC_ANALYSIS"
     allow_external_egress: bool = False
 
 
@@ -2107,6 +2112,17 @@ class InvestigatorDecisionType(str, Enum):
     CHALLENGE = "CHALLENGE"
     REJECT = "REJECT"
     REQUEST_MORE_EVIDENCE = "REQUEST_MORE_EVIDENCE"
+
+
+class FindingLifecycleState(str, Enum):
+    CANDIDATE = "CANDIDATE"                       # Initial unreviewed candidate finding
+    ACCEPTED = "ACCEPTED"                         # Accepted by human investigator
+    REJECTED = "REJECTED"                         # Rejected by human investigator
+    CHALLENGED = "CHALLENGED"                     # Disputed finding, awaiting resolution
+    EVIDENCE_REQUESTED = "EVIDENCE_REQUESTED"     # RME submitted, awaiting deeper analysis
+    RESOLUTION_PENDING = "RESOLUTION_PENDING"     # Resolution task queued in scheduler
+    RESOLUTION_RUNNING = "RESOLUTION_RUNNING"     # Resolution tool actively running
+    RESOLVED = "RESOLVED"                         # Resolution complete, ready for investigator review
 
 
 class ChallengeCategory(str, Enum):
@@ -2221,6 +2237,83 @@ class ClaimProvenanceResponse(BaseModel):
     supporting_artifacts: List[Dict[str, Any]] = Field(default_factory=list)
     supporting_evidence: List[Dict[str, Any]] = Field(default_factory=list)
     verified_integrity: bool
+
+
+# =============================================================================
+# RESOURCE MANAGEMENT & CHALLENGE RESOLUTION SCHEMAS
+# =============================================================================
+
+class StorageBudgetStatus(str, Enum):
+    SAFE = "SAFE"
+    WARNING = "WARNING"
+    INSUFFICIENT = "INSUFFICIENT"
+
+
+class StorageBudgetResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    case_id: str
+    physical_free_bytes: int
+    physical_free_mb: float
+    safety_reserve_bytes: int
+    safety_reserve_mb: float
+    safe_available_bytes: int
+    safe_available_mb: float
+    workspace_used_bytes: int
+    workspace_used_mb: float
+    vault_used_bytes: int
+    vault_used_mb: float
+    total_projected_bytes: int
+    total_projected_mb: float
+    status: StorageBudgetStatus
+    thresholds: Dict[str, Any] = Field(default_factory=dict)
+    details: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ResourceEstimationRequest(BaseModel):
+    capability: str = Field(..., min_length=1, description="Forensic capability name")
+    evidence_id: Optional[str] = None
+    evidence_size_bytes: Optional[int] = None
+
+
+class ResourceEstimationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    capability: str
+    evidence_size_bytes: int
+    multiplier: float
+    estimated_artifact_bytes: int
+    estimated_artifact_mb: float
+    safe_available_bytes: int
+    safe_available_mb: float
+    status: StorageBudgetStatus
+    is_admissible: bool
+    warning_message: Optional[str] = None
+
+
+class ChallengeResolutionRequest(BaseModel):
+    finding_id: str = Field(..., min_length=1, description="Challenged finding ID")
+    disputed_claim: Optional[str] = None
+    challenge_category: Optional[str] = None
+    evidentiary_gap: str = Field(..., min_length=1, description="Specific forensic gap or contradictory claim to resolve")
+    selected_capability: str = Field(..., min_length=1, description="Selected tool capability (e.g. YARA_SCAN, STRINGS_ANALYSIS, TSK_FLS)")
+    evidence_id: Optional[str] = None
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    justification: str = Field(..., min_length=1, description="Investigator rationale for resolution plan")
+
+
+class ChallengeResolutionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    finding_id: str
+    lifecycle_state: FindingLifecycleState
+    challenge_review_id: Optional[str] = None
+    governance_decision_id: Optional[str] = None
+    analysis_request_id: Optional[str] = None
+    storage_budget_status: StorageBudgetStatus
+    estimated_storage_mb: float
+    workflow_status: str
+    message: str
 
 
 # =============================================================================

@@ -24,10 +24,17 @@ from backend.app.schemas.schemas import (
     RequestMoreEvidenceRequest,
     RequestMoreEvidenceResponse,
     ReviewItemsResponse,
-    ClaimProvenanceResponse
+    ClaimProvenanceResponse,
+    ChallengeResolutionRequest,
+    ChallengeResolutionResponse,
+    StorageBudgetResponse,
+    ResourceEstimationRequest,
+    ResourceEstimationResponse
 )
 from backend.app.services.authorization import get_authorized_case
 from backend.app.services.investigator_review import InvestigatorReviewService
+from backend.app.services.challenge_resolution import ChallengeResolutionService
+from backend.app.services.storage_budget import StorageBudgetService
 
 logger = logging.getLogger("ADFIR_REVIEW_API")
 
@@ -186,3 +193,79 @@ def request_more_evidence(
     """
     case = get_authorized_case(case_id, db, current_user)
     return InvestigatorReviewService.request_more_evidence(db, case, current_user, payload)
+
+
+@router.post(
+    "/cases/{case_id}/review/challenge/resolve",
+    response_model=ChallengeResolutionResponse,
+    status_code=status.HTTP_201_CREATED
+)
+def resolve_challenge(
+    case_id: str,
+    payload: ChallengeResolutionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Initiates human-in-the-loop challenge resolution by queuing a governed forensic capability execution.
+    Enforces Storage Budget safety limits, Governance Gate evaluation, and Resource-Aware Scheduler queueing.
+    """
+    case = get_authorized_case(case_id, db, current_user)
+    from backend.app.services.case_closure import check_case_not_closed
+    check_case_not_closed(case)
+    return ChallengeResolutionService.resolve_challenge(db, case, current_user, payload)
+
+
+@router.get(
+    "/cases/{case_id}/storage/budget",
+    response_model=StorageBudgetResponse,
+    status_code=status.HTTP_200_OK
+)
+def get_case_storage_budget(
+    case_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Returns real storage budget metrics for the case:
+    physical free disk, 2048 MB safety reserve, safe available space, workspace/vault usage,
+    and storage health status (SAFE, WARNING, INSUFFICIENT).
+    """
+    case = get_authorized_case(case_id, db, current_user)
+    return StorageBudgetService.get_storage_budget(db, case.id)
+
+
+@router.post(
+    "/cases/{case_id}/storage/estimate",
+    response_model=ResourceEstimationResponse,
+    status_code=status.HTTP_200_OK
+)
+def estimate_case_storage(
+    case_id: str,
+    payload: ResourceEstimationRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Estimates artifact expansion footprint for a selected capability and evidence item,
+    validating admissibility against safe available disk headroom.
+    """
+    case = get_authorized_case(case_id, db, current_user)
+    evidence_size = payload.evidence_size_bytes
+    if not evidence_size and payload.evidence_id:
+        from backend.app.models.models import EvidenceItem
+        ev = db.query(EvidenceItem).filter(
+            EvidenceItem.id == payload.evidence_id,
+            EvidenceItem.case_id == case.id
+        ).first()
+        if ev and ev.size_bytes:
+            evidence_size = ev.size_bytes
+    if not evidence_size:
+        evidence_size = 10 * 1024 * 1024  # Default 10 MB fallback
+
+    return StorageBudgetService.estimate_capability_storage(
+        capability=payload.capability,
+        evidence_size_bytes=evidence_size,
+        case_id=case.id,
+        db=db
+    )

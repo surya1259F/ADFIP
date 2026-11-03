@@ -802,6 +802,13 @@ class InvestigationStrategyEngine:
         # Stage A: Evidence-to-Strategy Analysis
         evidence_profiles = [EvidenceStrategyAnalyzer.analyze_evidence(db, e) for e in evidence_items]
 
+        # Stage A.1: Generate Investigative Questions & Feasibility via Decision Engine
+        from backend.app.services.decision_engine import EvidenceDecisionEngine
+        from forensic_tools.registry import PlatformAwareToolRegistry
+        tool_reg = PlatformAwareToolRegistry()
+        questions = EvidenceDecisionEngine.generate_investigative_questions(case.objective, case.case_type)
+        evaluated_questions = EvidenceDecisionEngine.evaluate_evidence_feasibility(questions, evidence_profiles, tool_reg)
+
         # Stage B: Select Capabilities
         selected_caps = CapabilitySelector.select_capabilities(
             db,
@@ -938,7 +945,7 @@ class InvestigationStrategyEngine:
             title=f"Investigation Strategy v{new_version} for Case {case.case_number}",
             strategy_summary=strategy_summary_text,
             tasks=ordered_tasks,
-            objectives=[f"Case Objective: {case.objective or 'Generic Incident Response'}"],
+            objectives=[f"Case Objective: {case.objective or 'Generic Incident Response'}"] + [f"{q['question_id']}: {q['question_text']}" for q in questions],
             scope_definition=f"Case Scope: {case.case_type} ({case.priority} Priority)",
             priority=case.priority,
             status=plan_status,
@@ -1041,6 +1048,7 @@ class InvestigationStrategyEngine:
             "evidence_snapshot": evidence_profiles,
             "resource_snapshot": system_res,
             "stopping_conditions": stopping_conditions,
+            "investigative_questions": evaluated_questions,
             "adjustments": adjustments
         }
 

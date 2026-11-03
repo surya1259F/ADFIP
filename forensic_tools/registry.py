@@ -355,6 +355,102 @@ class PlatformAwareToolRegistry:
         self._tools["python-evtx"] = evtx_tool
         self._tools["python_evtx"] = evtx_tool
 
+        # 6. SleuthKit mmls (Partition Table Analysis)
+        mmls_bin = "mmls.exe" if self.current_os == "windows" else "mmls"
+        mmls_path = self._resolve_binary_path(mmls_bin)
+        mmls_ver = None
+        if mmls_path:
+            try:
+                out = subprocess.run([mmls_path, "-V"], capture_output=True, text=True, timeout=5, shell=False)
+                mmls_ver = (out.stdout or out.stderr).strip().splitlines()[0]
+            except Exception:
+                mmls_ver = "detected"
+
+        self._tools["mmls"] = ToolDefinition(
+            name="mmls",
+            display_name="The Sleuth Kit (mmls Partition Analyzer)",
+            platforms=["linux", "windows", "darwin"],
+            binary_name=mmls_bin,
+            path=mmls_path,
+            version=mmls_ver,
+            is_available=mmls_path is not None,
+            supported_evidence_types=["disk_image", "filesystem_image", "raw", "dd", "e01"],
+            capabilities=["partition_analysis", "volume_system_analysis"],
+            description="Displays the partition layout of a volume system / disk image."
+        )
+
+        # 7. SleuthKit fsstat (Filesystem Details & Metadata)
+        fsstat_bin = "fsstat.exe" if self.current_os == "windows" else "fsstat"
+        fsstat_path = self._resolve_binary_path(fsstat_bin)
+        fsstat_ver = None
+        if fsstat_path:
+            try:
+                out = subprocess.run([fsstat_path, "-V"], capture_output=True, text=True, timeout=5, shell=False)
+                fsstat_ver = (out.stdout or out.stderr).strip().splitlines()[0]
+            except Exception:
+                fsstat_ver = "detected"
+
+        self._tools["fsstat"] = ToolDefinition(
+            name="fsstat",
+            display_name="The Sleuth Kit (fsstat Filesystem Analyzer)",
+            platforms=["linux", "windows", "darwin"],
+            binary_name=fsstat_bin,
+            path=fsstat_path,
+            version=fsstat_ver,
+            is_available=fsstat_path is not None,
+            supported_evidence_types=["disk_image", "filesystem_image", "raw", "dd"],
+            capabilities=["filesystem_details", "metadata_analysis"],
+            description="Displays general filesystem details including block size, cluster count, and OS metadata."
+        )
+
+        # 8. SQLite3 CLI
+        sqlite_bin = "sqlite3.exe" if self.current_os == "windows" else "sqlite3"
+        sqlite_path = self._resolve_binary_path(sqlite_bin)
+        sqlite_ver = None
+        if sqlite_path:
+            try:
+                out = subprocess.run([sqlite_path, "--version"], capture_output=True, text=True, timeout=5, shell=False)
+                sqlite_ver = out.stdout.strip().splitlines()[0] if out.stdout else "detected"
+            except Exception:
+                sqlite_ver = "detected"
+
+        self._tools["sqlite3"] = ToolDefinition(
+            name="sqlite3",
+            display_name="SQLite3 Database CLI",
+            platforms=["linux", "windows", "darwin"],
+            binary_name=sqlite_bin,
+            path=sqlite_path,
+            version=sqlite_ver,
+            is_available=sqlite_path is not None,
+            supported_evidence_types=["sqlite_database", "browser_artifact", "history", "mobile_database"],
+            capabilities=["sqlite_schema_dump", "database_table_inspection", "browser_artifact_analysis"],
+            description="Command-line utility to query and inspect SQLite database tables, schema, and records."
+        )
+
+        # 9. Strings (Binary String Extraction)
+        strings_bin = "strings.exe" if self.current_os == "windows" else "strings"
+        strings_path = self._resolve_binary_path(strings_bin)
+        strings_ver = None
+        if strings_path:
+            try:
+                out = subprocess.run([strings_path, "--version"], capture_output=True, text=True, timeout=5, shell=False)
+                strings_ver = out.stdout.strip().splitlines()[0] if out.stdout else "detected"
+            except Exception:
+                strings_ver = "detected"
+
+        self._tools["strings"] = ToolDefinition(
+            name="strings",
+            display_name="GNU Strings Extractor",
+            platforms=["linux", "windows", "darwin"],
+            binary_name=strings_bin,
+            path=strings_path,
+            version=strings_ver,
+            is_available=strings_path is not None,
+            supported_evidence_types=["binary", "executable", "memory_dump", "raw", "suspicious_file", "pe_executable", "elf_executable"],
+            capabilities=["string_extraction", "ascii_unicode_harvesting"],
+            description="Prints sequences of printable characters from binary files, memory dumps, and executables."
+        )
+
     def get_tool(self, name: str) -> Optional[ToolDefinition]:
         if not name or not isinstance(name, str):
             return None
@@ -450,6 +546,9 @@ class PlatformAwareToolRegistry:
         if tool.name == "volatility3":
             # Volatility 3 syntax: vol -f <evidence_path> <plugin> <plugin_args...>
             cmd = [tool.path, "-f", request.evidence_path] + request.arguments
+        elif tool.name == "sqlite3":
+            # sqlite3 <evidence_path> [arguments...]
+            cmd = [tool.path, request.evidence_path] + request.arguments
         else:
             cmd = [tool.path] + request.arguments + [request.evidence_path]
 

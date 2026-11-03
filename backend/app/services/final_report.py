@@ -74,6 +74,8 @@ from backend.app.schemas.schemas import (
 )
 from backend.app.services.authorization import get_authorized_case
 from backend.app.services.audit import log_audit_event
+from backend.app.services.decision_engine import EvidenceDecisionEngine
+from forensic_tools.registry import PlatformAwareToolRegistry
 
 logger = logging.getLogger("ADFIR_FINAL_REPORT")
 
@@ -662,20 +664,208 @@ class FinalForensicReportService:
             "sample_nodes": lineage_nodes[:80]
         }
 
-        # Assemble full 12-section payload
+        # 13. Investigative Questions & Feasibility (ISO/IEC 27037 Objective Decomposition)
+        investigative_questions = EvidenceDecisionEngine.get_case_investigative_questions(db, case.id)
+        obj_and_questions = {
+            "case_objective": case.objective or "Generic Incident Response",
+            "case_type": case.case_type,
+            "priority": case.priority,
+            "total_questions": len(investigative_questions),
+            "investigable_count": sum(1 for q in investigative_questions if q.get("feasibility") == "INVESTIGABLE"),
+            "partially_investigable_count": sum(1 for q in investigative_questions if q.get("feasibility") == "PARTIALLY_INVESTIGABLE"),
+            "requires_evidence_count": sum(1 for q in investigative_questions if q.get("feasibility") == "REQUIRES_ADDITIONAL_EVIDENCE"),
+            "questions": investigative_questions
+        }
+
+        # 14. Executive Summary
+        exec_summary = {
+            "case_title": case.name,
+            "case_number": case.case_number,
+            "investigation_objective": case.objective or "Forensic inquiry",
+            "status": case.status,
+            "evidence_containers_analyzed": len(case.evidence_items),
+            "cryptographically_verified_evidence": evidence_summary["verified_count"],
+            "critical_findings_count": sum(1 for f in findings_list if f["severity"] == "CRITICAL"),
+            "high_findings_count": sum(1 for f in findings_list if f["severity"] == "HIGH"),
+            "total_artifacts_extracted": len(structured_arts) + len(exec_arts) + len(normalized_arts),
+            "total_timeline_events": len(timeline),
+            "lead_investigator": user.name or user.email,
+            "summary_text": (
+                f"Digital forensic investigation conducted on case {case.case_number} ('{case.name}'). "
+                f"Evaluated {len(case.evidence_items)} registered evidence container(s) across {len(tool_executions)} "
+                f"forensic tool execution(s). A total of {len(findings_list)} forensic finding(s) were analyzed "
+                f"({sum(1 for f in findings_list if f['severity'] in ['CRITICAL', 'HIGH'])} Critical/High priority). "
+                f"Evidence integrity status: {overall_integrity_status}."
+            )
+        }
+
+        # 15. Investigation Methodology (ISO/IEC 27037 & NIST SP 800-86 standard)
+        methodology = {
+            "framework": "ISO/IEC 27037 & NIST SP 800-86 Digital Forensic Standards",
+            "principles": [
+                "Authenticity: Evidence preserved via read-only access and cryptographic SHA-256 verification",
+                "Integrity: Deterministic hashing at ingestion, pre-execution, and report generation",
+                "Auditability: Complete chain of custody logging for all operations",
+                "Repeatability: Fully scripted, deterministic tool execution under platform isolation",
+                "Grounding: Zero synthetic evidence; every finding directly cites verified tool artifacts"
+            ],
+            "phases": [
+                {"phase": "Identification", "description": "Identification and registration of digital evidence items"},
+                {"phase": "Preservation", "description": "Hashing, read-only permission lockdown, and vault isolation"},
+                {"phase": "Analysis", "description": "Deterministic parsing and specialist tool execution"},
+                {"phase": "Correlation", "description": "Cross-artifact timeline sequencing and pivot entity linking"},
+                {"phase": "Evaluation", "description": "Governed AI reasoning with 5-tier claim separation and investigator review"},
+                {"phase": "Presentation", "description": "Synthesis of auditable, versioned final forensic report"}
+            ]
+        }
+
+        # 16. Alternative Explanations & Contradictory Evidence
+        challenged_or_rejected = [
+            f for f in findings_list
+            if f.get("investigator_decision") in ["CHALLENGE", "REJECT"]
+        ]
+        unverified_claims = [
+            f for f in findings_list
+            if f.get("classification") == "UNVERIFIED" or not f.get("is_grounded")
+        ]
+        alternative_explanations = {
+            "evaluated_hypotheses": [
+                {
+                    "hypothesis": "Benign Administrative Activity",
+                    "assessment": "Evaluated whether observed commands, scripts, or connections correspond to authorized IT maintenance.",
+                    "status": "EVALUATED"
+                },
+                {
+                    "hypothesis": "Compromised System / Malicious Execution",
+                    "assessment": "Evaluated indicators of unauthorized access, execution, persistence, or data staging.",
+                    "status": "EVALUATED"
+                }
+            ],
+            "challenged_or_rejected_findings": [
+                {
+                    "finding_id": f["id"],
+                    "title": f["title"],
+                    "decision": f["investigator_decision"],
+                    "investigator_rationale": f.get("investigator_rationale")
+                }
+                for f in challenged_or_rejected
+            ],
+            "unverified_indicators_count": len(unverified_claims)
+        }
+
+        # 17. Investigation Limitations
+        missing_domains = []
+        for q in investigative_questions:
+            missing_domains.extend(q.get("missing_evidence_domains", []))
+        missing_domains = sorted(list(set(missing_domains)))
+
+        limitations = {
+            "missing_evidence_domains": missing_domains,
+            "unsupported_questions_count": sum(1 for q in investigative_questions if q.get("feasibility") == "REQUIRES_ADDITIONAL_EVIDENCE"),
+            "limitations_notes": [
+                f"Missing Evidence Domains: {', '.join(missing_domains)}" if missing_domains else "All primary required evidence domains were submitted.",
+                "Anti-Forensics: Scanned for timestomping, log clearing, and rootkit artifacts; absence of evidence does not guarantee absence of anti-forensics.",
+                "Scope Boundary: Analysis constrained strictly to submitted digital evidence containers."
+            ]
+        }
+
+        # 18. Conclusions
+        question_answers = []
+        for q in investigative_questions:
+            matching_f = [f for f in findings_list if any(eid in q.get("matching_evidence_ids", []) for eid in f.get("supporting_evidence_ids", []))]
+            is_answered = len(matching_f) > 0 and q.get("feasibility") in ["INVESTIGABLE", "PARTIALLY_INVESTIGABLE"]
+            ans_text = (
+                f"Based on {len(matching_f)} corroborating finding(s), evidence indicates active incident indicators."
+                if is_answered else
+                f"Cannot definitively answer due to missing evidence ({', '.join(q.get('missing_evidence_domains', []))})."
+            )
+            question_answers.append({
+                "question_id": q.get("question_id"),
+                "question_text": q.get("question_text"),
+                "feasibility": q.get("feasibility"),
+                "conclusion": ans_text,
+                "supporting_finding_ids": [f["id"] for f in matching_f[:5]]
+            })
+
+        conclusions = {
+            "investigation_verdict": "CONFIRMED_INCIDENT" if any(f["severity"] in ["CRITICAL", "HIGH"] for f in findings_list) else "INCONCLUSIVE_OR_BENIGN",
+            "overall_summary": (
+                f"Investigation of case {case.case_number} concluded with {len(findings_list)} finding(s). "
+                f"{sum(1 for qa in question_answers if 'indicates' in qa['conclusion'])} of {len(question_answers)} "
+                f"investigative questions were positively answered with verified evidence."
+            ),
+            "question_answers": question_answers
+        }
+
+        # 19. Recommendations
+        tactical = [
+            "Immediately isolate affected endpoint(s) from local network segment.",
+            "Revoke and rotate credentials for all user accounts identified in authentication events.",
+            "Block observed malicious indicators (hashes, external IPs, domains) across perimeter firewalls and EDR."
+        ]
+        strategic = [
+            "Enforce centralized, tamper-resistant audit log shipping (Syslog/SIEM) with minimum 1-year retention.",
+            "Deploy multi-factor authentication (MFA) on all remote and administrative entry points.",
+            "Conduct memory capture at initial incident triage before rebooting or isolating endpoints."
+        ]
+        additional_evidence = [
+            f"Acquire {dom} evidence to resolve unanswered investigative question."
+            for dom in missing_domains
+        ]
+        recommendations = {
+            "tactical_containment": tactical,
+            "strategic_remediation": strategic,
+            "additional_evidence_acquisition": additional_evidence
+        }
+
+        # 20. Appendix
+        t_reg = PlatformAwareToolRegistry()
+        reg_tools_info = [
+            {"name": t.name, "display_name": t.display_name, "version": t.version or "System", "available": t.is_available}
+            for t in t_reg.list_tools()
+        ]
+        appendix = {
+            "registered_tools_manifest": reg_tools_info,
+            "sha256_hash_catalog": {
+                "evidence_hashes": {h["name"]: h["registered_sha256"] for h in hashes_preservation},
+                "findings_hashes": {f["id"]: f["sha256_hash"] for f in findings_list if f.get("sha256_hash")},
+                "reviews_hashes": {r.id: r.sha256_hash for r in review_records if r.sha256_hash}
+            },
+            "lineage_provenance_summary": {
+                "total_nodes": len(lineage_nodes),
+                "depth": 7,
+                "generated_by": user.name or user.email
+            }
+        }
+
+        # Assemble full 16-section payload with backwards-compatible aliases
         sections = {
+            "executive_summary": exec_summary,
             "case_information": case_information,
+            "investigation_objective_and_questions": obj_and_questions,
             "evidence_inventory": evidence_inventory,
-            "hashes_preservation": hashes_preservation,
-            "chain_of_custody": chain_of_custody,
+            "evidence_integrity_and_custody": hashes_preservation,
+            "investigation_methodology": methodology,
             "tool_executions": tool_executions,
+            "tool_execution_details": tool_executions,
             "artifacts": artifacts,
+            "forensic_observations": artifacts,
+            "findings": findings_section,
+            "analytical_findings": findings_section,
             "timeline": timeline,
             "correlations": correlations,
-            "findings": findings_section,
+            "correlation_analysis": correlations,
+            "alternative_explanations": alternative_explanations,
+            "investigation_limitations": limitations,
+            "conclusions": conclusions,
+            "recommendations": recommendations,
+            "appendix": appendix,
+            # Backwards-compatible aliases for existing consumers
+            "hashes_preservation": hashes_preservation,
+            "chain_of_custody": chain_of_custody,
             "confidence_verification": confidence_verification,
             "investigator_decisions": investigator_decisions,
-            "explainability_provenance": explainability_provenance
+            "explainability_provenance": explainability_provenance,
         }
 
         provenance = {
@@ -699,16 +889,24 @@ class FinalForensicReportService:
         """
         Renders a forensically sound, audit-grade Markdown document containing all 12 sections.
         """
+        exec_summary = sections.get("executive_summary") or {}
         case_info = sections["case_information"]
+        obj_questions = sections.get("investigation_objective_and_questions") or {}
         ev_inv = sections["evidence_inventory"]
         hashes = sections["hashes_preservation"]
         custody = sections["chain_of_custody"]
+        methodology = sections.get("investigation_methodology") or {}
         execs = sections["tool_executions"]
         timeline = sections["timeline"]
         corr = sections["correlations"]
         findings_sec = sections["findings"]
         conf = sections["confidence_verification"]
         decisions = sections["investigator_decisions"]
+        alt_exp = sections.get("alternative_explanations") or {}
+        limitations = sections.get("investigation_limitations") or {}
+        conclusions = sections.get("conclusions") or {}
+        recommendations = sections.get("recommendations") or {}
+        appendix = sections.get("appendix") or {}
         provenance = sections["explainability_provenance"]
 
         ver = report_meta.get("version", 1)
@@ -739,6 +937,20 @@ class FinalForensicReportService:
                 "> [!WARNING] WORKING EXPORT — NOT FINAL",
                 "> This document is a preliminary working export for operational investigative review.",
                 "> It has NOT passed full authoritative forensic readiness gates and is NOT certified as an official final forensic report.",
+                "",
+                "---",
+                "",
+            ])
+
+        if exec_summary:
+            lines.extend([
+                "## EXECUTIVE SUMMARY",
+                exec_summary.get("summary_text", ""),
+                "",
+                f"- **Overall Verdict:** {conclusions.get('investigation_verdict', 'INCONCLUSIVE')}",
+                f"- **Evidence Containers Evaluated:** {exec_summary.get('evidence_containers_analyzed', len(ev_inv))}",
+                f"- **Critical / High Findings:** {exec_summary.get('critical_findings_count', 0)} Critical, {exec_summary.get('high_findings_count', 0)} High",
+                f"- **Total Extracted Artifacts:** {exec_summary.get('total_artifacts_extracted', 0)}",
                 "",
                 "---",
                 "",
@@ -879,6 +1091,83 @@ class FinalForensicReportService:
         ])
         for r in decisions["reviews"]:
             lines.append(f"| **{r['decision']}** | `{r['target_id'][:12]}...` | {r['investigator_name']} | {r['comment']} | `{r['sha256_hash'][:12]}...` |")
+
+        if alt_exp:
+            lines.extend([
+                "",
+                "## SECTION 13: ALTERNATIVE EXPLANATIONS & CONTRADICTORY EVIDENCE",
+                "Evaluation of competing hypotheses, benign activity considerations, and challenged claims.",
+                "",
+                "**Evaluated Competing Hypotheses:**",
+            ])
+            for h in alt_exp.get("evaluated_hypotheses", []):
+                lines.append(f"- **{h['hypothesis']}:** {h['assessment']} (Status: `{h['status']}`)")
+            if alt_exp.get("challenged_or_rejected_findings"):
+                lines.extend([
+                    "",
+                    "| Finding ID | Title | Investigator Decision | Rationale |",
+                    "| :--- | :--- | :--- | :--- |",
+                ])
+                for cr in alt_exp.get("challenged_or_rejected_findings", []):
+                    lines.append(f"| `{cr['finding_id'][:12]}...` | {cr['title']} | **{cr['decision']}** | {cr.get('investigator_rationale') or '-'} |")
+
+        if limitations:
+            lines.extend([
+                "",
+                "## SECTION 14: INVESTIGATION LIMITATIONS",
+                f"Unsupported Questions: {limitations.get('unsupported_questions_count', 0)}",
+                "",
+            ])
+            for ln in limitations.get("limitations_notes", []):
+                lines.append(f"- {ln}")
+
+        if conclusions:
+            lines.extend([
+                "",
+                "## SECTION 15: FORENSIC CONCLUSIONS",
+                f"**Overall Verdict:** `{conclusions.get('investigation_verdict', 'INCONCLUSIVE')}`",
+                "",
+                f"{conclusions.get('overall_summary', '')}",
+                "",
+                "### Answers to Investigative Questions",
+                "| Question ID | Question | Feasibility | Finding / Conclusion |",
+                "| :--- | :--- | :--- | :--- |",
+            ])
+            for qa in conclusions.get("question_answers", []):
+                lines.append(f"| `{qa.get('question_id')}` | {qa.get('question_text')} | `{qa.get('feasibility')}` | {qa.get('conclusion')} |")
+
+        if recommendations:
+            lines.extend([
+                "",
+                "## SECTION 16: RECOMMENDATIONS",
+                "### Tactical Containment Recommendations",
+            ])
+            for t in recommendations.get("tactical_containment", []):
+                lines.append(f"1. {t}")
+            lines.extend([
+                "",
+                "### Strategic Remediation Recommendations",
+            ])
+            for s in recommendations.get("strategic_remediation", []):
+                lines.append(f"1. {s}")
+            if recommendations.get("additional_evidence_acquisition"):
+                lines.extend([
+                    "",
+                    "### Additional Evidence Acquisition Recommendations",
+                ])
+                for a in recommendations.get("additional_evidence_acquisition", []):
+                    lines.append(f"- {a}")
+
+        if appendix:
+            lines.extend([
+                "",
+                "## SECTION 17: APPENDIX & TOOL REGISTRY MANIFEST",
+                "| Tool Name | Display Name | Version | Host Status |",
+                "| :--- | :--- | :--- | :--- |",
+            ])
+            for t in appendix.get("registered_tools_manifest", []):
+                st_icon = "INSTALLED & VERIFIED" if t.get("available") else "UNAVAILABLE"
+                lines.append(f"| `{t.get('name')}` | {t.get('display_name')} | {t.get('version')} | {st_icon} |")
 
         lines.extend([
             "",

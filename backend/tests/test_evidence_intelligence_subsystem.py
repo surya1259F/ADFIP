@@ -5,22 +5,41 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 from backend.app.main import app
-from backend.app.core.database import Base, engine, SessionLocal
+from backend.app.core.database import Base, get_db
 from backend.app.core.security import create_access_token, hash_password
 from backend.app.models.models import User, Case, EvidenceItem, EvidenceIntelligence, ChainOfCustodyEvent
 from backend.app.services.intelligence import EvidenceIntelligenceEngine
 from backend.app.services.integrity import calculate_sha256
 
+_test_db_fd, _test_db_path = tempfile.mkstemp(suffix="_intel_test.db")
+os.close(_test_db_fd)
+TEST_ENGINE = create_engine(f"sqlite:///{_test_db_path}", connect_args={"check_same_thread": False})
+TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=TEST_ENGINE)
+
+@pytest.fixture(scope="function", autouse=True)
+def setup_test_db():
+    Base.metadata.create_all(bind=TEST_ENGINE)
+    def override_get_db():
+        db = TestSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+    app.dependency_overrides[get_db] = override_get_db
+    yield
+    app.dependency_overrides.pop(get_db, None)
+    Base.metadata.drop_all(bind=TEST_ENGINE)
+
 @pytest.fixture(scope="function")
 def db_session():
-    Base.metadata.create_all(bind=engine)
-    session = SessionLocal()
+    session = TestSessionLocal()
     try:
         yield session
     finally:
         session.close()
-        Base.metadata.drop_all(bind=engine)
 
 @pytest.fixture(scope="function")
 def test_users(db_session: Session):

@@ -44,6 +44,11 @@ import type {
   RequestMoreEvidenceResponse,
   ReviewItemsResponse,
   ClaimProvenanceResponse,
+  ChallengeResolutionRequest,
+  ChallengeResolutionResponse,
+  StorageBudgetResponse,
+  ResourceEstimationRequest,
+  ResourceEstimationResponse,
   ForensicReportGenerateRequest,
   ForensicReportResponse,
   ForensicReportVersionItem,
@@ -436,6 +441,15 @@ export const api = {
     return res.data;
   },
 
+  getInvestigativeQuestions: async (caseId: string): Promise<{
+    case_id: string;
+    total_questions: number;
+    questions: any[];
+  }> => {
+    const res = await client.get(`/cases/${caseId}/investigative-questions`);
+    return res.data;
+  },
+
   getStrategyCapabilities: async (): Promise<ForensicCapability[]> => {
     const res = await client.get<ForensicCapability[]>('/strategy/capabilities');
     return res.data;
@@ -600,6 +614,21 @@ export const api = {
 
   requestMoreEvidence: async (caseId: string, data: RequestMoreEvidenceRequest): Promise<RequestMoreEvidenceResponse> => {
     const res = await client.post<RequestMoreEvidenceResponse>(`/cases/${caseId}/review/request-more-evidence`, data);
+    return res.data;
+  },
+
+  getStorageBudget: async (caseId: string): Promise<StorageBudgetResponse> => {
+    const res = await client.get<StorageBudgetResponse>(`/cases/${caseId}/storage/budget`);
+    return res.data;
+  },
+
+  estimateStorage: async (caseId: string, data: ResourceEstimationRequest): Promise<ResourceEstimationResponse> => {
+    const res = await client.post<ResourceEstimationResponse>(`/cases/${caseId}/storage/estimate`, data);
+    return res.data;
+  },
+
+  resolveChallenge: async (caseId: string, data: ChallengeResolutionRequest): Promise<ChallengeResolutionResponse> => {
+    const res = await client.post<ChallengeResolutionResponse>(`/cases/${caseId}/review/challenge/resolve`, data);
     return res.data;
   },
 

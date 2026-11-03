@@ -1,5 +1,6 @@
 import html
 import urllib.parse
+import uuid
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from pathlib import Path
@@ -49,11 +50,12 @@ router = APIRouter()
 
 
 @router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def register_user(req: UserRegisterRequest, db: Session = Depends(get_db)):
+def register_user(req: UserRegisterRequest, request: Request, db: Session = Depends(get_db)):
     """
     Registers a new investigator account with hashed password credentials.
     Rejects duplicate emails with 409 Conflict. Default role is least-privileged INVESTIGATOR.
     """
+    req_id = getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID") or "unknown"
     email_clean = req.email.lower().strip() if req.email else ""
     if not email_clean or "@" not in email_clean or "." not in email_clean:
         raise HTTPException(
@@ -70,13 +72,14 @@ def register_user(req: UserRegisterRequest, db: Session = Depends(get_db)):
     try:
         existing_user = db.query(User).filter(User.email == email_clean).first()
     except SQLAlchemyError as db_err:
-        logger.error(f"Database error checking existing user: {db_err}", exc_info=True)
+        logger.error(f"[Request-ID: {req_id}] Database error checking existing user: {db_err}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Registration service encountered a database error. Please try again."
         )
 
     if existing_user:
+        logger.warning(f"[Request-ID: {req_id}] Registration conflict: account '{email_clean}' already exists.")
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="An account with this email address already exists.",
@@ -103,16 +106,17 @@ def register_user(req: UserRegisterRequest, db: Session = Depends(get_db)):
         db.add(user)
         db.commit()
         db.refresh(user)
+        logger.info(f"[Request-ID: {req_id}] User account '{user.email}' registered successfully (id={user.id}).")
     except SQLAlchemyError as db_err:
         db.rollback()
-        logger.error(f"Database error during user registration: {db_err}", exc_info=True)
+        logger.error(f"[Request-ID: {req_id}] Database error during user registration: {db_err}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Registration service encountered a database error. Please try again."
         )
     except Exception as exc:
         db.rollback()
-        logger.error(f"Unexpected error creating user account: {exc}", exc_info=True)
+        logger.error(f"[Request-ID: {req_id}] Unexpected error creating user account: {exc}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Registration failed due to an unexpected server error. Please try again."
@@ -126,29 +130,44 @@ def register_user(req: UserRegisterRequest, db: Session = Depends(get_db)):
             details=f"User account '{user.email}' ({user.name}) registered successfully.",
         )
     except Exception as audit_err:
-        logger.warning(f"Failed to record audit event for user creation: {audit_err}")
+        logger.warning(f"[Request-ID: {req_id}] Failed to record audit event for user creation: {audit_err}")
 
     return user
 
 
 @router.post("/login", response_model=TokenResponse, status_code=status.HTTP_200_OK)
-def login_user(req: UserLoginRequest, db: Session = Depends(get_db)):
+def login_user(req: UserLoginRequest, request: Request, db: Session = Depends(get_db)):
     """
     Authenticates user credentials and issues a signed HMAC-SHA256 access token.
     Prevents user enumeration by returning a generic 401 Unauthorized error on any failure.
     """
+    req_id = getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID") or "unknown"
     email_clean = req.email.lower().strip() if req.email else ""
     try:
         user = db.query(User).filter(User.email == email_clean).first()
     except SQLAlchemyError as db_err:
-        logger.error(f"Database error querying user during login: {db_err}", exc_info=True)
+        logger.error(f"[Request-ID: {req_id}] Database error querying user during login: {db_err}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Authentication service encountered a database error. Please try again."
         )
 
-    # Prevent user enumeration: verify against dummy hash if user does not exist
-    if not user or not user.password_hash or not verify_password(req.password, user.password_hash):
+    # Prevent timing attacks and user enumeration: run constant-time check against dummy hash if user is absent or has no password
+    password_valid = False
+    if user and user.password_hash:
+        password_valid = verify_password(req.password, user.password_hash)
+    else:
+        # Dummy verification to prevent timing attacks
+        verify_password("dummy_password_constant_time", "$pbkdf2-sha256$29000$dummy$dummy")
+
+    if not user or not user.password_hash or not password_valid:
+        if not user:
+            logger.warning(f"[Request-ID: {req_id}] Authentication failed for '{email_clean}': user not found in database.")
+        elif not user.password_hash:
+            logger.warning(f"[Request-ID: {req_id}] Authentication failed for '{email_clean}': account exists but has no password hash (OAuth-only account).")
+        else:
+            logger.warning(f"[Request-ID: {req_id}] Authentication failed for '{email_clean}': password verification failed.")
+
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password.",
@@ -156,6 +175,7 @@ def login_user(req: UserLoginRequest, db: Session = Depends(get_db)):
         )
 
     if not user.is_active:
+        logger.warning(f"[Request-ID: {req_id}] Authentication failed for '{email_clean}': user account is disabled.")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User account is disabled.",
@@ -168,7 +188,7 @@ def login_user(req: UserLoginRequest, db: Session = Depends(get_db)):
         db.refresh(user)
     except SQLAlchemyError as db_err:
         db.rollback()
-        logger.warning(f"Failed to update last_login_at for user {user.id}: {db_err}")
+        logger.warning(f"[Request-ID: {req_id}] Failed to update last_login_at for user {user.id}: {db_err}")
         # Non-fatal for authentication: continue session creation
 
     try:
@@ -657,6 +677,7 @@ def initiate_google_oauth_link(
 
 @router.get("/google/callback", response_class=HTMLResponse)
 def handle_google_oauth_callback(
+    request: Request,
     code: Optional[str] = Query(None, description="Google OAuth authorization code"),
     state: Optional[str] = Query(None, description="Anti-CSRF state token"),
     error: Optional[str] = Query(None, description="Google OAuth error code if denied"),
@@ -675,6 +696,7 @@ def handle_google_oauth_callback(
     6. Returns hardened HTML with strict postMessage targetOrigin and no-store headers.
     """
     target_origin = "http://localhost:5173"
+    correlation_id = getattr(request.state, "request_id", None) if request and hasattr(request, "state") else str(uuid.uuid4())
 
     if error:
         err_msg = error_description or error or "Google authorization was denied or cancelled."
@@ -690,11 +712,21 @@ def handle_google_oauth_callback(
         oauth_state = GoogleOAuthService.verify_and_consume_state(db=db, state=state or "")
         target_origin = oauth_state.frontend_origin or target_origin
 
-        tokens = GoogleOAuthService.exchange_code_for_tokens(
-            code=code or "",
-            code_verifier=oauth_state.code_verifier,
-            redirect_uri=oauth_state.redirect_uri,
-        )
+        exchange_fn = GoogleOAuthService.exchange_code_for_tokens
+        exchange_kwargs = {
+            "code": code or "",
+            "code_verifier": oauth_state.code_verifier,
+            "redirect_uri": oauth_state.redirect_uri,
+        }
+        try:
+            import inspect
+            sig = inspect.signature(exchange_fn)
+            if "correlation_id" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                exchange_kwargs["correlation_id"] = correlation_id
+        except Exception:
+            pass
+
+        tokens = exchange_fn(**exchange_kwargs)
         id_token = tokens.get("id_token")
         if not id_token or not str(id_token).strip():
             log_audit_event(
@@ -708,12 +740,22 @@ def handle_google_oauth_callback(
                 detail="Google token response missing required OIDC ID token. Authentication failed closed."
             )
 
-        identity = GoogleOAuthService.verify_google_identity(
-            access_token=tokens.get("access_token") or "",
-            id_token=str(id_token).strip(),
-            expected_nonce=oauth_state.nonce,
-            db=db,
-        )
+        verify_fn = GoogleOAuthService.verify_google_identity
+        verify_kwargs = {
+            "access_token": tokens.get("access_token") or "",
+            "id_token": str(id_token).strip(),
+            "expected_nonce": oauth_state.nonce,
+            "db": db,
+        }
+        try:
+            import inspect
+            sig_v = inspect.signature(verify_fn)
+            if "correlation_id" in sig_v.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig_v.parameters.values()):
+                verify_kwargs["correlation_id"] = correlation_id
+        except Exception:
+            pass
+
+        identity = verify_fn(**verify_kwargs)
 
         if oauth_state.purpose == "LINK":
             target_user = db.query(User).filter(User.id == oauth_state.target_user_id).first()

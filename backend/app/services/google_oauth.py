@@ -4,6 +4,8 @@ import html
 import json
 import logging
 import secrets
+import socket
+import ssl
 import time
 import urllib.parse
 from datetime import datetime, timedelta, timezone
@@ -366,12 +368,74 @@ class GoogleOAuthService:
         )
 
     @classmethod
+    def _categorize_request_error(
+        cls,
+        exc: Exception,
+        stage: str,
+        destination: str,
+        duration: float,
+        correlation_id: Optional[str] = None,
+    ) -> HTTPException:
+        """
+        Categorizes outbound HTTP exceptions into structured diagnostics,
+        logs the event without secrets or tokens, and returns a safe HTTPException.
+        """
+        cause = getattr(exc, "__cause__", None) or exc
+        exc_name = type(exc).__name__
+        cause_name = type(cause).__name__
+        safe_str = str(exc)
+
+        # 1. DNS Resolution Failure
+        if isinstance(cause, socket.gaierror) or "name resolution" in safe_str.lower() or "nameresolution" in exc_name.lower():
+            category = "DNS_RESOLUTION_FAILURE"
+            status_code = status.HTTP_502_BAD_GATEWAY
+            detail = "Unable to reach Google OAuth services (DNS resolution failure). Verify network connectivity."
+
+        # 2. Connection Timeout
+        elif isinstance(exc, (httpx.ConnectTimeout, httpx.TimeoutException)):
+            category = "CONNECTION_TIMEOUT"
+            status_code = status.HTTP_504_GATEWAY_TIMEOUT
+            detail = "Connection to Google OAuth services timed out. Please retry."
+
+        # 3. TLS / SSL Verification Failure
+        elif isinstance(cause, ssl.SSLError) or "ssl" in exc_name.lower() or "certificate" in safe_str.lower():
+            category = "TLS_VERIFICATION_FAILURE"
+            status_code = status.HTTP_502_BAD_GATEWAY
+            detail = "TLS certificate verification with Google OAuth services failed."
+
+        # 4. Connection Refused / Network Unreachable
+        elif isinstance(cause, (ConnectionRefusedError, OSError)) and ("unreachable" in safe_str.lower() or "refused" in safe_str.lower()):
+            category = "NETWORK_UNREACHABLE"
+            status_code = status.HTTP_502_BAD_GATEWAY
+            detail = "Unable to reach Google OAuth services (network unreachable). Verify network connectivity."
+
+        # 5. Generic ConnectError / RequestError
+        else:
+            category = "NETWORK_CONNECT_ERROR"
+            status_code = status.HTTP_502_BAD_GATEWAY
+            detail = f"Unable to reach Google OAuth services ({exc_name}). Verify network connectivity."
+
+        logger.error(
+            "OAuth Outbound HTTP Error | CorrelationID: %s | Stage: %s | Destination: %s | Category: %s | Duration: %.3fs | Exc: %s | Cause: %s | SafeDetail: %s",
+            correlation_id or "N/A",
+            stage,
+            destination,
+            category,
+            duration,
+            exc_name,
+            cause_name,
+            detail
+        )
+        return HTTPException(status_code=status_code, detail=detail)
+
+    @classmethod
     def exchange_code_for_tokens(
         cls,
         code: str,
         code_verifier: Optional[str],
         redirect_uri: str,
-        http_client: Optional[httpx.Client] = None
+        http_client: Optional[httpx.Client] = None,
+        correlation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Exchanges Google authorization code for access and ID tokens via Google's token endpoint.
@@ -392,21 +456,56 @@ class GoogleOAuthService:
         if code_verifier:
             token_payload["code_verifier"] = code_verifier
 
-        client = http_client or httpx.Client(timeout=15.0)
+        client = http_client or httpx.Client(timeout=httpx.Timeout(15.0, connect=5.0))
+        t0 = time.time()
         try:
             resp = client.post(cls.GOOGLE_TOKEN_ENDPOINT, data=token_payload)
+            duration = time.time() - t0
             if resp.status_code != 200:
-                logger.warning("Google token exchange error (%d): %s", resp.status_code, resp.text)
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Failed to exchange authorization code with Google identity service."
+                try:
+                    resp_json = resp.json()
+                    err_code = resp_json.get("error", "unknown_error")
+                    err_desc = resp_json.get("error_description", "")
+                except Exception:
+                    err_code = "parse_error"
+                    err_desc = resp.text[:150]
+
+                logger.warning(
+                    "Google Token Exchange Non-200 | CorrelationID: %s | Destination: %s | Status: %d | Duration: %.3fs | Error: %s | Description: %s",
+                    correlation_id or "N/A",
+                    cls.GOOGLE_TOKEN_ENDPOINT,
+                    resp.status_code,
+                    duration,
+                    err_code,
+                    err_desc,
                 )
+
+                if resp.status_code in (500, 502, 503, 504):
+                    raise HTTPException(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        detail="Google identity service is temporarily unavailable. Please retry."
+                    )
+                elif err_code == "invalid_grant":
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Google authorization code is invalid or has expired. Please sign in again."
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Failed to exchange authorization code with Google identity service."
+                    )
             return resp.json()
+        except HTTPException:
+            raise
         except httpx.RequestError as exc:
-            logger.error("Network error during Google token exchange (%s): %s", type(exc).__name__, exc)
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Unable to reach Google OAuth services ({type(exc).__name__}). Verify network connectivity."
+            duration = time.time() - t0
+            raise cls._categorize_request_error(
+                exc=exc,
+                stage="token_exchange",
+                destination=cls.GOOGLE_TOKEN_ENDPOINT,
+                duration=duration,
+                correlation_id=correlation_id,
             )
         finally:
             if http_client is None:
@@ -420,6 +519,7 @@ class GoogleOAuthService:
         expected_nonce: Optional[str] = None,
         http_client: Optional[httpx.Client] = None,
         db: Optional[Session] = None,
+        correlation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Validates Google identity tokens and claims (MANDATORY ID TOKEN & NONCE, FAIL CLOSED):
@@ -469,20 +569,32 @@ class GoogleOAuthService:
                 detail="OIDC transaction nonce is mandatory. Authentication failed closed."
             )
 
-        client = http_client or httpx.Client(timeout=15.0)
+        client = http_client or httpx.Client(timeout=httpx.Timeout(15.0, connect=5.0))
+        t0 = time.time()
         try:
             # 3. Validate ID token via Google tokeninfo endpoint (FAIL CLOSED)
             tokeninfo_resp = client.get(
                 f"{cls.GOOGLE_TOKENINFO_ENDPOINT}?id_token={urllib.parse.quote(str(id_token).strip())}"
             )
+            duration = time.time() - t0
             if tokeninfo_resp.status_code != 200:
-                logger.error("Google tokeninfo validation failed (%d): %s", tokeninfo_resp.status_code, tokeninfo_resp.text)
+                logger.error(
+                    "Google Tokeninfo Non-200 | CorrelationID: %s | Status: %d | Duration: %.3fs",
+                    correlation_id or "N/A",
+                    tokeninfo_resp.status_code,
+                    duration,
+                )
                 if db:
                     log_audit_event(
                         db=db,
                         case_id=None,
                         event_type="OAUTH_IDENTITY_VERIFICATION_FAILED",
                         details=f"Google tokeninfo endpoint returned status {tokeninfo_resp.status_code}.",
+                    )
+                if tokeninfo_resp.status_code in (500, 502, 503, 504):
+                    raise HTTPException(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        detail="Google tokeninfo service is temporarily unavailable. Please retry."
                     )
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -671,10 +783,13 @@ class GoogleOAuthService:
         except HTTPException:
             raise
         except httpx.RequestError as exc:
-            logger.error("Network error during Google identity verification (%s): %s", type(exc).__name__, exc)
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Unable to verify identity with Google services ({type(exc).__name__}). Verify network connectivity."
+            duration = time.time() - t0
+            raise cls._categorize_request_error(
+                exc=exc,
+                stage="identity_verification",
+                destination=cls.GOOGLE_TOKENINFO_ENDPOINT,
+                duration=duration,
+                correlation_id=correlation_id,
             )
         finally:
             if http_client is None:

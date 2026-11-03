@@ -475,6 +475,22 @@ export interface ForensicTool {
   health_status: string;
 }
 
+export interface InvestigativeQuestion {
+  question_id: string;
+  code: string;
+  archetype?: string;
+  question_text: string;
+  category: string;
+  required_evidence_domains: string[];
+  required_capabilities: string[];
+  hypothesis: string;
+  feasibility: 'INVESTIGABLE' | 'PARTIALLY_INVESTIGABLE' | 'REQUIRES_ADDITIONAL_EVIDENCE' | 'UNSUPPORTED_BY_TOOLS' | 'NOT_APPLICABLE';
+  assessment_notes?: string;
+  matching_evidence_ids?: string[];
+  matching_evidence_names?: string[];
+  missing_evidence_domains?: string[];
+}
+
 export interface InvestigationPlan {
   id?: string;
   investigation_id: string;
@@ -492,6 +508,7 @@ export interface InvestigationPlan {
   resource_snapshot?: Record<string, any>;
   stopping_conditions?: StoppingCondition[];
   adjustments?: PlanAdjustment[];
+  investigative_questions?: InvestigativeQuestion[];
   created_at?: string;
   completed_at?: string;
 }
@@ -789,6 +806,79 @@ export type ProviderTestResponse = AIProviderTestResponse;
 
 export type InvestigatorDecisionType = 'ACCEPT' | 'CHALLENGE' | 'REJECT' | 'REQUEST_MORE_EVIDENCE';
 
+export type FindingLifecycleState =
+  | 'CANDIDATE'
+  | 'ACCEPTED'
+  | 'REJECTED'
+  | 'CHALLENGED'
+  | 'EVIDENCE_REQUESTED'
+  | 'RESOLUTION_PENDING'
+  | 'RESOLUTION_RUNNING'
+  | 'RESOLVED';
+
+export type StorageBudgetStatus = 'SAFE' | 'WARNING' | 'INSUFFICIENT';
+
+export interface StorageBudgetResponse {
+  case_id: string;
+  physical_free_bytes: number;
+  physical_free_mb: number;
+  safety_reserve_bytes: number;
+  safety_reserve_mb: number;
+  safe_available_bytes: number;
+  safe_available_mb: number;
+  workspace_used_bytes: number;
+  workspace_used_mb: number;
+  vault_used_bytes: number;
+  vault_used_mb: number;
+  total_projected_bytes: number;
+  total_projected_mb: number;
+  status: StorageBudgetStatus;
+  thresholds: Record<string, any>;
+  details: Record<string, any>;
+}
+
+export interface ResourceEstimationRequest {
+  capability: string;
+  evidence_id?: string | null;
+  evidence_size_bytes?: number | null;
+}
+
+export interface ResourceEstimationResponse {
+  capability: string;
+  evidence_size_bytes: number;
+  multiplier: number;
+  estimated_artifact_bytes: number;
+  estimated_artifact_mb: number;
+  safe_available_bytes: number;
+  safe_available_mb: number;
+  status: StorageBudgetStatus;
+  is_admissible: boolean;
+  warning_message?: string | null;
+}
+
+export interface ChallengeResolutionRequest {
+  finding_id: string;
+  disputed_claim?: string | null;
+  challenge_category?: string | null;
+  evidentiary_gap: string;
+  selected_capability: string;
+  evidence_id?: string | null;
+  parameters?: Record<string, any>;
+  justification: string;
+}
+
+export interface ChallengeResolutionResponse {
+  finding_id: string;
+  lifecycle_state: FindingLifecycleState;
+  challenge_review_id?: string | null;
+  governance_decision_id?: string | null;
+  analysis_request_id?: string | null;
+  storage_budget_status: StorageBudgetStatus;
+  estimated_storage_mb: number;
+  workflow_status: string;
+  message: string;
+}
+
 export interface InvestigatorReviewCreateRequest {
   target_type: 'FINDING' | 'AI_REASONING' | 'CLAIM';
   target_id: string;
@@ -884,6 +974,7 @@ export interface ReviewFindingItem {
   created_at?: string;
   existing_reviews: InvestigatorReviewResponse[];
   latest_decision?: InvestigatorDecisionType | null;
+  lifecycle_state?: FindingLifecycleState;
 }
 
 export interface ReviewAIClaimStatement {
@@ -900,6 +991,7 @@ export interface ReviewAIClaimStatement {
   citations_verified: boolean;
   existing_reviews: InvestigatorReviewResponse[];
   latest_decision?: InvestigatorDecisionType | null;
+  lifecycle_state?: FindingLifecycleState;
 }
 
 export interface ReviewAIReasoningItem {

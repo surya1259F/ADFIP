@@ -56,6 +56,7 @@ class ProviderRequest(BaseModel):
     max_tokens: int = 1000
     api_key: Optional[str] = None
     base_url: Optional[str] = None
+    response_mime_type: Optional[str] = None
 
 
 class ProviderResponse(BaseModel):
@@ -823,6 +824,8 @@ class GeminiAdapter(BaseAIAdapter):
             generation_config["temperature"] = req.temperature
         if req.max_tokens:
             generation_config["maxOutputTokens"] = req.max_tokens
+        if req.response_mime_type:
+            generation_config["responseMimeType"] = req.response_mime_type
         if generation_config:
             payload["generationConfig"] = generation_config
 

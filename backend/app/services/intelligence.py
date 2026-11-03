@@ -245,6 +245,44 @@ class EvidenceIntelligenceEngine:
             signals.append({"method": "magic_bytes", "signal": "MDMP (Windows Minidump Header)", "confidence": 0.95})
             return "MEMORY_DUMP", "MEMORY_DUMP", "minidump", "WINDOWS_MINIDUMP", 0.95, signals
 
+        # 15. GPT Partition Table (EFI PART at sector 1, offset 512)
+        if len(header_bytes) >= 520 and header_bytes[512:520] == b"EFI PART":
+            signals.append({"method": "magic_bytes", "signal": "EFI PART (GPT Partition Table Header)", "confidence": 1.0})
+            return "DISK_IMAGE", "DISK_IMAGE", "gpt", "GPT_PARTITIONED_DISK", 1.0, signals
+
+        # 16. MBR Partition Table (\x55\xaa at offset 510)
+        if len(header_bytes) >= 512 and header_bytes[510:512] == b"\x55\xaa":
+            # Check partition table entries at offsets 446, 462, 478, 494
+            has_part = any(header_bytes[offset + 4] != 0 for offset in (446, 462, 478, 494) if len(header_bytes) >= offset + 5)
+            if has_part or ext in [".img", ".dd", ".raw"]:
+                signals.append({"method": "magic_bytes", "signal": "\\x55\\xaa Boot/MBR Signature with Partition Records", "confidence": 0.95})
+                return "DISK_IMAGE", "DISK_IMAGE", "mbr", "MBR_PARTITIONED_DISK", 0.95, signals
+
+        # 17. Linux EXT Filesystem (Superblock magic \x53\xef at offset 1080)
+        if len(header_bytes) >= 1082 and header_bytes[1080:1082] == b"\x53\xef":
+            signals.append({"method": "magic_bytes", "signal": "\\x53\\xef (Linux Ext2/Ext3/Ext4 Superblock)", "confidence": 1.0})
+            return "DISK_IMAGE", "DISK_IMAGE", "ext4", "EXT4_FILESYSTEM", 1.0, signals
+
+        # 18. Windows NTFS Filesystem (Offset 3: NTFS    )
+        if len(header_bytes) >= 11 and header_bytes[3:11] == b"NTFS    ":
+            signals.append({"method": "magic_bytes", "signal": "NTFS VBR Signature", "confidence": 1.0})
+            return "DISK_IMAGE", "DISK_IMAGE", "ntfs", "NTFS_FILESYSTEM", 1.0, signals
+
+        # 19. Windows Prefetch (.pf - SCCA at offset 4 or compressed MAM header)
+        if header_bytes.startswith(b"MAM") or (len(header_bytes) >= 8 and header_bytes[4:8] == b"SCCA"):
+            signals.append({"method": "magic_bytes", "signal": "Windows Prefetch Header (SCCA/MAM)", "confidence": 1.0})
+            return "FILE", "WINDOWS_ARTIFACT", "prefetch", "WINDOWS_PREFETCH", 1.0, signals
+
+        # 20. Windows LNK Shortcut (0x4c header + CLSID)
+        if len(header_bytes) >= 20 and header_bytes[:4] == b"\x4c\x00\x00\x00" and header_bytes[4:8] == b"\x01\x14\x02\x00":
+            signals.append({"method": "magic_bytes", "signal": "Windows LNK Shell Link Signature", "confidence": 1.0})
+            return "FILE", "WINDOWS_ARTIFACT", "lnk", "WINDOWS_LNK_SHORTCUT", 1.0, signals
+
+        # 21. Android Backup Header
+        if header_bytes.startswith(b"ANDROID BACKUP"):
+            signals.append({"method": "magic_bytes", "signal": "Android Backup Archive Header", "confidence": 1.0})
+            return "FILE", "MOBILE_ARTIFACT", "android_backup", "ANDROID_BACKUP", 1.0, signals
+
         # ---------------------------------------------------------------------
         # Fallback Extension & Size Heuristics when magic bytes are non-standard
         # ---------------------------------------------------------------------
@@ -290,6 +328,10 @@ class EvidenceIntelligenceEngine:
         if sample:
             non_printable = sum(1 for b in sample if b < 9 or (b > 13 and b < 32) or b == 127)
             if (non_printable / len(sample)) < 0.05:
+                text_sample = sample.decode("utf-8", errors="ignore").lower()
+                if any(k in text_sample for k in ["sshd[", "sudo:", "cron[", "systemd[", "pam_unix", "failed password", "accepted password"]):
+                    signals.append({"method": "text_heuristic", "signal": "Linux Syslog/Auth Log Patterns", "confidence": 0.95})
+                    return "FILE", "LOG", "linux_auth_log", "LINUX_AUTH_LOG", 0.95, signals
                 signals.append({"method": "text_ascii_scan", "signal": "High ASCII/UTF-8 ratio", "confidence": 0.6})
                 return "FILE", "TEXT", "plaintext", "PLAINTEXT_FILE", 0.6, signals
 

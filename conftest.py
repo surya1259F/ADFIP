@@ -23,6 +23,7 @@ def auto_authenticate_tests(request):
     excluded_modules = [
         "test_auth",
         "test_google_oauth",
+        "test_google_oauth_network_resilience",
         "test_case_authorization",
         "test_user_administration",
         "test_ai_api",
@@ -49,6 +50,7 @@ def auto_authenticate_tests(request):
         "test_recovery_and_case_closure",
         "test_full_investigation_lifecycle_e2e",
         "test_forensic_workflow_repair",
+        "test_decision_engine",
     ]
     if any(ex in module_name for ex in excluded_modules):
         app.dependency_overrides.pop(get_current_user, None)
