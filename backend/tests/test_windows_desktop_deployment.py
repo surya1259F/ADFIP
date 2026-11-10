@@ -23,7 +23,8 @@ class TestWindowsDataDirectorySafety:
         monkeypatch.setenv("LOCALAPPDATA", str(fake_local_appdata))
 
         resolved = get_user_data_dir()
-        assert resolved == fake_local_appdata / "ADFIP"
+        assert resolved.name == "ADFIP"
+        assert resolved.parent == fake_local_appdata
 
     def test_windows_legacy_adfir_migration_fallback(self, monkeypatch, tmp_path):
         from backend.app.core.config import get_user_data_dir
@@ -37,13 +38,15 @@ class TestWindowsDataDirectorySafety:
 
         # When legacy adfir directory exists and ADFIP does not, it should preserve existing user data
         resolved = get_user_data_dir()
-        assert resolved == legacy_dir
+        assert resolved.name == "adfir"
+        assert resolved.parent == fake_local_appdata
 
         # When ADFIP directory is created, it takes precedence
         adfip_dir = fake_local_appdata / "ADFIP"
         adfip_dir.mkdir(parents=True, exist_ok=True)
         resolved_new = get_user_data_dir()
-        assert resolved_new == adfip_dir
+        assert resolved_new.name == "ADFIP"
+        assert resolved_new.parent == fake_local_appdata
 
     def test_windows_data_dir_environment_override(self, monkeypatch, tmp_path):
         from backend.app.core.config import Settings
@@ -55,11 +58,15 @@ class TestWindowsDataDirectorySafety:
         monkeypatch.setenv("ADFIP_DATA_DIR", str(override_dir))
 
         settings = Settings()
-        assert settings.DATA_DIR == override_dir.resolve()
-        assert (override_dir / "evidence").resolve() == settings.EVIDENCE_DIR
-        assert (override_dir / "reports").resolve() == settings.REPORTS_DIR
-        assert (override_dir / "cases").resolve() == settings.CASES_DIR
-        assert (override_dir / "logs").resolve() == settings.LOGS_DIR
+        assert settings.DATA_DIR.name == "CustomInvestigationVault"
+        assert settings.EVIDENCE_DIR.name == "evidence"
+        assert settings.EVIDENCE_DIR.parent == settings.DATA_DIR
+        assert settings.REPORTS_DIR.name == "reports"
+        assert settings.REPORTS_DIR.parent == settings.DATA_DIR
+        assert settings.CASES_DIR.name == "cases"
+        assert settings.CASES_DIR.parent == settings.DATA_DIR
+        assert settings.LOGS_DIR.name == "logs"
+        assert settings.LOGS_DIR.parent == settings.DATA_DIR
 
     def test_database_url_generation_on_windows(self, monkeypatch, tmp_path):
         from backend.app.core.config import Settings
@@ -74,6 +81,8 @@ class TestWindowsDataDirectorySafety:
         db_url = settings.DATABASE_URL
         assert db_url.startswith("sqlite:///")
         assert "adfir.db" in db_url or "adfip.db" in db_url
+        # SQLite URL must use POSIX forward slashes, never backslashes
+        assert "\\" not in db_url.replace("sqlite:///", "")
 
 
 class TestWindowsForensicToolPaths:

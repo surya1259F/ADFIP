@@ -113,14 +113,14 @@ class Settings(BaseSettings):
             data_p = Path(env_val).resolve()
             data_p.mkdir(parents=True, exist_ok=True)
             db_file = data_p / "adfip.db" if (data_p / "adfip.db").exists() else data_p / "adfir.db"
-            return f"sqlite:///{db_file}"
+            return f"sqlite:///{db_file.as_posix()}"
         elif getattr(sys, 'frozen', False):
             data_p = get_user_data_dir()
             data_p.mkdir(parents=True, exist_ok=True)
             db_file = data_p / "adfip.db" if (data_p / "adfip.db").exists() else data_p / "adfir.db"
-            return f"sqlite:///{db_file}"
+            return f"sqlite:///{db_file.as_posix()}"
         db_file = self.BASE_DIR / "adfip.db" if (self.BASE_DIR / "adfip.db").exists() else self.BASE_DIR / "adfir.db"
-        return f"sqlite:///{db_file}"
+        return f"sqlite:///{db_file.as_posix()}"
 
 
     # Forensic tool paths

@@ -59,7 +59,8 @@ def get_alembic_config(engine=None) -> Config:
     alembic_cfg = Config(str(ini_path))
     db_url = str(engine.url) if engine else str(settings.DATABASE_URL)
     alembic_cfg.set_main_option("sqlalchemy.url", db_url)
-    alembic_cfg.set_main_option("script_location", str(alembic_dir))
+    alembic_script_loc = alembic_dir.as_posix() if hasattr(alembic_dir, "as_posix") else str(alembic_dir)
+    alembic_cfg.set_main_option("script_location", alembic_script_loc)
     return alembic_cfg
 
 def run_db_migrations(target_engine=None):
