@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Activity, X } from 'lucide-react';
 import { findingsService } from '../../services/findings';
 import { normalizeError } from '../../services/client';
@@ -12,6 +12,7 @@ import { SkeletonRow } from '../../components/ui/Skeleton';
 import { SectionHeader } from '../../components/ui/SectionHeader';
 import { HashDisplay } from '../../components/ui/HashDisplay';
 import { formatTimestamp, formatConfidence } from '../../lib/utils';
+import { ForensicAssessmentCard } from '../../components/findings/ForensicAssessmentCard';
 import type { FindingItem } from '../../types';
 
 const classificationStyles: Record<string, string> = {
@@ -99,12 +100,39 @@ const FindingDetailPanel: React.FC<{
           </div>
         </div>
 
+        {finding.execution_id && (
+          <div>
+            <p className="text-slate-400 font-medium mb-1">Tool Execution ID</p>
+            <p className="font-mono text-[11px] text-slate-700 bg-stone-50 border border-stone-200 px-2 py-1 rounded">
+              {finding.execution_id}
+            </p>
+          </div>
+        )}
+
+        {finding.evidence_id && (
+          <div>
+            <p className="text-slate-400 font-medium mb-1">Target Evidence ID</p>
+            <p className="font-mono text-[11px] text-slate-700 bg-stone-50 border border-stone-200 px-2 py-1 rounded">
+              {finding.evidence_id}
+            </p>
+          </div>
+        )}
+
         {finding.evidence_reference && (
           <div>
             <p className="text-slate-400 font-medium mb-1">
               Evidence Reference
             </p>
             <p className="text-slate-600">{finding.evidence_reference}</p>
+          </div>
+        )}
+
+        {finding.raw_output_reference && (
+          <div>
+            <p className="text-slate-400 font-medium mb-1">Raw Output Reference</p>
+            <p className="font-mono text-[11px] text-slate-600 bg-stone-50 px-2 py-1 rounded break-all">
+              {finding.raw_output_reference}
+            </p>
           </div>
         )}
 
@@ -174,25 +202,62 @@ const FindingDetailPanel: React.FC<{
 export const FindingsPage: React.FC = () => {
   const { caseId } = useParams<{ caseId: string }>();
   const [selected, setSelected] = useState<FindingItem | null>(null);
+  const queryClient = useQueryClient();
 
-  const { data: findings, isLoading, isError, error, refetch } = useQuery({
+  const {
+    data: findings,
+    isLoading: findingsLoading,
+    isError: findingsError,
+    error: findingsErr,
+    refetch: refetchFindings,
+  } = useQuery({
     queryKey: ['cases', caseId, 'findings'],
     queryFn: () => findingsService.listByCase(caseId!),
     enabled: !!caseId,
   });
 
+  const {
+    data: assessment,
+  } = useQuery({
+    queryKey: ['cases', caseId, 'assessment'],
+    queryFn: () => findingsService.getAssessment(caseId!),
+    enabled: !!caseId,
+  });
+
+  const decisionMutation = useMutation({
+    mutationFn: (payload: {
+      decision: any;
+      rationale: string;
+      edited_classification?: string;
+      additional_analysis_requested?: string;
+    }) => findingsService.submitAssessmentDecision(caseId!, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['cases', caseId, 'assessment'] });
+    },
+  });
+
   return (
     <div className="max-w-5xl mx-auto space-y-4">
       <SectionHeader
-        title="Findings"
-        description="Forensic findings detected during investigation analysis"
+        title="Findings & Forensic Assessment"
+        description="Forensic findings, deterministic evidence evaluation, and investigator authority controls"
       />
 
-      {isError && (
-        <ErrorState message={normalizeError(error)} onRetry={refetch} />
+      {assessment && (
+        <ForensicAssessmentCard
+          assessment={assessment}
+          onRecordDecision={async (payload) => {
+            await decisionMutation.mutateAsync(payload);
+          }}
+          isSubmitting={decisionMutation.isPending}
+        />
       )}
 
-      {isLoading && (
+      {findingsError && (
+        <ErrorState message={normalizeError(findingsErr)} onRetry={refetchFindings} />
+      )}
+
+      {findingsLoading && (
         <Card padding={false}>
           {[1, 2, 3].map((i) => (
             <SkeletonRow key={i} cols={6} />
@@ -200,7 +265,7 @@ export const FindingsPage: React.FC = () => {
         </Card>
       )}
 
-      {!isLoading && !isError && (findings?.length ?? 0) === 0 && (
+      {!findingsLoading && !findingsError && (findings?.length ?? 0) === 0 && (
         <EmptyState
           icon={<Activity className="w-8 h-8" />}
           title="No findings available"
@@ -208,7 +273,7 @@ export const FindingsPage: React.FC = () => {
         />
       )}
 
-      {!isLoading && !isError && findings && findings.length > 0 && (
+      {!findingsLoading && !findingsError && findings && findings.length > 0 && (
         <Card padding={false}>
           <table className="w-full text-xs">
             <thead>

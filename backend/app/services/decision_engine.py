@@ -42,6 +42,12 @@ from backend.app.models.models import (
     InvestigationPlan,
     InvestigationTask,
     ToolSelectionRecord,
+    ToolExecution,
+    ExecutionArtifact,
+    Finding,
+    TimelineEvent,
+    CorrelationGroup,
+    InvestigatorReviewRecord,
     User,
 )
 from forensic_tools.registry import PlatformAwareToolRegistry, ToolDefinition
@@ -247,20 +253,20 @@ ARCHETYPE_QUESTION_TEMPLATES: Dict[ObjectiveArchetype, List[Dict[str, Any]]] = {
     ],
     ObjectiveArchetype.GENERIC_INCIDENT: [
         {
-            "code": "EVIDENCE_INTEGRITY",
-            "question": "Are all submitted evidence items cryptographically verified and intact compared to acquisition hashes?",
-            "category": "INTEGRITY",
-            "required_evidence_domains": ["ALL"],
-            "required_capabilities": ["HASH_ANALYSIS"],
-            "hypothesis": "Evidence custody and cryptographic hashes have been preserved without tampering."
+            "code": "INCIDENT_TIMEFRAME_ARTIFACTS",
+            "question": "What security events or abnormal system state changes occurred within the reported incident window?",
+            "category": "INCIDENT_SCOPE",
+            "required_evidence_domains": ["WINDOWS_EVENT_LOG", "LOG", "DISK_IMAGE"],
+            "required_capabilities": ["EVENT_LOG_ANALYSIS", "FILESYSTEM_ANALYSIS"],
+            "hypothesis": "Operating system and application audit records identify the initial scope and timeframe of the incident."
         },
         {
-            "code": "TIMELINE_SYNTHESIS",
-            "question": "Can all extracted forensic events across disk, memory, and logs be correlated into a unified timeline?",
-            "category": "TIMELINE",
-            "required_evidence_domains": ["ALL"],
-            "required_capabilities": ["TIMELINE_ANALYSIS", "CORRELATION"],
-            "hypothesis": "Temporal correlation reveals the sequence of events across multiple evidence domains."
+            "code": "PERSISTENCE_MECHANISMS",
+            "question": "Were persistent startup entries, scheduled tasks, or services established across the operating system?",
+            "category": "PERSISTENCE_AUDIT",
+            "required_evidence_domains": ["REGISTRY_HIVE", "DISK_IMAGE", "WINDOWS_EVENT_LOG"],
+            "required_capabilities": ["FILESYSTEM_ANALYSIS", "EVENT_LOG_ANALYSIS"],
+            "hypothesis": "Adversaries configured persistence artifacts to maintain access across reboots."
         },
     ],
     ObjectiveArchetype.USB_DEVICE_USAGE: [
@@ -345,8 +351,9 @@ class EvidenceDecisionEngine:
         if any(k in text for k in ["insider", "disgruntled", "departing employee", "after hours", "unauthorized copy"]):
             archetypes.append(ObjectiveArchetype.INSIDER_ACTIVITY)
 
-        # Baseline generic questions always apply
-        archetypes.append(ObjectiveArchetype.GENERIC_INCIDENT)
+        # Baseline generic questions apply ONLY if no specific objective archetype matched
+        if not archetypes:
+            archetypes.append(ObjectiveArchetype.GENERIC_INCIDENT)
 
         return archetypes
 
@@ -354,16 +361,19 @@ class EvidenceDecisionEngine:
     def generate_investigative_questions(
         cls,
         objective_text: Optional[str],
-        case_type: Optional[str] = None
+        case_type: Optional[str] = None,
+        evidence_profiles: Optional[List[Dict[str, Any]]] = None
     ) -> List[Dict[str, Any]]:
         """
-        Decomposes the case objective into structured, hypothesis-neutral investigative questions.
+        Decomposes the case objective and detected evidence intelligence into structured,
+        hypothesis-neutral, case-specific investigative questions.
         """
         archetypes = cls.classify_objective(objective_text, case_type)
         questions: List[Dict[str, Any]] = []
         seen_codes = set()
-
         q_counter = 1
+
+        # 1. Objective-Driven Questions
         for arch in archetypes:
             templates = ARCHETYPE_QUESTION_TEMPLATES.get(arch, [])
             for tmpl in templates:
@@ -380,8 +390,117 @@ class EvidenceDecisionEngine:
                     "required_evidence_domains": tmpl["required_evidence_domains"],
                     "required_capabilities": tmpl["required_capabilities"],
                     "hypothesis": tmpl["hypothesis"],
+                    "approval_status": "APPROVED",
+                    "is_custom": False,
+                    "is_edited": False,
                 })
                 q_counter += 1
+
+        # 2. Evidence Intelligence-Driven Questions (Disk, Memory, Event Logs, PCAP)
+        if evidence_profiles:
+            detected_domains = set()
+            for ep in evidence_profiles:
+                cat = (ep.get("category") or ep.get("evidence_type") or "").upper()
+                sub = (ep.get("subtype") or "").upper()
+                for d in [cat, sub] + ep.get("investigative_domains", []):
+                    if d:
+                        detected_domains.add(d)
+
+            evidence_type_templates = {
+                "DISK_IMAGE": [
+                    {
+                        "code": "FILESYSTEM_ANOMALIES",
+                        "question": "Are there file system anomalies, deleted file remnants, or volume shadow copies containing historical versions of files?",
+                        "category": "FILESYSTEM_ANALYSIS",
+                        "required_evidence_domains": ["DISK_IMAGE"],
+                        "required_capabilities": ["FILESYSTEM_ANALYSIS"],
+                        "hypothesis": "File system structures preserve unallocated directory records and historical volume snapshots."
+                    },
+                    {
+                        "code": "DELETED_RECOVERY",
+                        "question": "Can recoverable deleted files, unallocated clusters, or orphaned inodes be identified in the storage volume?",
+                        "category": "DELETED_FILE_RECOVERY",
+                        "required_evidence_domains": ["DISK_IMAGE"],
+                        "required_capabilities": ["FILESYSTEM_ANALYSIS"],
+                        "hypothesis": "Deleted artifacts can be recovered from unallocated storage clusters or orphaned MFT/inode records."
+                    }
+                ],
+                "MEMORY_DUMP": [
+                    {
+                        "code": "INJECTED_CODE",
+                        "question": "Are there injected process code segments, unlinked DLL modules, or hidden processes detected in volatile memory?",
+                        "category": "VOLATILE_MEMORY",
+                        "required_evidence_domains": ["MEMORY_DUMP"],
+                        "required_capabilities": ["PROCESS_ANALYSIS"],
+                        "hypothesis": "Malicious code was injected into legitimate memory processes without writing binaries to disk."
+                    },
+                    {
+                        "code": "MEMORY_NETWORK_CREDENTIALS",
+                        "question": "Were active network sockets, plaintext credentials, or decrypted payload artifacts resident in memory at acquisition?",
+                        "category": "VOLATILE_MEMORY",
+                        "required_evidence_domains": ["MEMORY_DUMP"],
+                        "required_capabilities": ["PROCESS_ANALYSIS", "NETWORK_CONNECTION_ANALYSIS"],
+                        "hypothesis": "Volatile memory dumps retain ephemeral network connections and decrypted process tokens."
+                    }
+                ],
+                "WINDOWS_EVENT_LOG": [
+                    {
+                        "code": "AUTH_SEQUENCES",
+                        "question": "Are there suspicious authentication sequences (Logon Event 4624/4625), service installations (7045), or audit clearing (1102)?",
+                        "category": "EVENT_AUDIT",
+                        "required_evidence_domains": ["WINDOWS_EVENT_LOG"],
+                        "required_capabilities": ["EVENT_LOG_ANALYSIS"],
+                        "hypothesis": "Security event logs document authentication failures, privilege abuse, or audit evasion attempts."
+                    },
+                    {
+                        "code": "SCRIPT_EXECUTION",
+                        "question": "Did PowerShell script block logging (Event 4104) or process creation (Event 4688) capture malicious execution strings?",
+                        "category": "EXECUTION_AUDIT",
+                        "required_evidence_domains": ["WINDOWS_EVENT_LOG"],
+                        "required_capabilities": ["EVENT_LOG_ANALYSIS"],
+                        "hypothesis": "Detailed command-line and script block audit logs record obfuscated interpreter commands."
+                    }
+                ],
+                "PCAP_CAPTURE": [
+                    {
+                        "code": "DNS_BEACONING",
+                        "question": "What domain names were queried via DNS, and do any exhibit domain generation algorithms (DGA) or high-entropy queries?",
+                        "category": "NETWORK_AUDIT",
+                        "required_evidence_domains": ["PCAP_CAPTURE"],
+                        "required_capabilities": ["PCAP_ANALYSIS"],
+                        "hypothesis": "Malicious agents contacted external command-and-control servers via algorithmically generated DNS lookups."
+                    },
+                    {
+                        "code": "UNUSUAL_TRANSFERS",
+                        "question": "Were high-volume data transfers, unusual protocols, or periodic beaconing connection intervals captured in traffic?",
+                        "category": "NETWORK_AUDIT",
+                        "required_evidence_domains": ["PCAP_CAPTURE"],
+                        "required_capabilities": ["PCAP_ANALYSIS", "NETWORK_CONNECTION_ANALYSIS"],
+                        "hypothesis": "Network captures reveal exfiltration streams or scheduled command polling intervals."
+                    }
+                ]
+            }
+
+            for dom_key, tmpls in evidence_type_templates.items():
+                if any(dom_key in d for d in detected_domains):
+                    for tmpl in tmpls:
+                        if tmpl["code"] in seen_codes:
+                            continue
+                        seen_codes.add(tmpl["code"])
+                        questions.append({
+                            "question_id": f"IQ-{q_counter:02d}",
+                            "code": tmpl["code"],
+                            "archetype": "EVIDENCE_INTELLIGENCE",
+                            "question_text": tmpl["question"],
+                            "category": tmpl["category"],
+                            "required_evidence_domains": tmpl["required_evidence_domains"],
+                            "required_capabilities": tmpl["required_capabilities"],
+                            "hypothesis": tmpl["hypothesis"],
+                            "approval_status": "APPROVED",
+                            "is_custom": False,
+                            "is_edited": False,
+                        })
+                        q_counter += 1
 
         return questions
 
@@ -421,8 +540,8 @@ class EvidenceDecisionEngine:
                     supported_capabilities.add(cap.upper())
 
         for q in questions:
-            req_domains = q["required_evidence_domains"]
-            req_caps = q["required_capabilities"]
+            req_domains = q.get("required_evidence_domains") or ["ALL"]
+            req_caps = q.get("required_capabilities") or []
 
             matching_evidence: List[Dict[str, Any]] = []
             missing_domains: List[str] = []
@@ -575,16 +694,98 @@ class EvidenceDecisionEngine:
         """
         Retrieves and evaluates structured investigative questions and feasibility ratings
         for a case against its registered evidence and tool capabilities.
+        Preserves investigator edits, custom questions, and approval states.
         """
         case = db.query(Case).filter(Case.id == case_id).first()
         if not case:
             return []
+
         evidence_items = db.query(EvidenceItem).filter(EvidenceItem.case_id == case_id).all()
         from backend.app.services.strategy_engine import EvidenceStrategyAnalyzer
         evidence_profiles = [EvidenceStrategyAnalyzer.analyze_evidence(db, e) for e in evidence_items]
         tool_reg = PlatformAwareToolRegistry()
-        questions = cls.generate_investigative_questions(case.objective, case.case_type)
-        return cls.evaluate_evidence_feasibility(questions, evidence_profiles, tool_reg)
+
+        # Check for persisted investigator questions in active plan
+        plan = db.query(InvestigationPlan).filter(
+            InvestigationPlan.case_id == case_id,
+            InvestigationPlan.is_active == True
+        ).order_by(InvestigationPlan.version.desc()).first()
+
+        if plan and plan.resource_snapshot and isinstance(plan.resource_snapshot, dict) and "investigative_questions" in plan.resource_snapshot:
+            saved_questions = plan.resource_snapshot["investigative_questions"]
+            if saved_questions:
+                return cls.evaluate_evidence_feasibility(saved_questions, evidence_profiles, tool_reg)
+
+        # Generate fresh dynamic questions (Objective + Evidence Intelligence)
+        questions = cls.generate_investigative_questions(case.objective, case.case_type, evidence_profiles=evidence_profiles)
+        evaluated = cls.evaluate_evidence_feasibility(questions, evidence_profiles, tool_reg)
+
+        # Persist if plan exists
+        if plan:
+            snapshot = dict(plan.resource_snapshot or {})
+            snapshot["investigative_questions"] = evaluated
+            plan.resource_snapshot = snapshot
+            db.commit()
+
+        return evaluated
+
+    @classmethod
+    def save_case_investigative_questions(
+        cls,
+        db: Session,
+        case_id: str,
+        questions: List[Dict[str, Any]],
+        current_user: User
+    ) -> List[Dict[str, Any]]:
+        """
+        Persists investigator edits, custom questions, and approval statuses in the case plan.
+        """
+        from backend.app.services.audit import log_audit_event
+
+        case = db.query(Case).filter(Case.id == case_id).first()
+        if not case:
+            raise ValueError(f"Case '{case_id}' not found.")
+
+        evidence_items = db.query(EvidenceItem).filter(EvidenceItem.case_id == case_id).all()
+        from backend.app.services.strategy_engine import EvidenceStrategyAnalyzer
+        evidence_profiles = [EvidenceStrategyAnalyzer.analyze_evidence(db, e) for e in evidence_items]
+        tool_reg = PlatformAwareToolRegistry()
+
+        evaluated = cls.evaluate_evidence_feasibility(questions, evidence_profiles, tool_reg)
+
+        plan = db.query(InvestigationPlan).filter(
+            InvestigationPlan.case_id == case_id,
+            InvestigationPlan.is_active == True
+        ).order_by(InvestigationPlan.version.desc()).first()
+
+        if not plan:
+            plan = InvestigationPlan(
+                case_id=case_id,
+                status="PLANNED",
+                strategy_summary=f"Investigator strategy with {len(evaluated)} active investigative questions.",
+                tasks=[],
+                is_active=True,
+                version=1,
+                resource_snapshot={"investigative_questions": evaluated}
+            )
+            db.add(plan)
+        else:
+            snapshot = dict(plan.resource_snapshot or {})
+            snapshot["investigative_questions"] = evaluated
+            plan.resource_snapshot = snapshot
+
+        db.commit()
+
+        log_audit_event(
+            db=db,
+            case_id=case_id,
+            actor_id=current_user.id,
+            actor_name=current_user.name or current_user.email,
+            event_type="INVESTIGATIVE_QUESTIONS_UPDATED",
+            details=f"Investigator updated strategy questions: {len(evaluated)} total questions configured."
+        )
+
+        return evaluated
 
     @classmethod
     def generate_evidence_driven_plan(
@@ -851,3 +1052,679 @@ class EvidenceDecisionEngine:
         if "HASH" in cap:
             return "EvidenceVerificationAgent"
         return "ForensicAgent"
+
+    # =========================================================================
+    # PART 6 & 7: INVESTIGATOR-DEFINED REQUIREMENTS & PLANNING ENGINE
+    # =========================================================================
+
+    STANDARD_REQUIREMENT_TEMPLATES: List[Dict[str, Any]] = [
+        {
+            "template_id": "REQ-T-01",
+            "title": "Identify IP addresses associated with successful logins",
+            "category": "AUTHENTICATION",
+            "description": "Extract authentication events (e.g. Event ID 4624) and isolate source IPv4/IPv6 addresses and caller domain accounts.",
+            "expected_outputs": ["IP_ADDRESS_LIST", "LOGIN_EVENT_TABLE"],
+            "required_domains": ["WINDOWS_EVENT_LOG", "LINUX_AUTH_LOG", "LOG"],
+            "required_capabilities": ["EVENT_LOG_ANALYSIS"],
+            "recommended_agent": "WindowsForensicsAgent",
+        },
+        {
+            "template_id": "REQ-T-02",
+            "title": "Identify successful authentication timestamps",
+            "category": "AUTHENTICATION",
+            "description": "Chronologically catalog successful logon timestamps and interactive vs network session types.",
+            "expected_outputs": ["LOGIN_EVENT_TABLE", "CHRONOLOGICAL_TIMELINE"],
+            "required_domains": ["WINDOWS_EVENT_LOG", "LOG"],
+            "required_capabilities": ["EVENT_LOG_ANALYSIS"],
+            "recommended_agent": "WindowsForensicsAgent",
+        },
+        {
+            "template_id": "REQ-T-03",
+            "title": "Identify failed login attempts and brute-force spikes",
+            "category": "AUTHENTICATION",
+            "description": "Flag failed login events (Event ID 4625), targeted usernames, failure status codes, and rapid repetition sequences.",
+            "expected_outputs": ["LOGIN_EVENT_TABLE", "ANOMALY_SUMMARY"],
+            "required_domains": ["WINDOWS_EVENT_LOG", "LOG"],
+            "required_capabilities": ["EVENT_LOG_ANALYSIS"],
+            "recommended_agent": "WindowsForensicsAgent",
+        },
+        {
+            "template_id": "REQ-T-04",
+            "title": "Build a chronological login and execution timeline",
+            "category": "TIMELINE",
+            "description": "Reconstruct a unified chronological sequence of system logons, scheduled tasks, and binary executions.",
+            "expected_outputs": ["CHRONOLOGICAL_TIMELINE"],
+            "required_domains": ["WINDOWS_EVENT_LOG", "DISK_IMAGE", "LOG"],
+            "required_capabilities": ["EVENT_LOG_ANALYSIS", "FILESYSTEM_ANALYSIS"],
+            "recommended_agent": "TimelineCorrelationAgent",
+        },
+        {
+            "template_id": "REQ-T-05",
+            "title": "Identify remote network connections and foreign sockets",
+            "category": "NETWORK",
+            "description": "Isolate active external TCP/UDP connections, listening ports, and anomalous egress communication channels.",
+            "expected_outputs": ["NETWORK_CONNECTION_TABLE", "ENDPOINT_LIST"],
+            "required_domains": ["PCAP_CAPTURE", "MEMORY_DUMP", "NETWORK_CAPTURE"],
+            "required_capabilities": ["NETWORK_CONNECTION_ANALYSIS", "PROCESS_ANALYSIS"],
+            "recommended_agent": "NetworkForensicsAgent",
+        },
+        {
+            "template_id": "REQ-T-06",
+            "title": "Identify suspicious running processes and unlinked modules",
+            "category": "PROCESS_AUDIT",
+            "description": "Scan volatile memory structures for hollowed processes, hidden DLLs, and injected shellcode segments.",
+            "expected_outputs": ["PROCESS_EXECUTION_LIST", "SUSPICIOUS_MEMORY_INJECTIONS"],
+            "required_domains": ["MEMORY_DUMP"],
+            "required_capabilities": ["PROCESS_ANALYSIS"],
+            "recommended_agent": "MemoryForensicsAgent",
+        },
+        {
+            "template_id": "REQ-T-07",
+            "title": "Identify suspicious executable files and signature matches",
+            "category": "MALWARE",
+            "description": "Examine filesystem binaries and temporary directories against YARA signatures and known threat markers.",
+            "expected_outputs": ["SUSPICIOUS_FILE_ANALYSIS", "YARA_MATCH_TABLE"],
+            "required_domains": ["FILE", "BINARY", "DISK_IMAGE"],
+            "required_capabilities": ["STATIC_BINARY_ANALYSIS", "YARA_SCAN"],
+            "recommended_agent": "MalwareAnalysisAgent",
+        },
+        {
+            "template_id": "REQ-T-08",
+            "title": "Identify persistence mechanisms and autoruns",
+            "category": "PERSISTENCE",
+            "description": "Audit Run/RunOnce registry keys, Startup folders, scheduled tasks, and Windows services for survivability hooks.",
+            "expected_outputs": ["REGISTRY_ARTIFACT_TABLE", "AUTORUN_INVENTORY"],
+            "required_domains": ["DISK_IMAGE", "REGISTRY_HIVE", "MEMORY_DUMP"],
+            "required_capabilities": ["FILESYSTEM_ANALYSIS", "EVENT_LOG_ANALYSIS"],
+            "recommended_agent": "WindowsForensicsAgent",
+        },
+        {
+            "template_id": "REQ-T-09",
+            "title": "Identify and recover deleted files and orphaned records",
+            "category": "DELETED_RECOVERY",
+            "description": "Scan unallocated volume space and deleted directory index entries to carve or recover deleted documents and scripts.",
+            "expected_outputs": ["RECOVERED_FILE_INVENTORY"],
+            "required_domains": ["DISK_IMAGE", "RAW_IMAGE"],
+            "required_capabilities": ["FILESYSTEM_ANALYSIS"],
+            "recommended_agent": "DiskForensicsAgent",
+        },
+        {
+            "template_id": "REQ-T-10",
+            "title": "Identify unusual file modifications and timestomp indicators",
+            "category": "FILE_AUDIT",
+            "description": "Cross-compare MACB timestamp integrity to flag anti-forensics timestamp manipulation and massive alterations.",
+            "expected_outputs": ["FILE_TIMELINE_TABLE"],
+            "required_domains": ["DISK_IMAGE"],
+            "required_capabilities": ["FILESYSTEM_ANALYSIS"],
+            "recommended_agent": "DiskForensicsAgent",
+        },
+        {
+            "template_id": "REQ-T-11",
+            "title": "Identify browser download activity and visited URLs",
+            "category": "BROWSER_AUDIT",
+            "description": "Parse SQLite history, download ledgers, and cached web artifacts to trace weaponized downloads or phishing vectors.",
+            "expected_outputs": ["BROWSER_ACTIVITY", "DOWNLOAD_HISTORY_TABLE"],
+            "required_domains": ["SQLITE_DATABASE", "DISK_IMAGE", "FILE"],
+            "required_capabilities": ["BROWSER_HISTORY_ANALYSIS"],
+            "recommended_agent": "BrowserForensicsAgent",
+        },
+        {
+            "template_id": "REQ-T-12",
+            "title": "Identify suspicious DNS queries and C2 domain lookups",
+            "category": "NETWORK",
+            "description": "Isolate high-frequency DNS requests, DGA lookups, and anomalous domain query patterns in packet captures.",
+            "expected_outputs": ["DNS_QUERY_LOG", "SUSPICIOUS_DOMAINS_LIST"],
+            "required_domains": ["PCAP_CAPTURE", "LOG"],
+            "required_capabilities": ["NETWORK_CONNECTION_ANALYSIS"],
+            "recommended_agent": "NetworkForensicsAgent",
+        },
+        {
+            "template_id": "REQ-T-13",
+            "title": "Identify possible data exfiltration indicators",
+            "category": "DATA_EXFILTRATION",
+            "description": "Detect anomalous outbound transfer volumes, encrypted archive staging, and non-standard protocol tunneling.",
+            "expected_outputs": ["EXFILTRATION_CANDIDATE_LIST", "NETWORK_VOLUME_ANALYSIS"],
+            "required_domains": ["PCAP_CAPTURE", "DISK_IMAGE", "LOG"],
+            "required_capabilities": ["NETWORK_CONNECTION_ANALYSIS", "FILESYSTEM_ANALYSIS"],
+            "recommended_agent": "NetworkForensicsAgent",
+        },
+    ]
+
+    @classmethod
+    def get_case_requirements(cls, db: Session, case_id: str) -> Dict[str, Any]:
+        """
+        Retrieves investigator-defined requirements for a case, including available evidence and templates.
+        """
+        case = db.query(Case).filter(Case.id == case_id).first()
+        if not case:
+            raise ValueError(f"Case with ID '{case_id}' not found.")
+
+        evidence_items = db.query(EvidenceItem).filter(EvidenceItem.case_id == case_id).all()
+        available_ev = [
+            {
+                "id": ev.id,
+                "name": ev.name,
+                "evidence_type": ev.evidence_type,
+                "detected_format": ev.detected_format,
+                "size_bytes": ev.size_bytes,
+                "sha256": ev.sha256,
+                "status": ev.status,
+                "integrity_status": getattr(ev, "integrity_status", "VERIFIED"),
+            }
+            for ev in evidence_items
+        ]
+
+        plan = db.query(InvestigationPlan).filter(
+            InvestigationPlan.case_id == case_id,
+            InvestigationPlan.is_active == True
+        ).order_by(InvestigationPlan.version.desc()).first()
+
+        saved_reqs: List[Dict[str, Any]] = []
+        global_scope: Dict[str, Any] = {}
+        plan_status = "PLANNED"
+
+        if plan:
+            plan_status = plan.status
+            snapshot = plan.resource_snapshot or {}
+            saved_reqs = snapshot.get("investigation_requirements", [])
+            global_scope = snapshot.get("global_scope", {})
+
+        # If no requirements have been saved yet, generate default requirements derived from case objective & evidence
+        if not saved_reqs:
+            saved_reqs = cls._generate_default_requirements(case, available_ev)
+
+        return {
+            "case_id": case.id,
+            "case_number": case.case_number,
+            "objective": case.objective or "Investigate digital forensic incident and determine root cause.",
+            "total_requirements": len(saved_reqs),
+            "requirements": saved_reqs,
+            "available_evidence": available_ev,
+            "available_templates": cls.STANDARD_REQUIREMENT_TEMPLATES,
+            "global_scope": global_scope,
+            "plan_status": plan_status,
+        }
+
+    @classmethod
+    def _generate_default_requirements(cls, case: Case, evidence_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Generates initial starter requirements based on case objective and evidence types."""
+        reqs = []
+        obj_text = (case.objective or "").lower()
+        ev_types = {e["evidence_type"].upper() for e in evidence_list}
+
+        idx = 1
+        # Always check for logins/auth if event logs or disk present
+        if "WINDOWS_EVENT_LOG" in ev_types or "LOG" in ev_types or "unauthorized" in obj_text or "access" in obj_text:
+            t = cls.STANDARD_REQUIREMENT_TEMPLATES[0]
+            reqs.append({
+                "id": f"REQ-{idx:02d}",
+                "case_id": case.id,
+                "title": t["title"],
+                "description": t["description"],
+                "category": t["category"],
+                "selected_evidence_ids": [e["id"] for e in evidence_list if "LOG" in e["evidence_type"].upper() or "DISK" in e["evidence_type"].upper()],
+                "selected_evidence_names": [e["name"] for e in evidence_list if "LOG" in e["evidence_type"].upper() or "DISK" in e["evidence_type"].upper()],
+                "scope": {},
+                "expected_outputs": t["expected_outputs"],
+                "approval_status": "APPROVED",
+                "status": "SUBMITTED",
+                "assigned_agent": t["recommended_agent"],
+                "order_index": idx,
+            })
+            idx += 1
+
+        # Check for processes/memory
+        if "MEMORY_DUMP" in ev_types or "process" in obj_text or "malware" in obj_text:
+            t = cls.STANDARD_REQUIREMENT_TEMPLATES[5]
+            reqs.append({
+                "id": f"REQ-{idx:02d}",
+                "case_id": case.id,
+                "title": t["title"],
+                "description": t["description"],
+                "category": t["category"],
+                "selected_evidence_ids": [e["id"] for e in evidence_list if "MEMORY" in e["evidence_type"].upper()],
+                "selected_evidence_names": [e["name"] for e in evidence_list if "MEMORY" in e["evidence_type"].upper()],
+                "scope": {},
+                "expected_outputs": t["expected_outputs"],
+                "approval_status": "APPROVED",
+                "status": "SUBMITTED",
+                "assigned_agent": t["recommended_agent"],
+                "order_index": idx,
+            })
+            idx += 1
+
+        # Check for disk/deleted files
+        if "DISK_IMAGE" in ev_types or "deleted" in obj_text or "disk" in obj_text:
+            t = cls.STANDARD_REQUIREMENT_TEMPLATES[8]
+            reqs.append({
+                "id": f"REQ-{idx:02d}",
+                "case_id": case.id,
+                "title": t["title"],
+                "description": t["description"],
+                "category": t["category"],
+                "selected_evidence_ids": [e["id"] for e in evidence_list if "DISK" in e["evidence_type"].upper()],
+                "selected_evidence_names": [e["name"] for e in evidence_list if "DISK" in e["evidence_type"].upper()],
+                "scope": {},
+                "expected_outputs": t["expected_outputs"],
+                "approval_status": "APPROVED",
+                "status": "SUBMITTED",
+                "assigned_agent": t["recommended_agent"],
+                "order_index": idx,
+            })
+            idx += 1
+
+        # If none matched, provide top 2 templates
+        if not reqs:
+            for t in cls.STANDARD_REQUIREMENT_TEMPLATES[:2]:
+                reqs.append({
+                    "id": f"REQ-{idx:02d}",
+                    "case_id": case.id,
+                    "title": t["title"],
+                    "description": t["description"],
+                    "category": t["category"],
+                    "selected_evidence_ids": [e["id"] for e in evidence_list],
+                    "selected_evidence_names": [e["name"] for e in evidence_list],
+                    "scope": {},
+                    "expected_outputs": t["expected_outputs"],
+                    "approval_status": "APPROVED",
+                    "status": "SUBMITTED",
+                    "assigned_agent": t["recommended_agent"],
+                    "order_index": idx,
+                })
+                idx += 1
+
+        return reqs
+
+    @classmethod
+    def save_case_requirements(
+        cls,
+        db: Session,
+        case_id: str,
+        requirements: List[Dict[str, Any]],
+        objective: Optional[str] = None,
+        global_scope: Optional[Dict[str, Any]] = None,
+        current_user: Optional[User] = None
+    ) -> Dict[str, Any]:
+        """
+        Persists investigator-defined requirements and objective in the case and active plan.
+        """
+        from backend.app.services.audit import log_audit_event
+
+        case = db.query(Case).filter(Case.id == case_id).first()
+        if not case:
+            raise ValueError(f"Case '{case_id}' not found.")
+
+        if objective and objective.strip():
+            case.objective = objective.strip()
+
+        evidence_items = db.query(EvidenceItem).filter(EvidenceItem.case_id == case_id).all()
+        ev_id_to_name = {e.id: e.name for e in evidence_items}
+
+        # Normalize and enrich requirements
+        sanitized_reqs: List[Dict[str, Any]] = []
+        for i, r in enumerate(requirements):
+            r_id = r.get("id") or f"REQ-{i + 1:02d}"
+            selected_ids = r.get("selected_evidence_ids") or []
+            selected_names = [ev_id_to_name.get(eid, eid) for eid in selected_ids]
+
+            sanitized_reqs.append({
+                "id": r_id,
+                "case_id": case_id,
+                "title": r.get("title", f"Forensic Inquiry {r_id}").strip(),
+                "description": r.get("description", "").strip(),
+                "category": r.get("category", "CUSTOM").upper(),
+                "selected_evidence_ids": selected_ids,
+                "selected_evidence_names": selected_names,
+                "scope": r.get("scope") or {},
+                "expected_outputs": r.get("expected_outputs") or ["EVIDENCE_ARTIFACTS"],
+                "approval_status": r.get("approval_status", "APPROVED").upper(),
+                "status": r.get("status", "SUBMITTED").upper(),
+                "assigned_agent": r.get("assigned_agent") or cls._map_agent_by_category(r.get("category", "")),
+                "order_index": i + 1,
+                "updated_at": utc_now().isoformat(),
+            })
+
+        plan = db.query(InvestigationPlan).filter(
+            InvestigationPlan.case_id == case_id,
+            InvestigationPlan.is_active == True
+        ).order_by(InvestigationPlan.version.desc()).first()
+
+        if not plan:
+            plan = InvestigationPlan(
+                case_id=case_id,
+                status="PLANNED",
+                strategy_summary=f"Investigator-defined strategy with {len(sanitized_reqs)} forensic requirements.",
+                tasks=[],
+                is_active=True,
+                version=1,
+                resource_snapshot={
+                    "investigation_requirements": sanitized_reqs,
+                    "global_scope": global_scope or {},
+                }
+            )
+            db.add(plan)
+        else:
+            snapshot = dict(plan.resource_snapshot or {})
+            snapshot["investigation_requirements"] = sanitized_reqs
+            snapshot["global_scope"] = global_scope or {}
+            plan.resource_snapshot = snapshot
+
+        db.commit()
+
+        if current_user:
+            log_audit_event(
+                db=db,
+                case_id=case_id,
+                actor_id=current_user.id,
+                actor_name=current_user.name or current_user.email,
+                event_type="INVESTIGATION_REQUIREMENTS_SAVED",
+                details=f"Investigator configured {len(sanitized_reqs)} forensic requirements."
+            )
+
+        return cls.get_case_requirements(db, case_id)
+
+    @staticmethod
+    def _map_agent_by_category(category: str) -> str:
+        cat = (category or "").upper()
+        if "AUTH" in cat or "LOGIN" in cat or "EVENT" in cat or "WINDOWS" in cat:
+            return "WindowsForensicsAgent"
+        if "PROCESS" in cat or "MEMORY" in cat:
+            return "MemoryForensicsAgent"
+        if "MALWARE" in cat or "BINARY" in cat:
+            return "MalwareAnalysisAgent"
+        if "NETWORK" in cat or "PCAP" in cat or "DNS" in cat or "EXFILTRATION" in cat:
+            return "NetworkForensicsAgent"
+        if "DISK" in cat or "DELETED" in cat or "FILESYSTEM" in cat:
+            return "DiskForensicsAgent"
+        if "BROWSER" in cat:
+            return "BrowserForensicsAgent"
+        if "TIMELINE" in cat:
+            return "TimelineCorrelationAgent"
+        return "ForensicAgent"
+
+    @classmethod
+    def calculate_forensic_assessment(cls, db: Session, case_id: str) -> Dict[str, Any]:
+        """
+        Computes deterministic, reproducible forensic attack assessment and evidence-strength score (0-100).
+        Evaluates:
+        - Attack classification: CONFIRMED_ATTACK, LIKELY_ATTACK, INCONCLUSIVE, NO_ATTACK_OBSERVED, INSUFFICIENT_EVIDENCE
+        - 10-factor evidence-strength score
+        - Completeness metrics
+        - Grounded supporting observations traceable to evidence/tool/artifact IDs
+        - Contradictory observations & alternative explanations
+        - Limitations & missing evidence
+        """
+        case = db.query(Case).filter(Case.id == case_id).first()
+        if not case:
+            raise ValueError(f"Case '{case_id}' not found.")
+
+        # 1. Inputs
+        evidence_items = db.query(EvidenceItem).filter(EvidenceItem.case_id == case_id).all()
+        verified_ev = [e for e in evidence_items if getattr(e, "integrity_status", "VERIFIED") == "VERIFIED"]
+
+        reqs_data = cls.get_case_requirements(db, case_id)
+        requirements = reqs_data.get("requirements", [])
+
+        executions = db.query(ToolExecution).filter(ToolExecution.case_id == case_id).all()
+        failed_executions = [x for x in executions if x.status == "FAILED"]
+        successful_executions = [x for x in executions if x.status == "COMPLETED"]
+
+        artifacts = db.query(ExecutionArtifact).filter(ExecutionArtifact.case_id == case_id).all()
+        findings = db.query(Finding).filter(Finding.case_id == case_id).all()
+        critical_high_findings = [f for f in findings if (f.severity or "").upper() in ["CRITICAL", "HIGH"]]
+        fact_findings = [f for f in findings if (f.classification or "").upper() == "FACT"]
+        supported_findings = [f for f in findings if getattr(f, "verification_status", "UNVERIFIED") in ["SUPPORTED", "VERIFIED"]]
+
+        reviews = db.query(InvestigatorReviewRecord).filter(InvestigatorReviewRecord.case_id == case_id).all()
+        challenged_reviews = [r for r in reviews if r.decision in ["CHALLENGE", "REJECT"]]
+        accepted_reviews = [r for r in reviews if r.decision == "ACCEPT"]
+
+        timeline_events_count = db.query(TimelineEvent).filter(TimelineEvent.case_id == case_id).count()
+        correlations_count = db.query(CorrelationGroup).filter(CorrelationGroup.case_id == case_id).count()
+
+        # 2. Completeness Calculation
+        completed_reqs = 0
+        partially_completed_reqs = 0
+        unanswered_reqs = 0
+        missing_domains_set = set()
+
+        for req in requirements:
+            sel_ev_ids = set(req.get("selected_evidence_ids", []))
+            matching_findings = [f for f in findings if f.evidence_id in sel_ev_ids or any(eid in sel_ev_ids for eid in getattr(f, "supporting_evidence_ids", []))]
+            matching_execs = [x for x in executions if x.evidence_id in sel_ev_ids]
+
+            if not sel_ev_ids and not evidence_items:
+                unanswered_reqs += 1
+                cat = req.get("category", "")
+                if cat:
+                    missing_domains_set.add(cat)
+            elif matching_execs and any(x.status == "COMPLETED" for x in matching_execs):
+                if matching_findings:
+                    completed_reqs += 1
+                else:
+                    partially_completed_reqs += 1
+            else:
+                unanswered_reqs += 1
+
+        total_reqs = max(1, len(requirements))
+        completeness_pct = round((completed_reqs / total_reqs) * 100.0, 1) if requirements else 100.0
+
+        # 3. 10-Factor Evidence-Strength Score Calculation (0 - 100)
+        relevance_score = 0.0 if not evidence_items else min(20.0, 10.0 + len(evidence_items) * 2.5)
+        reliability_score = 15.0 * (len(verified_ev) / max(1, len(evidence_items))) if evidence_items else 0.0
+        directness_score = min(15.0, len(fact_findings) * 3.0 + len(artifacts) * 0.5)
+        corroboration_score = min(15.0, correlations_count * 5.0 + len(supported_findings) * 2.0)
+        timeline_score = min(10.0, timeline_events_count * 1.0)
+        integrity_score = 10.0 if (len(verified_ev) == len(evidence_items) and len(evidence_items) > 0) else 0.0
+        coverage_score = 15.0 * (completed_reqs / total_reqs) if requirements else 12.0
+
+        penalties = 0.0
+        if challenged_reviews:
+            penalties += 10.0
+        if failed_executions:
+            penalties += min(15.0, len(failed_executions) * 5.0)
+        if missing_domains_set:
+            penalties += 10.0
+
+        raw_score = (
+            relevance_score
+            + reliability_score
+            + directness_score
+            + corroboration_score
+            + timeline_score
+            + integrity_score
+            + coverage_score
+            - penalties
+        )
+        final_strength_score = max(0.0, min(100.0, round(raw_score, 1)))
+
+        # 4. Attack Classification (Documented Forensic Assessment Semantics)
+        if len(evidence_items) == 0 or (len(successful_executions) == 0 and len(findings) == 0):
+            classification = "INSUFFICIENT_EVIDENCE"
+        elif any(f.severity in ["CRITICAL", "HIGH"] for f in findings) and supported_findings and len(fact_findings) >= 1 and not (len(challenged_reviews) > len(accepted_reviews) and len(challenged_reviews) >= 2):
+            classification = "CONFIRMED_ATTACK"
+        elif critical_high_findings or (len(findings) >= 2 and final_strength_score >= 50.0):
+            classification = "LIKELY_ATTACK"
+        elif challenged_reviews and len(challenged_reviews) >= len(accepted_reviews):
+            classification = "INCONCLUSIVE"
+        elif len(successful_executions) >= 1 and len(findings) == 0:
+            classification = "NO_ATTACK_OBSERVED"
+        else:
+            classification = "INCONCLUSIVE"
+
+        # 5. Supporting & Contradictory Observations with Provenance
+        supporting_observations = []
+        for f in findings:
+            supporting_observations.append({
+                "finding_id": f.id,
+                "title": f.title,
+                "severity": f.severity,
+                "classification": f.classification,
+                "verification_status": getattr(f, "verification_status", "UNVERIFIED"),
+                "confidence": f.confidence,
+                "evidence_id": f.evidence_id,
+                "execution_id": f.execution_id,
+                "artifact_id": f.artifact_id,
+                "tool": f.tool,
+                "source_reference": f.evidence_reference or f.title,
+            })
+
+        contradictory_observations = []
+        for r in challenged_reviews:
+            contradictory_observations.append({
+                "review_id": r.id,
+                "target_type": r.target_type,
+                "target_id": r.target_id,
+                "decision": r.decision,
+                "investigator_rationale": r.comment,
+                "supporting_references": r.supporting_references,
+            })
+
+        # 6. Alternative Explanations
+        alternative_explanations = [
+            {
+                "hypothesis": "Authorized Administrative Activity",
+                "evaluation": "Evaluated whether observed accounts and scripts were initiated during scheduled IT maintenance windows.",
+                "supported": False if classification == "CONFIRMED_ATTACK" else True,
+            },
+            {
+                "hypothesis": "Malicious Unauthorized Compromise",
+                "evaluation": "Evaluated indicators of compromise, anomalous authentication, malware execution, and persistence.",
+                "supported": classification in ["CONFIRMED_ATTACK", "LIKELY_ATTACK"],
+            },
+            {
+                "hypothesis": "Inconclusive Artifact Artifacts / Incomplete Telemetry",
+                "evaluation": "Evaluated missing logs or lack of memory image to definitively verify process execution path.",
+                "supported": classification in ["INSUFFICIENT_EVIDENCE", "INCONCLUSIVE"],
+            }
+        ]
+
+        # 7. Limitations & Missing Evidence
+        missing_evidence_list = sorted(list(missing_domains_set))
+        investigation_limitations = [
+            f"Evidence coverage constrained to {len(evidence_items)} submitted container(s)."
+        ]
+        if missing_evidence_list:
+            investigation_limitations.append(f"Missing evidence domains: {', '.join(missing_evidence_list)}")
+        if failed_executions:
+            investigation_limitations.append(f"{len(failed_executions)} tool execution(s) encountered operational errors.")
+        investigation_limitations.append("Analysis based strictly on deterministic observations and cryptographic chain of custody.")
+
+        # 8. Check if investigator has recorded a review decision on this assessment
+        plan = db.query(InvestigationPlan).filter(
+            InvestigationPlan.case_id == case_id,
+            InvestigationPlan.is_active == True
+        ).order_by(InvestigationPlan.version.desc()).first()
+
+        snapshot = (plan.resource_snapshot or {}) if plan else {}
+        assessment_meta = snapshot.get("assessment_decision") or {}
+
+        # 9. AI Synthesis Narrative (Evidence-Grounded)
+        ai_narrative = (
+            f"Forensic assessment for {case.case_number} evaluated {len(evidence_items)} evidence item(s) "
+            f"and {len(findings)} finding(s). Attack classification is determined as {classification} "
+            f"with an evidence-strength score of {final_strength_score}/100. "
+            f"{'Multiple corroborated critical indicators establish unauthorized activity.' if classification == 'CONFIRMED_ATTACK' else 'Further evidence acquisition is required to eliminate competing hypotheses.'}"
+        )
+
+        return {
+            "case_id": case.id,
+            "case_number": case.case_number,
+            "classification": assessment_meta.get("decision_classification") or classification,
+            "evidence_strength_score": final_strength_score,
+            "score_breakdown": {
+                "relevance": round(relevance_score, 1),
+                "source_reliability": round(reliability_score, 1),
+                "directness": round(directness_score, 1),
+                "corroboration": round(corroboration_score, 1),
+                "timeline_consistency": round(timeline_score, 1),
+                "evidence_integrity": round(integrity_score, 1),
+                "investigation_coverage": round(coverage_score, 1),
+                "penalties": round(penalties, 1),
+            },
+            "investigation_completeness": {
+                "total_requirements": len(requirements),
+                "completed_requirements": completed_reqs,
+                "partially_completed_requirements": partially_completed_reqs,
+                "unanswered_requirements": unanswered_reqs,
+                "failed_tasks": len(failed_executions),
+                "missing_evidence_domains": missing_evidence_list,
+                "percentage": completeness_pct,
+            },
+            "supporting_observations": supporting_observations,
+            "contradictory_observations": contradictory_observations,
+            "alternative_explanations": alternative_explanations,
+            "missing_evidence": missing_evidence_list,
+            "unresolved_questions": [r["title"] for r in requirements if r.get("status") != "COMPLETED"][:5],
+            "investigation_limitations": investigation_limitations,
+            "ai_synthesis": ai_narrative,
+            "investigator_decision": assessment_meta.get("decision", "PENDING_REVIEW"),
+            "investigator_rationale": assessment_meta.get("rationale"),
+            "decided_at": assessment_meta.get("decided_at"),
+            "decided_by": assessment_meta.get("decided_by"),
+            "generated_at": utc_now().isoformat(),
+            "methodology_version": "1.0.0",
+        }
+
+    @classmethod
+    def record_assessment_decision(
+        cls,
+        db: Session,
+        case_id: str,
+        decision: str,
+        rationale: str,
+        edited_classification: Optional[str] = None,
+        additional_analysis_requested: Optional[str] = None,
+        current_user: Optional[User] = None
+    ) -> Dict[str, Any]:
+        """
+        Records the authorized human investigator's review decision over the assessment.
+        Supported decisions: ACCEPT, EDIT, CHALLENGE, REQUEST_MORE_EVIDENCE, REJECT.
+        """
+        from backend.app.services.audit import log_audit_event
+
+        valid_decisions = {"ACCEPT", "EDIT", "CHALLENGE", "REQUEST_MORE_EVIDENCE", "REJECT"}
+        decision_norm = decision.strip().upper()
+        if decision_norm not in valid_decisions:
+            raise ValueError(f"Invalid decision '{decision}'. Must be one of {valid_decisions}")
+
+        plan = db.query(InvestigationPlan).filter(
+            InvestigationPlan.case_id == case_id,
+            InvestigationPlan.is_active == True
+        ).order_by(InvestigationPlan.version.desc()).first()
+
+        if not plan:
+            plan = InvestigationPlan(
+                case_id=case_id,
+                status="PLANNED",
+                strategy_summary="Assessment review plan",
+                tasks=[],
+                is_active=True,
+                version=1,
+            )
+            db.add(plan)
+
+        snapshot = dict(plan.resource_snapshot or {})
+        snapshot["assessment_decision"] = {
+            "decision": decision_norm,
+            "rationale": rationale.strip(),
+            "decision_classification": edited_classification.strip().upper() if edited_classification else None,
+            "additional_analysis_requested": additional_analysis_requested.strip() if additional_analysis_requested else None,
+            "decided_at": utc_now().isoformat(),
+            "decided_by": current_user.name or current_user.email if current_user else "investigator",
+        }
+        plan.resource_snapshot = snapshot
+        db.commit()
+
+        if current_user:
+            log_audit_event(
+                db=db,
+                case_id=case_id,
+                actor_id=current_user.id,
+                actor_name=current_user.name or current_user.email,
+                event_type="ASSESSMENT_DECISION_RECORDED",
+                details=f"Investigator recorded decision '{decision_norm}': {rationale.strip()[:100]}"
+            )
+
+        return cls.calculate_forensic_assessment(db, case_id)
+

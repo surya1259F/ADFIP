@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+import sys
+import os
+
+if "-f" in sys.argv:
+    target_idx = sys.argv.index("-f") + 1
+    if target_idx < len(sys.argv):
+        target = sys.argv[target_idx]
+        if not os.path.exists(target):
+            sys.exit(1)
+
+plugin = sys.argv[-1] if len(sys.argv) > 1 else ""
+
+if "pslist" in plugin:
+    print("PID\tPPID\tImageFileName\tOffset(V)\tThreads\tHandles\tSessionId\tWow64\tCreateTime\tExitTime")
+    print("4\t0\tSystem\t0xfa8001a18040\t120\t-\t-\tFalse\t2026-09-20 12:00:00\tN/A")
+    print("388\t4\tsmss.exe\t0xfa800236a940\t2\t-\t-\tFalse\t2026-09-20 12:00:01\tN/A")
+    print("4920\t1040\tpowershell.exe\t0xfa8003a5b080\t14\t-\t1\tFalse\t2026-09-20 12:15:30\tN/A")
+elif "netscan" in plugin:
+    print("Offset\tProto\tLocalAddr\tLocalPort\tForeignAddr\tForeignPort\tState\tPID\tOwner\tCreated")
+    print("0xfa8003a5b080\tTCPv4\t10.0.0.15\t49152\t198.51.100.45\t443\tESTABLISHED\t4920\tpowershell.exe\t2026-09-20 12:15:35")

@@ -267,7 +267,7 @@ _CLASSIFICATION_MAP: Dict[str, Tuple[CanonicalEvidenceClass, EvidenceRole, Dict[
 def normalize_evidence_type(evidence_type: Optional[str]) -> Tuple[CanonicalEvidenceClass, EvidenceRole, Dict[str, Any]]:
     """
     Normalizes any evidence type string into its canonical class, role, and provenance metadata.
-    
+
     Returns:
         (CanonicalEvidenceClass, EvidenceRole, metadata_dict)
     """
@@ -529,6 +529,44 @@ def get_recommended_capabilities_for_evidence(
     ]
 
 
+def build_extraction_quality(
+    parser_name: str,
+    source_integrity: float = 1.0,
+    parse_validity: float = 1.0,
+    mitre_attack_mappings: Optional[List[str]] = None,
+    is_corroborated: bool = False,
+    corroborating_sources_count: int = 1,
+    has_contradictory_evidence: bool = False,
+    analyst_verified: bool = False,
+    limitations: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Constructs an explicit extraction quality metric.
+
+    FORENSIC PRINCIPLE:
+    Separates syntactic parsing validity from forensic culpability or attack confirmation.
+    A valid event record (e.g. Event 4625), suspicious process name (e.g. cmd.exe),
+    or MITRE ATT&CK mapping represents an observed fact, not proof of malicious compromise.
+    """
+    default_limits = (
+        "Syntactic parsing validity and taxonomy classification (e.g. MITRE ATT&CK) "
+        "document record structure only. They do not establish malicious intent, "
+        "attacker presence, or attack confirmation without multi-source corroboration and analyst verification."
+    )
+    return {
+        "metric_type": "EXTRACTION_QUALITY",
+        "parser": parser_name,
+        "source_integrity": round(max(0.0, min(1.0, source_integrity)), 4),
+        "parse_validity": round(max(0.0, min(1.0, parse_validity)), 4),
+        "is_corroborated": is_corroborated,
+        "corroborating_sources_count": max(0, corroborating_sources_count),
+        "has_contradictory_evidence": has_contradictory_evidence,
+        "analyst_verified": analyst_verified,
+        "mitre_attack_mappings": list(mitre_attack_mappings or []),
+        "limitations": limitations or default_limits,
+    }
+
+
 def calculate_deterministic_confidence(
     source_integrity: float = 1.0,
     artifact_confidence: float = 1.0,
@@ -538,14 +576,19 @@ def calculate_deterministic_confidence(
     temporal_confidence: Optional[float] = None
 ) -> Tuple[float, Dict[str, Any]]:
     """
-    Calculates deterministic, reproducible confidence score in [0.0, 1.0].
-    
+    Calculates deterministic, reproducible confidence score in [0.0, 1.0]
+    for multi-source correlated findings.
+
     Formula:
         Confidence = 0.35 * source_integrity
                    + 0.30 * artifact_confidence
                    + 0.25 * identifier_match_confidence
                    + 0.10 * min(1.0, supporting_source_count / 2)
                    - (0.30 if contradictory_evidence else 0.0)
+
+    LIMITATION:
+    This formula is strictly for corroborated findings. Single-source raw observations
+    from individual parser tools remain unscored (confidence=None) until verified.
     """
     base_score = (
         0.35 * max(0.0, min(1.0, source_integrity)) +

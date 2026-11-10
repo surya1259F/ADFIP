@@ -379,37 +379,90 @@ class GoogleOAuthService:
         """
         Categorizes outbound HTTP exceptions into structured diagnostics,
         logs the event without secrets or tokens, and returns a safe HTTPException.
+        Recursively inspects the entire exception cause and context chain.
         """
-        cause = getattr(exc, "__cause__", None) or exc
+        causes = []
+        cur: Optional[BaseException] = exc
+        seen = set()
+        while cur and id(cur) not in seen:
+            seen.add(id(cur))
+            causes.append(cur)
+            cur = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
+
         exc_name = type(exc).__name__
-        cause_name = type(cause).__name__
-        safe_str = str(exc)
+        root_cause = causes[-1] if causes else exc
+        cause_name = type(root_cause).__name__
+        safe_str = " ".join(str(c) for c in causes)
+
+        is_dns = any(
+            isinstance(c, socket.gaierror) or "nameresolution" in type(c).__name__.lower()
+            for c in causes
+        ) or "name resolution" in safe_str.lower()
+
+        is_connect_timeout = isinstance(exc, httpx.ConnectTimeout) or any(
+            isinstance(c, (TimeoutError, socket.timeout)) and "connect" in safe_str.lower()
+            for c in causes
+        )
+        is_read_timeout = isinstance(exc, httpx.ReadTimeout) or any(
+            isinstance(c, (TimeoutError, socket.timeout)) and "read" in safe_str.lower()
+            for c in causes
+        )
+        is_generic_timeout = isinstance(exc, httpx.TimeoutException) or any(
+            isinstance(c, (TimeoutError, socket.timeout))
+            for c in causes
+        )
+        is_tls = any(
+            isinstance(c, ssl.SSLError) or "ssl" in type(c).__name__.lower()
+            for c in causes
+        ) or "certificate" in safe_str.lower() or "ssl" in safe_str.lower()
+
+        is_refused = any(
+            isinstance(c, ConnectionRefusedError)
+            for c in causes
+        ) or "refused" in safe_str.lower()
+
+        is_unreachable = any(
+            isinstance(c, OSError) and getattr(c, "errno", None) in (101, 113)
+            for c in causes
+        ) or "unreachable" in safe_str.lower()
 
         # 1. DNS Resolution Failure
-        if isinstance(cause, socket.gaierror) or "name resolution" in safe_str.lower() or "nameresolution" in exc_name.lower():
+        if is_dns:
             category = "DNS_RESOLUTION_FAILURE"
             status_code = status.HTTP_502_BAD_GATEWAY
             detail = "Unable to reach Google OAuth services (DNS resolution failure). Verify network connectivity."
 
         # 2. Connection Timeout
-        elif isinstance(exc, (httpx.ConnectTimeout, httpx.TimeoutException)):
+        elif is_connect_timeout or (is_generic_timeout and not is_read_timeout):
             category = "CONNECTION_TIMEOUT"
             status_code = status.HTTP_504_GATEWAY_TIMEOUT
             detail = "Connection to Google OAuth services timed out. Please retry."
 
-        # 3. TLS / SSL Verification Failure
-        elif isinstance(cause, ssl.SSLError) or "ssl" in exc_name.lower() or "certificate" in safe_str.lower():
+        # 3. Read Timeout
+        elif is_read_timeout:
+            category = "READ_TIMEOUT"
+            status_code = status.HTTP_504_GATEWAY_TIMEOUT
+            detail = "Response from Google OAuth services timed out. Please retry."
+
+        # 4. TLS / SSL Verification Failure
+        elif is_tls:
             category = "TLS_VERIFICATION_FAILURE"
             status_code = status.HTTP_502_BAD_GATEWAY
             detail = "TLS certificate verification with Google OAuth services failed."
 
-        # 4. Connection Refused / Network Unreachable
-        elif isinstance(cause, (ConnectionRefusedError, OSError)) and ("unreachable" in safe_str.lower() or "refused" in safe_str.lower()):
+        # 5. Connection Refused
+        elif is_refused:
+            category = "CONNECTION_REFUSED"
+            status_code = status.HTTP_502_BAD_GATEWAY
+            detail = "Connection to Google OAuth services was refused. Verify network connectivity."
+
+        # 6. Network Unreachable
+        elif is_unreachable:
             category = "NETWORK_UNREACHABLE"
             status_code = status.HTTP_502_BAD_GATEWAY
             detail = "Unable to reach Google OAuth services (network unreachable). Verify network connectivity."
 
-        # 5. Generic ConnectError / RequestError
+        # 7. Generic ConnectError / RequestError
         else:
             category = "NETWORK_CONNECT_ERROR"
             status_code = status.HTTP_502_BAD_GATEWAY
@@ -427,6 +480,47 @@ class GoogleOAuthService:
             detail
         )
         return HTTPException(status_code=status_code, detail=detail)
+
+    @classmethod
+    def test_connectivity(cls) -> Dict[str, Any]:
+        """
+        Diagnoses real DNS resolution and HTTPS connectivity to Google OAuth endpoints.
+        Safe for diagnostics; contains zero credentials or tokens.
+        """
+        endpoints = [
+            "accounts.google.com",
+            "oauth2.googleapis.com",
+            "openidconnect.googleapis.com",
+            "www.googleapis.com",
+        ]
+        results = {}
+        for host in endpoints:
+            try:
+                ip = socket.gethostbyname(host)
+                s = socket.create_connection((host, 443), timeout=5.0)
+                ctx = ssl.create_default_context()
+                ss = ctx.wrap_socket(s, server_hostname=host)
+                cipher = ss.cipher()[0]
+                version = ss.version()
+                ss.close()
+                results[host] = {
+                    "reachable": True,
+                    "ip": ip,
+                    "tls_version": version,
+                    "cipher": cipher,
+                }
+            except Exception as e:
+                results[host] = {
+                    "reachable": False,
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                }
+        all_reachable = all(r.get("reachable", False) for r in results.values())
+        return {
+            "all_endpoints_reachable": all_reachable,
+            "endpoints": results,
+            "checked_at": utc_now().isoformat(),
+        }
 
     @classmethod
     def exchange_code_for_tokens(
@@ -456,10 +550,18 @@ class GoogleOAuthService:
         if code_verifier:
             token_payload["code_verifier"] = code_verifier
 
-        client = http_client or httpx.Client(timeout=httpx.Timeout(15.0, connect=5.0))
+        client = http_client or httpx.Client(timeout=httpx.Timeout(20.0, connect=10.0, read=15.0, write=10.0))
         t0 = time.time()
         try:
-            resp = client.post(cls.GOOGLE_TOKEN_ENDPOINT, data=token_payload)
+            try:
+                resp = client.post(cls.GOOGLE_TOKEN_ENDPOINT, data=token_payload)
+            except (httpx.ConnectError, httpx.ConnectTimeout) as conn_err:
+                if http_client is None:
+                    # Retry once after 0.5s backoff for transient TCP/DNS connect failure
+                    time.sleep(0.5)
+                    resp = client.post(cls.GOOGLE_TOKEN_ENDPOINT, data=token_payload)
+                else:
+                    raise conn_err
             duration = time.time() - t0
             if resp.status_code != 200:
                 try:
@@ -569,13 +671,22 @@ class GoogleOAuthService:
                 detail="OIDC transaction nonce is mandatory. Authentication failed closed."
             )
 
-        client = http_client or httpx.Client(timeout=httpx.Timeout(15.0, connect=5.0))
+        client = http_client or httpx.Client(timeout=httpx.Timeout(20.0, connect=10.0, read=15.0, write=10.0))
         t0 = time.time()
         try:
             # 3. Validate ID token via Google tokeninfo endpoint (FAIL CLOSED)
-            tokeninfo_resp = client.get(
-                f"{cls.GOOGLE_TOKENINFO_ENDPOINT}?id_token={urllib.parse.quote(str(id_token).strip())}"
-            )
+            try:
+                tokeninfo_resp = client.get(
+                    f"{cls.GOOGLE_TOKENINFO_ENDPOINT}?id_token={urllib.parse.quote(str(id_token).strip())}"
+                )
+            except (httpx.ConnectError, httpx.ConnectTimeout) as conn_err:
+                if http_client is None:
+                    time.sleep(0.5)
+                    tokeninfo_resp = client.get(
+                        f"{cls.GOOGLE_TOKENINFO_ENDPOINT}?id_token={urllib.parse.quote(str(id_token).strip())}"
+                    )
+                else:
+                    raise conn_err
             duration = time.time() - t0
             if tokeninfo_resp.status_code != 200:
                 logger.error(

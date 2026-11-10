@@ -18,6 +18,7 @@ import { Input } from '../../components/ui/Input';
 import { Skeleton } from '../../components/ui/Skeleton';
 import { ErrorState } from '../../components/ui/ErrorState';
 import { SectionHeader } from '../../components/ui/SectionHeader';
+import { UserAvatar } from '../../components/ui/UserAvatar';
 import { formatTimestamp } from '../../lib/utils';
 import type { UserProfile } from '../../types';
 
@@ -31,6 +32,7 @@ export const AccountPage: React.FC = () => {
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [avatarError, setAvatarError] = useState<string | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
 
   const {
     data: user,
@@ -50,6 +52,8 @@ export const AccountPage: React.FC = () => {
       setBadgeNumber(user.badge_number || user.badge_id || '');
     }
   }, [user]);
+
+
 
   const updateProfileMutation = useMutation({
     mutationFn: (data: { name: string; badge_number: string }) =>
@@ -71,10 +75,13 @@ export const AccountPage: React.FC = () => {
     mutationFn: (file: File) => authService.uploadAvatar(file),
     onSuccess: (updatedUser: UserProfile) => {
       qc.setQueryData(['auth-me'], updatedUser);
+      qc.invalidateQueries({ queryKey: ['auth-me'] });
       updateUserStore(updatedUser);
       setAvatarError(null);
+      setTimeout(() => setAvatarPreview(null), 800);
     },
     onError: (err) => {
+      setAvatarPreview(null);
       setAvatarError(normalizeError(err));
     },
   });
@@ -83,7 +90,9 @@ export const AccountPage: React.FC = () => {
     mutationFn: () => authService.deleteAvatar(),
     onSuccess: (updatedUser: UserProfile) => {
       qc.setQueryData(['auth-me'], updatedUser);
+      qc.invalidateQueries({ queryKey: ['auth-me'] });
       updateUserStore(updatedUser);
+      setAvatarPreview(null);
       setAvatarError(null);
     },
     onError: (err) => {
@@ -115,21 +124,14 @@ export const AccountPage: React.FC = () => {
     }
 
     setAvatarError(null);
+    const localUrl = URL.createObjectURL(file);
+    setAvatarPreview(localUrl);
+
     uploadAvatarMutation.mutate(file);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
   };
-
-  const initials = user
-    ? (user.name || user.email)
-        .split(' ')
-        .filter(Boolean)
-        .map((p) => p[0])
-        .slice(0, 2)
-        .join('')
-        .toUpperCase()
-    : 'DF';
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
@@ -156,20 +158,12 @@ export const AccountPage: React.FC = () => {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-5">
               <div className="flex items-center gap-4">
                 <div className="relative group shrink-0">
-                  {user.avatar_url ? (
-                    <img
-                      src={user.avatar_url}
-                      alt={user.name || 'Investigator Avatar'}
-                      className="w-16 h-16 rounded-full object-cover border-2 border-stone-300 shadow-sm"
-                      onError={(e) => {
-                        (e.target as HTMLElement).style.display = 'none';
-                      }}
-                    />
-                  ) : (
-                    <div className="w-16 h-16 rounded-full bg-slate-800 text-white flex items-center justify-center font-bold text-lg tracking-wider border-2 border-stone-300 shadow-sm">
-                      {initials}
-                    </div>
-                  )}
+                  <UserAvatar
+                    user={user}
+                    previewUrl={avatarPreview}
+                    size="xl"
+                    className="border-2"
+                  />
                   {uploadAvatarMutation.isPending && (
                     <div className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center text-white">
                       <Loader2 className="w-5 h-5 animate-spin" />

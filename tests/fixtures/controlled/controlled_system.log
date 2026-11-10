@@ -1,0 +1,4 @@
+2026-11-09T10:00:00Z [AUTH] User analyst session initiated from 10.0.0.15
+2026-11-09T10:15:22Z [PROCESS] Executed C:\Windows\System32\cmd.exe PID 4102
+2026-11-09T10:30:45Z [NETWORK] Connected to remote endpoint 198.51.100.42:443
+2026-11-09T10:45:00Z [ALERT] Potential unauthorized exfiltration beacon detected

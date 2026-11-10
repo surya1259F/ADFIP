@@ -130,10 +130,15 @@ export const ReportsPage: React.FC = () => {
     onError: (e) => setGenerateErr(normalizeError(e)),
   });
 
-  const handleExport = async (reportId: string, format: 'markdown' | 'json') => {
+  const handleExport = async (reportId: string, format: 'markdown' | 'json' | 'pdf' | 'docx') => {
     try {
       const { data, filename } = await reportsService.export(caseId!, reportId, format);
-      const blob = new Blob([data], { type: format === 'json' ? 'application/json' : 'text/markdown' });
+      let mimeType = 'text/markdown';
+      if (format === 'json') mimeType = 'application/json';
+      else if (format === 'pdf') mimeType = 'application/pdf';
+      else if (format === 'docx') mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+      const blob = data instanceof Blob ? data : new Blob([data], { type: mimeType });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -445,7 +450,25 @@ export const ReportsPage: React.FC = () => {
                         <Button
                           size="sm"
                           variant="ghost"
-                          icon={<Download className="w-3 h-3" />}
+                          icon={<Download className="w-3 h-3 text-red-600" />}
+                          onClick={() => handleExport(r.id, 'pdf')}
+                          title="Download Publication PDF"
+                        >
+                          PDF
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          icon={<Download className="w-3 h-3 text-blue-600" />}
+                          onClick={() => handleExport(r.id, 'docx')}
+                          title="Download Editable Microsoft Word DOCX"
+                        >
+                          DOCX
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          icon={<Download className="w-3 h-3 text-slate-500" />}
                           onClick={() => handleExport(r.id, 'markdown')}
                           title="Download Markdown format"
                         >
@@ -454,7 +477,7 @@ export const ReportsPage: React.FC = () => {
                         <Button
                           size="sm"
                           variant="ghost"
-                          icon={<Download className="w-3 h-3" />}
+                          icon={<Download className="w-3 h-3 text-slate-500" />}
                           onClick={() => handleExport(r.id, 'json')}
                           title="Download JSON structured format"
                         >

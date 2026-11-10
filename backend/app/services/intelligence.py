@@ -543,11 +543,31 @@ class EvidenceIntelligenceEngine:
         if subtype:
             tags.append(EvidenceTag(tag=subtype.lower(), category="subtype", basis=f"Subtype: {subtype}"))
 
-        entropy_val = None
-        if header_bytes:
-            import math
-            prob = [header_bytes.count(b) / len(header_bytes) for b in set(header_bytes)]
-            entropy_val = round(-sum(p * math.log2(p) for p in prob), 4)
+        # Genuine Streaming Shannon Entropy & Block Analysis
+        from backend.app.services.entropy import calculate_streaming_entropy, extract_forensic_metadata
+
+        entropy_res = calculate_streaming_entropy(file_path)
+        entropy_val = entropy_res.get("whole_file_entropy")
+
+        if entropy_res.get("is_high_entropy_overall") or entropy_res.get("high_entropy_blocks_count", 0) > 0:
+            characteristics.append("HIGH_ENTROPY_REGIONS_DETECTED")
+            tags.append(EvidenceTag(
+                tag="high_entropy",
+                category="characteristic",
+                basis=f"Whole-file entropy: {entropy_val:.4f} ({entropy_res.get('high_entropy_blocks_count', 0)} blocks > 7.2 - candidate encrypted/compressed)"
+            ))
+
+        # Forensic 3-tier metadata extraction
+        meta_res = extract_forensic_metadata(file_path, header_bytes, detected_format, classification)
+
+        mismatch_info = meta_res.get("extracted_metadata", {}).get("signature_extension_mismatch", {})
+        if mismatch_info.get("mismatch_detected"):
+            characteristics.append("ANTI_FORENSIC_DISGUISED_EXTENSION")
+            tags.append(EvidenceTag(
+                tag="disguised_file_extension",
+                category="anomaly",
+                basis=mismatch_info.get("description", "File extension conflicts with header signature")
+            ))
 
         metadata = {
             "size_bytes": size_bytes,
@@ -556,6 +576,10 @@ class EvidenceIntelligenceEngine:
             "detected_format": detected_format,
             "classification": classification,
             "entropy": entropy_val,
+            "entropy_profile": entropy_res,
+            "filesystem_metadata": meta_res.get("filesystem_metadata", {}),
+            "embedded_metadata": meta_res.get("embedded_metadata", {}),
+            "extracted_metadata": meta_res.get("extracted_metadata", {}),
         }
 
         return (

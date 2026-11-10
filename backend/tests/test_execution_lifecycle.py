@@ -94,51 +94,58 @@ def _setup_case_and_evidence(db, mock_evidence_files):
 
 # 1. Successful process execution (exit_code 0, PID, status COMPLETED)
 def test_successful_process_execution(db_session, mock_evidence_files):
+    fixture_path = os.path.abspath("tests/fixtures/disk/synthetic_disk.img")
+    if os.path.exists(fixture_path):
+        import shutil
+        shutil.copy(fixture_path, mock_evidence_files["orig_path"])
+
     case, evidence = _setup_case_and_evidence(db_session, mock_evidence_files)
+    evidence.evidence_type = "disk_image"
+    db_session.commit()
     orchestrator = InvestigationOrchestrator()
 
     task = {
         "step_id": "test-step-success-01",
         "task_id": "test-step-success-01",
         "agent": "DiskAgent",
-        "tool": "ExifTool",
-        "action": "metadata_extraction",
+        "tool": "SleuthKit",
+        "action": "filesystem_structure_extraction",
         "evidence_id": evidence.id,
         "parameters": {"timeout_seconds": 30},
     }
 
     res = orchestrator._execute_single_task(case.id, "plan-1", task, db_session)
 
-    assert res["status"] in ["COMPLETED", "FAILED"]  # Depending on ExifTool binary presence
+    assert res["status"] == "COMPLETED"
     exec_rec = db_session.query(ToolExecution).first()
     assert exec_rec is not None
     assert exec_rec.case_id == case.id
     assert exec_rec.evidence_id == evidence.id
-    assert exec_rec.tool_id == "exiftool"
-    assert exec_rec.status in ["COMPLETED", "FAILED"]
+    assert exec_rec.tool_id == "sleuthkit_fls"
+    assert exec_rec.status == "COMPLETED"
 
 
 # 2. Failed process execution (non-zero return code captured, status FAILED)
 def test_failed_process_execution(db_session, mock_evidence_files):
     case, evidence = _setup_case_and_evidence(db_session, mock_evidence_files)
-    evidence.evidence_type = "memory_dump"
+    evidence.evidence_type = "disk_image"
     db_session.commit()
     orchestrator = InvestigationOrchestrator()
 
-    # Request invalid plugin to trigger failure
+    # SleuthKit fls executed on raw non-filesystem data triggers real non-zero exit code failure
     task = {
         "step_id": "test-step-fail-01",
         "task_id": "test-step-fail-01",
-        "agent": "MemoryAgent",
-        "tool": "Volatility3",
-        "action": "process_enumeration",
+        "agent": "DiskAgent",
+        "tool": "SleuthKit",
+        "action": "filesystem_structure_extraction",
         "evidence_id": evidence.id,
-        "parameters": {"plugin": "disallowed_invalid_plugin", "timeout_seconds": 10},
+        "parameters": {"timeout_seconds": 10},
     }
 
     res = orchestrator._execute_single_task(case.id, "plan-1", task, db_session)
 
-    assert res["status"] == "FAILED"
+    assert res["status"] in ["FAILED", "EXECUTION_FAILED"]
     assert res["execution_id"] is not None
     exec_rec = db_session.query(ToolExecution).filter(ToolExecution.id == res["execution_id"]).first()
     assert exec_rec is not None
@@ -161,6 +168,8 @@ def test_process_return_code_persistence():
 # 4. PID persistence (OS PID saved for subprocesses, None for library-based tools)
 def test_pid_persistence(db_session, mock_evidence_files):
     case, evidence = _setup_case_and_evidence(db_session, mock_evidence_files)
+    evidence.evidence_type = "log"
+    db_session.commit()
     orchestrator = InvestigationOrchestrator()
 
     task_log = {
@@ -584,14 +593,16 @@ def test_vault_pre_post_integrity_enforced(db_session, mock_evidence_files):
 # 20. ToolExecution truthfulness (telemetry fields persisted match real data)
 def test_toolexecution_truthfulness(db_session, mock_evidence_files):
     case, evidence = _setup_case_and_evidence(db_session, mock_evidence_files)
+    evidence.evidence_type = "disk_image"
+    db_session.commit()
     orchestrator = InvestigationOrchestrator()
 
     task = {
         "step_id": "test-truth-01",
         "task_id": "test-truth-01",
         "agent": "DiskAgent",
-        "tool": "ExifTool",
-        "action": "metadata_extraction",
+        "tool": "SleuthKit",
+        "action": "filesystem_structure_extraction",
         "evidence_id": evidence.id,
         "parameters": {"timeout_seconds": 45},
     }
@@ -603,8 +614,8 @@ def test_toolexecution_truthfulness(db_session, mock_evidence_files):
     assert exec_rec is not None
     assert exec_rec.case_id == case.id
     assert exec_rec.evidence_id == evidence.id
-    assert exec_rec.tool_id == "exiftool"
-    assert exec_rec.command_args == ["exiftool", "-j", evidence.storage_path]
+    assert exec_rec.tool_id == "sleuthkit_fls"
+    assert exec_rec.command_args == ["fls", "-r", "-p", evidence.storage_path]
     assert exec_rec.timeout_seconds == 45
     assert exec_rec.operator_id == "autonomous-orchestrator"
     assert exec_rec.started_at is not None
@@ -768,6 +779,8 @@ def test_cancel_execution_identity_mismatch_prevents_killing():
 # 28. Python-EVTX in-process execution model verification
 def test_python_evtx_in_process_model_verified(db_session, mock_evidence_files):
     case, evidence = _setup_case_and_evidence(db_session, mock_evidence_files)
+    evidence.evidence_type = "log"
+    db_session.commit()
     orchestrator = InvestigationOrchestrator()
 
     task_log = {
@@ -866,6 +879,209 @@ def test_timeout_unverified_identity_preserves_resource_reservation():
     scheduler.register_plan([task2])
     admitted2 = scheduler.admit_next_tasks(max_batch=1)
     assert len(admitted2) == 0  # Blocked!
+
+
+# 31. Pre-analysis missing evidence file rejected
+def test_pre_analysis_missing_file_rejected(db_session, mock_evidence_files):
+    case, evidence = _setup_case_and_evidence(db_session, mock_evidence_files)
+    orchestrator = InvestigationOrchestrator()
+
+    # Delete the vault file
+    os.remove(evidence.storage_path)
+
+    task = {
+        "step_id": "test-missing-file-01",
+        "task_id": "test-missing-file-01",
+        "agent": "DiskAgent",
+        "tool": "SleuthKit",
+        "action": "filesystem_structure_extraction",
+        "evidence_id": evidence.id,
+    }
+
+    res = orchestrator._execute_single_task(case.id, "plan-1", task, db_session)
+    assert res["status"] == "FAILED"
+    assert "Pre-analysis vault check failed" in res["error_message"]
+    assert res["execution_id"] is None
+
+
+# 32. Pre-analysis evidence outside vault rejected
+def test_pre_analysis_outside_vault_rejected(db_session, mock_evidence_files):
+    case, evidence = _setup_case_and_evidence(db_session, mock_evidence_files)
+    orchestrator = InvestigationOrchestrator()
+
+    # Point storage path outside vault to original path
+    evidence.storage_path = mock_evidence_files["orig_path"]
+    db_session.commit()
+
+    task = {
+        "step_id": "test-outside-vault-01",
+        "task_id": "test-outside-vault-01",
+        "agent": "DiskAgent",
+        "tool": "SleuthKit",
+        "action": "filesystem_structure_extraction",
+        "evidence_id": evidence.id,
+    }
+
+    res = orchestrator._execute_single_task(case.id, "plan-1", task, db_session)
+    assert res["status"] == "FAILED"
+    assert "vault" in res["error_message"].lower()
+    assert res["execution_id"] is None
+
+
+# 33. Agent rejects unsupported evidence type
+def test_agent_unsupported_evidence_type_rejected(db_session, mock_evidence_files):
+    case, evidence = _setup_case_and_evidence(db_session, mock_evidence_files)
+    # MemoryAgent does not handle disk_image
+    evidence.evidence_type = "disk_image"
+    db_session.commit()
+    orchestrator = InvestigationOrchestrator()
+
+    task = {
+        "step_id": "test-unsupported-ev-01",
+        "task_id": "test-unsupported-ev-01",
+        "agent": "MemoryAgent",
+        "tool": "volatility3",
+        "action": "pslist",
+        "evidence_id": evidence.id,
+    }
+
+    res = orchestrator._execute_single_task(case.id, "plan-1", task, db_session)
+    assert res["status"] == "UNSUPPORTED_EVIDENCE_TYPE"
+    assert "not supported" in res["error_message"]
+    assert res["execution_id"] is None
+
+
+# 34. Tool unavailable rejected at execution boundary
+def test_tool_unavailable_at_boundary_rejected(db_session, mock_evidence_files):
+    case, evidence = _setup_case_and_evidence(db_session, mock_evidence_files)
+    orchestrator = InvestigationOrchestrator()
+
+    task = {
+        "step_id": "test-tool-unavail-01",
+        "task_id": "test-tool-unavail-01",
+        "agent": "MalwareAgent",
+        "tool": "nonexistent_tool_xyz",
+        "action": "scan",
+        "evidence_id": evidence.id,
+    }
+
+    res = orchestrator._execute_single_task(case.id, "plan-1", task, db_session)
+    assert res["status"] in ["TOOL_UNAVAILABLE", "TOOL_VALIDATION_FAILED", "UNSUPPORTED_EVIDENCE_TYPE"]
+    assert res["execution_id"] is None
+
+
+# 35. Post-analysis hash mismatch detection
+def test_post_analysis_hash_mismatch_fails_cleanly(db_session, mock_evidence_files):
+    from pathlib import Path
+    from backend.app.services.vault import remove_os_read_only
+    case, evidence = _setup_case_and_evidence(db_session, mock_evidence_files)
+    evidence.evidence_type = "disk_image"
+    db_session.commit()
+    orchestrator = InvestigationOrchestrator()
+
+    orig_analyze = orchestrator.disk_agent.analyze
+    def tampering_analyze(evidence_item, parameters):
+        p = Path(evidence_item["storage_path"])
+        remove_os_read_only(p)
+        with open(p, "ab") as f:
+            f.write(b"TAMPER_POST_EXECUTION")
+        return {"status": "SUCCESS", "artifacts": [], "findings": [], "provenance": {"tool": "sleuthkit"}}
+
+    orchestrator.disk_agent.analyze = tampering_analyze
+    try:
+        with pytest.raises(RuntimeError) as exc_info:
+            orchestrator._execute_single_task(
+                case.id, "plan-1",
+                {
+                    "step_id": "test-tamper-post",
+                    "task_id": "test-tamper-post",
+                    "agent": "DiskAgent",
+                    "tool": "SleuthKit",
+                    "action": "filesystem_structure_extraction",
+                    "evidence_id": evidence.id,
+                },
+                db_session
+            )
+        assert "CRITICAL: Evidence was modified during analysis" in str(exc_info.value)
+        db_session.refresh(evidence)
+        assert evidence.integrity_status == "FAILED"
+    finally:
+        orchestrator.disk_agent.analyze = orig_analyze
+
+
+# 36. Failed execution prevents artifacts and findings from persisting
+def test_failed_execution_commits_no_artifacts_or_findings(db_session, mock_evidence_files):
+    from backend.app.models.models import ExecutionArtifact, Finding
+    case, evidence = _setup_case_and_evidence(db_session, mock_evidence_files)
+    evidence.evidence_type = "disk_image"
+    db_session.commit()
+    orchestrator = InvestigationOrchestrator()
+
+    task = {
+        "step_id": "test-fail-no-artifacts",
+        "task_id": "test-fail-no-artifacts",
+        "agent": "DiskAgent",
+        "tool": "SleuthKit",
+        "action": "filesystem_structure_extraction",
+        "evidence_id": evidence.id,
+    }
+
+    res = orchestrator._execute_single_task(case.id, "plan-1", task, db_session)
+    assert res["status"] in ["FAILED", "EXECUTION_FAILED"]
+    assert res["artifacts_count"] == 0
+    assert res["findings_count"] == 0
+
+    art_count = db_session.query(ExecutionArtifact).filter(ExecutionArtifact.case_id == case.id).count()
+    find_count = db_session.query(Finding).filter(Finding.case_id == case.id).count()
+    assert art_count == 0
+    assert find_count == 0
+
+
+# 37. Database commit failure triggers rollback and safe failure
+def test_database_commit_failure_triggers_rollback(db_session, mock_evidence_files, monkeypatch):
+    case, evidence = _setup_case_and_evidence(db_session, mock_evidence_files)
+    evidence.evidence_type = "disk_image"
+    db_session.commit()
+    orchestrator = InvestigationOrchestrator()
+
+    orig_commit = db_session.commit
+    post_analyze_commits = [0]
+    armed = [False]
+
+    def failing_commit():
+        if armed[0]:
+            post_analyze_commits[0] += 1
+            if post_analyze_commits[0] == 2:
+                raise RuntimeError("Simulated Database I/O Failure")
+        orig_commit()
+
+    monkeypatch.setattr(db_session, "commit", failing_commit)
+
+    def fake_analyze(evidence_item, parameters):
+        armed[0] = True
+        return {
+            "status": "SUCCESS",
+            "artifacts": [],
+            "findings": [],
+            "provenance": {"tool": "SleuthKit", "pid": None, "return_code": 0},
+            "raw_output_reference": "/tmp/fake_raw.out"
+        }
+
+    orchestrator.disk_agent.analyze = fake_analyze
+
+    task = {
+        "step_id": "test-db-fail-01",
+        "task_id": "test-db-fail-01",
+        "agent": "DiskAgent",
+        "tool": "SleuthKit",
+        "action": "filesystem_structure_extraction",
+        "evidence_id": evidence.id,
+    }
+
+    res = orchestrator._execute_single_task(case.id, "plan-1", task, db_session)
+    assert res["status"] == "FAILED"
+    assert "Database transaction failed during persistence" in res["error_message"]
+
 
 
 

@@ -21,6 +21,8 @@ from backend.app.schemas.schemas import (
     FindingProvenanceResponse,
     FindingSupportingEvidenceResponse,
     FindingSummaryResponse,
+    ForensicAssessmentResponse,
+    InvestigatorAssessmentDecisionRequest,
 )
 from backend.app.services.authorization import get_authorized_case
 from backend.app.services.findings import DeterministicFindingsService
@@ -134,6 +136,70 @@ def list_findings(
         ))
 
     return results
+
+
+# =============================================================================
+# Forensic Assessment & Human-in-the-Loop Decision Endpoints (Part 11 & 12)
+# Must precede /cases/{case_id}/findings/{finding_id} to avoid path collision
+# =============================================================================
+
+@router.get(
+    "/cases/{case_id}/findings/assessment",
+    response_model=ForensicAssessmentResponse,
+    status_code=status.HTTP_200_OK
+)
+def get_forensic_assessment(
+    case_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Returns deterministic attack classification, 10-factor evidence strength score (0-100),
+    investigation completeness, grounded observations, and review status.
+    """
+    get_authorized_case(case_id, db, current_user)
+    from backend.app.services.decision_engine import EvidenceDecisionEngine
+    try:
+        data = EvidenceDecisionEngine.calculate_forensic_assessment(db, case_id)
+        return ForensicAssessmentResponse(**data)
+    except ValueError as ve:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Assessment calculation failed: {str(e)}")
+
+
+@router.post(
+    "/cases/{case_id}/findings/assessment/decision",
+    response_model=ForensicAssessmentResponse,
+    status_code=status.HTTP_200_OK
+)
+def submit_investigator_assessment_decision(
+    case_id: str,
+    payload: InvestigatorAssessmentDecisionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Records investigator authority over final forensic assessment.
+    Supported decisions: ACCEPT, EDIT, CHALLENGE, REQUEST_MORE_EVIDENCE, REJECT.
+    """
+    get_authorized_case(case_id, db, current_user)
+    from backend.app.services.decision_engine import EvidenceDecisionEngine
+    try:
+        data = EvidenceDecisionEngine.record_assessment_decision(
+            db=db,
+            case_id=case_id,
+            decision=payload.decision,
+            rationale=payload.rationale,
+            edited_classification=payload.edited_classification,
+            additional_analysis_requested=payload.additional_analysis_requested,
+            current_user=current_user
+        )
+        return ForensicAssessmentResponse(**data)
+    except ValueError as ve:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to record assessment decision: {str(e)}")
 
 
 @router.get(
@@ -250,3 +316,5 @@ def verify_finding_integrity(
         return DeterministicFindingsService.verify_integrity(db, case_id, finding_id)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+

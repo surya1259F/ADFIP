@@ -258,6 +258,8 @@ def test_yara_execution_contract_real_evidence_scan():
     Validates scanning real target evidence with an approved rule file.
     """
     adapter = YaraAdapter()
+    if not adapter.is_available():
+        pytest.skip("Native YARA binary is not installed on host platform")
     from forensic_tools.yara.rules_manager import yara_rule_repo
     rule_info = yara_rule_repo.get_rule("adfir_webshell_indicators")
     assert rule_info is not None

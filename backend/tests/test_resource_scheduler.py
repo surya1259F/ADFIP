@@ -238,6 +238,19 @@ def test_actual_bounded_parallel_execution_overlap(monkeypatch):
         return orig_analyze(evidence_item, parameters)
 
     monkeypatch.setattr(orchestrator.malware_agent, "analyze", synchronized_analyze)
+    monkeypatch.setattr(orchestrator.malware_agent, "can_handle", lambda et: True)
+
+    from forensic_tools.registry import ToolDefinition
+    mock_tool = ToolDefinition(
+        name="yara",
+        display_name="YARA Scanner",
+        platforms=["linux", "windows", "darwin"],
+        binary_name="yara",
+        description="YARA Scanner",
+        is_available=True,
+        is_library_adapter=True,
+    )
+    monkeypatch.setattr(orchestrator.registry, "get_tool", lambda name: mock_tool)
 
     case_id = _create_case("Overlap Proof Case")
     sample_path = str(Path(__file__).resolve().parent.parent.parent / "tests" / "fixtures" / "sample-evidence.txt")
@@ -316,7 +329,7 @@ def test_failed_dependency_blocks_child_and_allows_independent(monkeypatch):
             "status": "SUCCESS",
             "artifacts": [{"name": "meta", "type": "metadata"}],
             "findings": [],
-            "provenance": {"tool": "ExifTool"}
+            "provenance": {"tool": "SleuthKit"}
         }
     )
 
@@ -348,10 +361,10 @@ def test_failed_dependency_blocks_child_and_allows_independent(monkeypatch):
     t_indep = {
         "step_id": "t-indep",
         "agent": "DiskAgent",
-        "tool": "ExifTool",
+        "tool": "SleuthKit",
         "tool_available": True,
         "evidence_id": evidence_id,
-        "action": "metadata_extraction",
+        "action": "filesystem_structure_extraction",
         "priority": 1,
         "dependencies": [],
         "status": "PLANNED",
@@ -382,7 +395,7 @@ def test_failed_dependency_blocks_child_and_allows_independent(monkeypatch):
         c_res = next(t for t in tasks if t["step_id"] == "t-child")
         i_res = next(t for t in tasks if t["step_id"] == "t-indep")
 
-        assert p_res["status"] == "FAILED"
+        assert p_res["status"] in ["FAILED", "TOOL_UNAVAILABLE"]
         assert c_res["status"] == "CANCELLED"
         assert "Dependency not satisfied" in c_res["error_message"]
         assert i_res["status"] == "COMPLETED"

@@ -7,47 +7,71 @@ import subprocess
 import json
 from pathlib import Path
 
+def is_mock_script(path_str: str) -> bool:
+    try:
+        p = Path(path_str)
+        if "tests/mocks" in str(p) or "tests/fixtures" in str(p):
+            return True
+        with open(p, "rb") as f:
+            first_bytes = f.read(256)
+            if b"python" in first_bytes and (b"Synthetic_Test" in first_bytes or b"ADFIR_Synthetic" in first_bytes or b"ADFIR" in first_bytes):
+                return True
+    except Exception:
+        pass
+    return False
+
 def resolve_tool_path(tool_name: str, root_dir: Path, current_os: str) -> tuple[bool, str | None, str | None]:
     """
-    Resolves executable path and version for a given forensic tool.
-    Checks system PATH, project tools/bin, and volatility-env.
+    Resolves real executable path and validated version for a forensic tool.
+    Strictly checks system PATH and configured tool directories.
+    Never accepts mock or demonstration scripts.
     """
     exe_name = f"{tool_name}.exe" if current_os == "windows" else tool_name
     
     # 1. System PATH
     found_path = shutil.which(exe_name)
     
-    # 2. Project local tools/bin
+    # 2. Configured production tools/bin
     if not found_path:
         local_bin = root_dir / "tools" / "bin" / exe_name
         if local_bin.exists() and os.access(local_bin, os.X_OK):
             found_path = str(local_bin)
 
-    # 3. Special handling for Volatility 3 in virtualenv
-    if not found_path and tool_name in ["vol", "volatility3"]:
-        vol_env_bin = root_dir / "volatility-env" / ("Scripts/vol.exe" if current_os == "windows" else "bin/vol")
-        if vol_env_bin.exists() and os.access(vol_env_bin, os.X_OK):
-            found_path = str(vol_env_bin)
-
+    # 3. Virtual environment bin
     if not found_path:
+        venv_bin = root_dir / "backend" / ".venv" / ("Scripts" if current_os == "windows" else "bin") / exe_name
+        if venv_bin.exists() and os.access(venv_bin, os.X_OK):
+            found_path = str(venv_bin)
+
+    if not found_path or is_mock_script(found_path):
         return False, None, None
 
-    # Version check
+    # Safe tool-specific version check
     version = None
     try:
         if tool_name in ["fls", "sleuthkit"]:
             out = subprocess.run([found_path, "-V"], capture_output=True, text=True, timeout=5)
-            version = (out.stdout or out.stderr).strip().splitlines()[0]
+            if out.returncode == 0:
+                raw = (out.stdout or out.stderr).strip().splitlines()
+                version = raw[0] if raw else None
         elif tool_name in ["yara"]:
             out = subprocess.run([found_path, "--version"], capture_output=True, text=True, timeout=5)
-            version = out.stdout.strip()
+            if out.returncode == 0:
+                version = out.stdout.strip()
         elif tool_name in ["exiftool"]:
             out = subprocess.run([found_path, "-ver"], capture_output=True, text=True, timeout=5)
-            version = out.stdout.strip()
+            if out.returncode == 0:
+                version = out.stdout.strip()
         elif tool_name in ["vol", "volatility3"]:
-            version = "2.28.0"
+            out = subprocess.run([found_path, "-h"], capture_output=True, text=True, timeout=5)
+            if out.returncode == 0:
+                raw = (out.stdout or out.stderr).strip().splitlines()
+                version = raw[0] if raw else None
     except Exception:
-        version = "detected"
+        version = None
+
+    if not version:
+        return False, None, None
 
     return True, found_path, version
 

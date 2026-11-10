@@ -51,6 +51,8 @@ def auto_authenticate_tests(request):
         "test_full_investigation_lifecycle_e2e",
         "test_forensic_workflow_repair",
         "test_decision_engine",
+        "test_investigation_requirements",
+        "test_forensic_assessment",
     ]
     if any(ex in module_name for ex in excluded_modules):
         app.dependency_overrides.pop(get_current_user, None)

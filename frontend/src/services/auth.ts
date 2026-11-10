@@ -59,6 +59,13 @@ export const authService = {
     return res.data;
   },
 
+  getAvatarBlob: async (): Promise<Blob> => {
+    const res = await apiClient.get<Blob>('/auth/profile/avatar', {
+      responseType: 'blob',
+    });
+    return res.data;
+  },
+
   getHealth: async (): Promise<{ status: string; version?: string }> => {
     const res = await apiClient.get<{ status: string; version?: string }>('/health');
     return res.data;

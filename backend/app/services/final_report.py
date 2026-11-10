@@ -838,7 +838,9 @@ class FinalForensicReportService:
             }
         }
 
-        # Assemble full 16-section payload with backwards-compatible aliases
+        assessment_data = EvidenceDecisionEngine.calculate_forensic_assessment(db, case.id)
+
+        # Assemble full structured sections payload with backwards-compatible aliases
         sections = {
             "executive_summary": exec_summary,
             "case_information": case_information,
@@ -855,6 +857,7 @@ class FinalForensicReportService:
             "timeline": timeline,
             "correlations": correlations,
             "correlation_analysis": correlations,
+            "assessment": assessment_data,
             "alternative_explanations": alternative_explanations,
             "investigation_limitations": limitations,
             "conclusions": conclusions,
@@ -1493,13 +1496,14 @@ class FinalForensicReportService:
         export_format: str,
         user: User,
         db: Session
-    ) -> Tuple[str, str, str]:
+    ) -> Tuple[Any, str, str]:
         """
-        Exports the report as Markdown or JSON.
+        Exports the report as Markdown, JSON, PDF, or DOCX using the canonical report model.
         Returns (content, media_type, filename).
         """
         report = cls.get_report(case_id, report_id, user, db)
-        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in report.case.name)
+        case_name = report.case.name if report.case else "Investigation"
+        safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in case_name)
         fmt = (export_format or "markdown").lower()
 
         log_audit_event(
@@ -1511,23 +1515,38 @@ class FinalForensicReportService:
             details=f"Exported report v{report.version} in format {fmt}"
         )
 
-        if fmt in ["json"]:
-            payload = {
-                "id": report.id,
-                "case_id": report.case_id,
-                "version": report.version,
-                "title": report.title,
-                "executive_summary": report.executive_summary,
-                "report_hash": report.report_hash,
-                "integrity_status": report.integrity_status,
-                "generated_by": report.generated_by,
-                "generated_at": report.generated_at.isoformat() if report.generated_at else None,
-                "sections": report.sections,
-                "provenance": report.provenance,
-                "report_metadata": report.report_metadata,
-                "full_report_markdown": report.full_report_markdown
-            }
-            content = json.dumps(payload, indent=2, default=str)
-            return content, "application/json", f"ADFIR_{safe_name}_report_v{report.version}.json"
+        canonical_data = {
+            "id": report.id,
+            "case_id": report.case_id,
+            "case_name": case_name,
+            "case_number": report.case.case_number if report.case else "N/A",
+            "classification": getattr(report.case, "classification", "LAW ENFORCEMENT SENSITIVE"),
+            "version": report.version,
+            "title": report.title,
+            "executive_summary": report.executive_summary,
+            "attack_summary": report.attack_summary,
+            "report_hash": report.report_hash,
+            "integrity_status": report.integrity_status,
+            "generated_by": report.generated_by,
+            "generated_at": report.generated_at,
+            "sections": report.sections or {},
+            "provenance": report.provenance or {},
+            "report_metadata": report.report_metadata or {},
+            "full_report_markdown": report.full_report_markdown or ""
+        }
+
+        if fmt in ["pdf"]:
+            from backend.app.services.document_generators import ForensicReportDocumentGenerator
+            content = ForensicReportDocumentGenerator.generate_pdf(canonical_data)
+            return content, "application/pdf", f"ADFIP_{safe_name}_report_v{report.version}.pdf"
+
+        elif fmt in ["docx"]:
+            from backend.app.services.document_generators import ForensicReportDocumentGenerator
+            content = ForensicReportDocumentGenerator.generate_docx(canonical_data)
+            return content, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", f"ADFIP_{safe_name}_report_v{report.version}.docx"
+
+        elif fmt in ["json"]:
+            content = json.dumps(canonical_data, indent=2, default=str)
+            return content, "application/json", f"ADFIP_{safe_name}_report_v{report.version}.json"
         else:
-            return report.full_report_markdown, "text/markdown; charset=utf-8", f"ADFIR_{safe_name}_report_v{report.version}.md"
+            return report.full_report_markdown, "text/markdown; charset=utf-8", f"ADFIP_{safe_name}_report_v{report.version}.md"

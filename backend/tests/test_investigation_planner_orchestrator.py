@@ -89,7 +89,11 @@ def test_planner_deterministic_disk():
     assert task["dependencies"] == []
 
 
-def test_planner_deterministic_memory():
+def test_planner_deterministic_memory(monkeypatch):
+    from forensic_tools.registry import tool_registry
+    vol = tool_registry.get_tool("volatility3")
+    if vol:
+        monkeypatch.setattr(vol, "is_available", True)
     planner = InvestigationPlanner()
     evidence = [
         {"id": "ev-mem-1", "name": "mem.dmp", "evidence_type": "memory_dump", "size_bytes": 2048}
@@ -126,7 +130,11 @@ def test_planner_deterministic_log():
     assert task["status"] == "PLANNED"
 
 
-def test_planner_deterministic_malware():
+def test_planner_deterministic_malware(monkeypatch):
+    from forensic_tools.registry import tool_registry
+    yara = tool_registry.get_tool("yara")
+    if yara:
+        monkeypatch.setattr(yara, "is_available", True)
     planner = InvestigationPlanner()
     evidence = [
         {"id": "ev-mal-1", "name": "sample.exe", "evidence_type": "executable", "size_bytes": 512}
@@ -165,7 +173,7 @@ def test_planner_unknown_evidence():
 
 def test_plan_persistence_and_versioning():
     case_id = _create_case(client, "Persistence Case")
-    tmp_path = _create_temp_file(content=b"EVIDENCE_DATA_PERSIST", suffix=".raw")
+    tmp_path = _create_temp_file(content=b"EVIDENCE_DATA_PERSIST", suffix=".img")
     try:
         intake_res = client.post(
             f"/api/investigations/{case_id}/evidence/intake",
@@ -198,7 +206,7 @@ def test_plan_persistence_and_versioning():
 
 def test_plan_retrieval():
     case_id = _create_case(client, "Retrieval Case")
-    tmp_path = _create_temp_file(content=b"EVIDENCE_DATA_RETRIEVAL", suffix=".raw")
+    tmp_path = _create_temp_file(content=b"EVIDENCE_DATA_RETRIEVAL", suffix=".img")
     try:
         client.post(
             f"/api/investigations/{case_id}/evidence/intake",
@@ -219,7 +227,7 @@ def test_plan_retrieval():
 
 def test_plan_tasks_endpoint():
     case_id = _create_case(client, "Tasks Endpoint Case")
-    tmp_path = _create_temp_file(content=b"EVIDENCE_DATA_TASKS", suffix=".raw")
+    tmp_path = _create_temp_file(content=b"EVIDENCE_DATA_TASKS", suffix=".img")
     try:
         client.post(
             f"/api/investigations/{case_id}/evidence/intake",
@@ -246,18 +254,18 @@ def test_plan_tasks_endpoint():
 def test_orchestrator_vault_enforcement():
     """Orchestrator rejects evidence whose storage_path is not inside the evidence vault."""
     case_id = _create_case(client, "Vault Enforcement Case")
-    tmp_path = _create_temp_file(content=b"ROGUE_UNVAULTED_DATA", suffix=".bin")
+    tmp_path = _create_temp_file(content=b"ROGUE_UNVAULTED_DATA", suffix=".raw")
     try:
         with SessionLocal() as db:
             # Manually inject an unvaulted evidence item
             unvaulted = EvidenceItem(
                 case_id=case_id,
-                name="unvaulted.bin",
+                name="unvaulted.raw",
                 original_path=tmp_path,
                 storage_path=tmp_path,  # points to original source
                 sha256=hashlib.sha256(b"ROGUE_UNVAULTED_DATA").hexdigest(),
                 size_bytes=len(b"ROGUE_UNVAULTED_DATA"),
-                evidence_type="executable",
+                evidence_type="disk_image",
                 integrity_status="VERIFIED",
             )
             db.add(unvaulted)
@@ -290,7 +298,7 @@ def test_orchestrator_vault_enforcement():
 def test_orchestrator_pre_analysis_tamper_detection():
     """If evidence is tampered in the vault before orchestrator runs, pre-analysis gate halts task."""
     case_id = _create_case(client, "Pre-Analysis Tamper Case")
-    tmp_path = _create_temp_file(content=b"ORIGINAL_CLEAN_DATA", suffix=".exe")
+    tmp_path = _create_temp_file(content=b"ORIGINAL_CLEAN_DATA", suffix=".img")
     try:
         intake_res = client.post(
             f"/api/investigations/{case_id}/evidence/intake",
@@ -340,62 +348,60 @@ def test_orchestrator_pre_analysis_tamper_detection():
 def test_orchestrator_execution_and_persistence():
     """Real evidence analysis produces persisted ToolExecution, ExecutionArtifact, and Finding rows."""
     case_id = _create_case(client, "Execution Persistence Case")
+    disk_path = str(Path(__file__).resolve().parent.parent.parent / "tests" / "fixtures" / "disk" / "synthetic_disk.img")
+    assert os.path.exists(disk_path)
 
-    # Use real marker token that matches adfir_test_rules.yar
-    marker_content = b"Synthetic diagnostic artifact Token: ADFIR_SYNTHETIC_TEST_TOKEN_ALPHA_77"
-    tmp_path = _create_temp_file(content=marker_content, suffix=".exe")
-    try:
-        intake_res = client.post(
-            f"/api/investigations/{case_id}/evidence/intake",
-            json={"path": tmp_path},
+    intake_res = client.post(
+        f"/api/investigations/{case_id}/evidence/intake",
+        json={"path": disk_path},
+    )
+    assert intake_res.status_code == 201
+    ev_data = intake_res.json()
+    evidence_id = ev_data["id"]
+
+    # Generate plan
+    plan_res = client.post(f"/api/investigations/{case_id}/plan")
+    assert plan_res.status_code == 200
+
+    # Execute plan
+    exec_res = client.post(f"/api/investigations/{case_id}/plan/execute")
+    assert exec_res.status_code == 200
+    summary = exec_res.json()
+
+    assert summary["status"] in ["COMPLETED", "PARTIALLY_COMPLETED"]
+    assert summary["tasks_succeeded"] >= 1
+
+    with SessionLocal() as db:
+        # 1. Verify ToolExecution row
+        execs = db.query(ToolExecution).filter(ToolExecution.case_id == case_id).all()
+        assert len(execs) >= 1
+        assert execs[0].status == "COMPLETED"
+        assert execs[0].tool_id == "sleuthkit_fls"
+
+        # 2. Verify ExecutionArtifact row
+        artifacts = (
+            db.query(ExecutionArtifact).filter(ExecutionArtifact.case_id == case_id).all()
         )
-        assert intake_res.status_code == 201
-        ev_data = intake_res.json()
-        evidence_id = ev_data["id"]
+        assert len(artifacts) >= 1
+        assert artifacts[0].evidence_id == evidence_id
 
-        # Generate plan
-        client.post(f"/api/investigations/{case_id}/plan")
+        # 3. Verify Finding row
+        findings = db.query(Finding).filter(Finding.case_id == case_id).all()
+        assert len(findings) >= 1
+        assert findings[0].evidence_id == evidence_id
+        assert findings[0].tool == "SleuthKit"
 
-        # Execute plan
-        exec_res = client.post(f"/api/investigations/{case_id}/plan/execute")
-        assert exec_res.status_code == 200
-        summary = exec_res.json()
-
-        assert summary["status"] in ["COMPLETED", "PARTIALLY_COMPLETED"]
-        assert summary["tasks_succeeded"] >= 1
-
-        with SessionLocal() as db:
-            # 1. Verify ToolExecution row
-            execs = db.query(ToolExecution).filter(ToolExecution.case_id == case_id).all()
-            assert len(execs) >= 1
-            assert execs[0].status == "COMPLETED"
-
-            # 2. Verify ExecutionArtifact row
-            artifacts = (
-                db.query(ExecutionArtifact).filter(ExecutionArtifact.case_id == case_id).all()
+        # 4. Verify post-analysis custody event
+        custody = (
+            db.query(ChainOfCustodyEvent)
+            .filter(
+                ChainOfCustodyEvent.evidence_id == evidence_id,
+                ChainOfCustodyEvent.event_type == "INTEGRITY_VERIFIED_POST_ANALYSIS",
             )
-            assert len(artifacts) >= 1
-            assert artifacts[0].evidence_id == evidence_id
-
-            # 3. Verify Finding row
-            findings = db.query(Finding).filter(Finding.case_id == case_id).all()
-            assert len(findings) >= 1
-            assert findings[0].evidence_id == evidence_id
-            assert findings[0].tool == "YARA"
-
-            # 4. Verify post-analysis custody event
-            custody = (
-                db.query(ChainOfCustodyEvent)
-                .filter(
-                    ChainOfCustodyEvent.evidence_id == evidence_id,
-                    ChainOfCustodyEvent.event_type == "INTEGRITY_VERIFIED_POST_ANALYSIS",
-                )
-                .first()
-            )
-            assert custody is not None
-            assert "Zero bytes altered" in custody.description
-    finally:
-        _cleanup_file(tmp_path)
+            .first()
+        )
+        assert custody is not None
+        assert "Zero bytes altered" in custody.description
 
 
 def test_orchestrator_dependency_failure_cancels_subsequent_task():
@@ -453,122 +459,118 @@ def test_orchestrator_dependency_failure_cancels_subsequent_task():
 def test_v1_plan_execute_endpoint():
     """Verify the /api/v1/investigation/plan/{case_id}/execute endpoint works properly."""
     case_id = _create_case(client, "V1 Execute Case")
-    tmp_path = _create_temp_file(content=b"V1_EXECUTION_SAMPLE", suffix=".exe")
-    try:
-        client.post(
-            f"/api/investigations/{case_id}/evidence/intake",
-            json={"path": tmp_path},
-        )
-        # Generate plan via v1
-        v1_plan_res = client.post(f"/api/v1/investigation/plan/{case_id}")
-        assert v1_plan_res.status_code == 200
+    disk_path = str(Path(__file__).resolve().parent.parent.parent / "tests" / "fixtures" / "disk" / "synthetic_disk.img")
+    assert os.path.exists(disk_path)
 
-        # Execute plan via v1
-        v1_exec_res = client.post(f"/api/v1/investigation/plan/{case_id}/execute")
-        assert v1_exec_res.status_code == 200
-        data = v1_exec_res.json()
-        assert data["investigation_id"] == case_id
-        assert data["status"] in ["COMPLETED", "PARTIALLY_COMPLETED"]
-        assert data["tasks_executed"] >= 1
-    finally:
-        _cleanup_file(tmp_path)
+    client.post(
+        f"/api/investigations/{case_id}/evidence/intake",
+        json={"path": disk_path},
+    )
+    # Generate plan via v1
+    v1_plan_res = client.post(f"/api/v1/investigation/plan/{case_id}")
+    assert v1_plan_res.status_code == 200
+
+    # Execute plan via v1
+    v1_exec_res = client.post(f"/api/v1/investigation/plan/{case_id}/execute")
+    assert v1_exec_res.status_code == 200
+    data = v1_exec_res.json()
+    assert data["investigation_id"] == case_id
+    assert data["status"] in ["COMPLETED", "PARTIALLY_COMPLETED"]
+    assert data["tasks_executed"] >= 1
 
 
 def test_orchestrator_post_analysis_tamper_detection(monkeypatch):
     """If evidence is mutated during tool execution, post-analysis gate detects it immediately."""
     case_id = _create_case(client, "Post-Analysis Tamper Case")
-    tmp_path = _create_temp_file(content=b"UNMODIFIED_BEFORE_ANALYSIS", suffix=".exe")
-    try:
-        intake_res = client.post(
-            f"/api/investigations/{case_id}/evidence/intake",
-            json={"path": tmp_path},
-        )
-        assert intake_res.status_code == 201
-        ev_data = intake_res.json()
-        storage_path = ev_data["storage_path"]
-        evidence_id = ev_data["id"]
+    disk_path = str(Path(__file__).resolve().parent.parent.parent / "tests" / "fixtures" / "disk" / "synthetic_disk.img")
+    assert os.path.exists(disk_path)
 
-        client.post(f"/api/investigations/{case_id}/plan")
+    intake_res = client.post(
+        f"/api/investigations/{case_id}/evidence/intake",
+        json={"path": disk_path},
+    )
+    assert intake_res.status_code == 201
+    ev_data = intake_res.json()
+    storage_path = ev_data["storage_path"]
+    evidence_id = ev_data["id"]
 
-        from investigation.orchestrator.orchestrator import InvestigationOrchestrator
-        from backend.app.api.endpoints import investigations as inv_mod
+    client.post(f"/api/investigations/{case_id}/plan")
 
-        # Monkeypatch malware_agent.analyze to mutate the file during analysis
-        orig_analyze = inv_mod.malware_agent.analyze
+    from investigation.orchestrator.orchestrator import InvestigationOrchestrator
+    from backend.app.api.endpoints import investigations as inv_mod
 
-        def rogue_analyze(evidence_item, parameters=None):
-            # Mutate vault file directly during analysis
-            sp = evidence_item.get("storage_path")
-            remove_os_read_only(Path(sp))
-            with open(sp, "ab") as f:
-                f.write(b"_ROGUE_BYTE_MUTATION")
-            return orig_analyze(evidence_item, parameters)
+    # Monkeypatch disk_agent.analyze to mutate the file during analysis
+    orig_analyze = inv_mod.disk_agent.analyze
 
-        monkeypatch.setattr(inv_mod.malware_agent, "analyze", rogue_analyze)
+    def rogue_analyze(evidence_item, parameters=None):
+        # Mutate vault file directly during analysis
+        sp = evidence_item.get("storage_path")
+        remove_os_read_only(Path(sp))
+        with open(sp, "ab") as f:
+            f.write(b"_ROGUE_BYTE_MUTATION")
+        return orig_analyze(evidence_item, parameters)
 
-        # Execution should raise 500 (RuntimeError from orchestrator)
-        exec_res = client.post(f"/api/investigations/{case_id}/plan/execute")
-        assert exec_res.status_code == 500
-        assert "CRITICAL: Evidence was modified during analysis" in exec_res.json()["detail"]
+    monkeypatch.setattr(inv_mod.disk_agent, "analyze", rogue_analyze)
 
-        with SessionLocal() as db:
-            ev = db.query(EvidenceItem).filter(EvidenceItem.id == evidence_id).first()
-            assert ev.integrity_status == "FAILED"
+    # Execution should raise 500 (RuntimeError from orchestrator)
+    exec_res = client.post(f"/api/investigations/{case_id}/plan/execute")
+    assert exec_res.status_code == 500
+    assert "CRITICAL: Evidence was modified during analysis" in exec_res.json()["detail"]
 
-            violation = (
-                db.query(ChainOfCustodyEvent)
-                .filter(
-                    ChainOfCustodyEvent.evidence_id == evidence_id,
-                    ChainOfCustodyEvent.event_type == "INTEGRITY_VIOLATION",
-                )
-                .first()
+    with SessionLocal() as db:
+        ev = db.query(EvidenceItem).filter(EvidenceItem.id == evidence_id).first()
+        assert ev.integrity_status == "FAILED"
+
+        violation = (
+            db.query(ChainOfCustodyEvent)
+            .filter(
+                ChainOfCustodyEvent.evidence_id == evidence_id,
+                ChainOfCustodyEvent.event_type == "INTEGRITY_VIOLATION",
             )
-            assert violation is not None
-            assert "Post-analysis tampering detected" in violation.description
-    finally:
-        _cleanup_file(tmp_path)
+            .first()
+        )
+        assert violation is not None
+        assert "Post-analysis tampering detected" in violation.description
 
 
 def test_orchestrator_plan_lifecycle_and_idempotency():
     """Verify plan status transitions to COMPLETED with timestamps, and subsequent execution is idempotent."""
     case_id = _create_case(client, "Lifecycle Case")
-    marker_content = b"Synthetic diagnostic artifact Token: ADFIR_SYNTHETIC_TEST_TOKEN_ALPHA_77"
-    tmp_path = _create_temp_file(content=marker_content, suffix=".exe")
-    try:
-        client.post(
-            f"/api/investigations/{case_id}/evidence/intake",
-            json={"path": tmp_path},
-        )
-        plan_res = client.post(f"/api/investigations/{case_id}/plan")
-        assert plan_res.status_code == 200
-        plan_data = plan_res.json()
-        assert plan_data["status"] == "PLANNED"
-        assert plan_data["completed_at"] is None
+    disk_path = str(Path(__file__).resolve().parent.parent.parent / "tests" / "fixtures" / "disk" / "synthetic_disk.img")
+    assert os.path.exists(disk_path)
 
-        # Execute
-        exec_res = client.post(f"/api/investigations/{case_id}/plan/execute")
-        assert exec_res.status_code == 200
-        summary = exec_res.json()
-        assert summary["status"] in ["COMPLETED", "PARTIALLY_COMPLETED"]
+    client.post(
+        f"/api/investigations/{case_id}/evidence/intake",
+        json={"path": disk_path},
+    )
+    plan_res = client.post(f"/api/investigations/{case_id}/plan")
+    assert plan_res.status_code == 200
+    plan_data = plan_res.json()
+    assert plan_data["status"] == "PLANNED"
+    assert plan_data["completed_at"] is None
 
-        with SessionLocal() as db:
-            plan = db.query(InvestigationPlan).filter(InvestigationPlan.id == plan_data["id"]).first()
-            assert plan.status in ["COMPLETED", "PARTIALLY_COMPLETED"]
-            assert plan.completed_at is not None
+    # Execute
+    exec_res = client.post(f"/api/investigations/{case_id}/plan/execute")
+    assert exec_res.status_code == 200
+    summary = exec_res.json()
+    assert summary["status"] in ["COMPLETED", "PARTIALLY_COMPLETED"]
 
-            for t in plan.tasks:
-                if t["status"] == "COMPLETED":
-                    assert t["started_at"] is not None
-                    assert t["completed_at"] is not None
-                    assert t["execution_id"] is not None
+    with SessionLocal() as db:
+        plan = db.query(InvestigationPlan).filter(InvestigationPlan.id == plan_data["id"]).first()
+        assert plan.status in ["COMPLETED", "PARTIALLY_COMPLETED"]
+        assert plan.completed_at is not None
 
-        # Second execute: idempotent, skips already COMPLETED tasks
-        exec_res2 = client.post(f"/api/investigations/{case_id}/plan/execute")
-        assert exec_res2.status_code == 200
-        summary2 = exec_res2.json()
-        assert summary2["status"] == summary["status"]
-    finally:
-        _cleanup_file(tmp_path)
+        for t in plan.tasks:
+            if t["status"] == "COMPLETED":
+                assert t["started_at"] is not None
+                assert t["completed_at"] is not None
+                assert t["execution_id"] is not None
+
+    # Second execute: idempotent, skips already COMPLETED tasks
+    exec_res2 = client.post(f"/api/investigations/{case_id}/plan/execute")
+    assert exec_res2.status_code == 200
+    summary2 = exec_res2.json()
+    assert summary2["status"] == summary["status"]
 
 
 # -----------------------------------------------------------------------------
@@ -620,6 +622,11 @@ def test_exiftool_genuine_end_to_end_execution():
     - Real metadata artifact and candidate finding persisted
     - Cryptographic pre- and post-analysis gates verified
     """
+    from forensic_tools.registry import tool_registry
+    tool = tool_registry.get_tool("exiftool")
+    if not tool or not tool.is_available:
+        pytest.skip("Native exiftool binary is not installed on host platform")
+
     case_id = _create_case(client, "ExifTool Test Case")
     sample_path = str(Path(__file__).resolve().parent.parent.parent / "tests" / "fixtures" / "sample-evidence.txt")
     assert os.path.exists(sample_path)
@@ -689,7 +696,7 @@ def test_exiftool_genuine_end_to_end_execution():
         assert finding.tool == "ExifTool"
         assert finding.agent == "DiskAgent"
         assert finding.finding_type == "file_metadata"
-        assert finding.confidence == 0.90
+        assert finding.confidence is None  # Unscored observation: metadata extraction does not establish confidence without corroboration
 
         # Verify Pre/Post Cryptographic Integrity Gates in Custody
         custody_events = (
@@ -706,6 +713,11 @@ def test_exiftool_genuine_end_to_end_execution():
 
 def test_tool_execution_truthfulness_yara():
     """Verify YARA ToolExecution records exact tool_id='yara' and command_args=['yara', rule, path]."""
+    from forensic_tools.registry import tool_registry
+    tool = tool_registry.get_tool("yara")
+    if not tool or not tool.is_available:
+        pytest.skip("Native yara binary is not installed on host platform")
+
     case_id = _create_case(client, "Truthful YARA Case")
     marker_content = b"Synthetic diagnostic artifact Token: ADFIR_SYNTHETIC_TEST_TOKEN_ALPHA_77"
     tmp_path = _create_temp_file(content=marker_content, suffix=".exe")
@@ -739,34 +751,32 @@ def test_tool_execution_truthfulness_yara():
 def test_tool_divergence_prevention(monkeypatch):
     """Verify orchestrator fails execution and raises error if agent returns tool provenance diverging from planned tool."""
     case_id = _create_case(client, "Divergence Case")
-    marker_content = b"Synthetic diagnostic artifact Token: ADFIR_SYNTHETIC_TEST_TOKEN_ALPHA_77"
-    tmp_path = _create_temp_file(content=marker_content, suffix=".exe")
-    try:
-        res = client.post(
-            f"/api/investigations/{case_id}/evidence/intake",
-            json={"path": tmp_path},
-        )
-        assert res.status_code == 201
+    disk_path = str(Path(__file__).resolve().parent.parent.parent / "tests" / "fixtures" / "disk" / "synthetic_disk.img")
+    assert os.path.exists(disk_path)
 
-        client.post(f"/api/investigations/{case_id}/plan")
+    res = client.post(
+        f"/api/investigations/{case_id}/evidence/intake",
+        json={"path": disk_path},
+    )
+    assert res.status_code == 201
 
-        import backend.app.api.endpoints.investigations as inv_mod
-        orig_analyze = inv_mod.malware_agent.analyze
+    client.post(f"/api/investigations/{case_id}/plan")
 
-        def divergent_analyze(evidence_item, parameters=None):
-            result = orig_analyze(evidence_item, parameters)
-            # Divergence: planned was YARA, but simulate rogue tool substitution
-            result["provenance"]["tool"] = "RogueScanner"
-            return result
+    import backend.app.api.endpoints.investigations as inv_mod
+    orig_analyze = inv_mod.disk_agent.analyze
 
-        monkeypatch.setattr(inv_mod.malware_agent, "analyze", divergent_analyze)
+    def divergent_analyze(evidence_item, parameters=None):
+        result = orig_analyze(evidence_item, parameters)
+        # Divergence: planned was SleuthKit, but simulate rogue tool substitution
+        result["provenance"]["tool"] = "RogueScanner"
+        return result
 
-        exec_res = client.post(f"/api/investigations/{case_id}/plan/execute")
-        assert exec_res.status_code == 200
-        data = exec_res.json()
-        assert data["tasks_failed"] == 1
-        assert "Forensic tool divergence detected" in data["tasks"][0]["error_message"]
-    finally:
-        _cleanup_file(tmp_path)
+    monkeypatch.setattr(inv_mod.disk_agent, "analyze", divergent_analyze)
+
+    exec_res = client.post(f"/api/investigations/{case_id}/plan/execute")
+    assert exec_res.status_code == 200
+    data = exec_res.json()
+    assert data["tasks_failed"] == 1
+    assert "Forensic tool divergence detected" in data["tasks"][0]["error_message"]
 
 

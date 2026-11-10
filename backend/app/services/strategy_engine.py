@@ -809,6 +809,10 @@ class InvestigationStrategyEngine:
         questions = EvidenceDecisionEngine.generate_investigative_questions(case.objective, case.case_type)
         evaluated_questions = EvidenceDecisionEngine.evaluate_evidence_feasibility(questions, evidence_profiles, tool_reg)
 
+        # Stage A.2: Load Investigation Requirements (Part 6 & 7)
+        req_data = EvidenceDecisionEngine.get_case_requirements(db, case_id)
+        requirements = [r for r in req_data.get("requirements", []) if r.get("approval_status") == "APPROVED"]
+
         # Stage B: Select Capabilities
         selected_caps = CapabilitySelector.select_capabilities(
             db,
@@ -865,6 +869,26 @@ class InvestigationStrategyEngine:
                 is_blocked=(status.startswith("BLOCKED"))
             )
 
+            # Match against investigator requirements (Part 6 & 7)
+            matched_req = None
+            for r in requirements:
+                r_ev_ids = r.get("selected_evidence_ids") or []
+                if not r_ev_ids or ev_id in r_ev_ids:
+                    r_cat = (r.get("category") or "").upper()
+                    if (
+                        ("AUTH" in r_cat and "Windows" in tool_res["agent_name"]) or
+                        ("PROCESS" in r_cat and "Memory" in tool_res["agent_name"]) or
+                        ("MALWARE" in r_cat and "Malware" in tool_res["agent_name"]) or
+                        ("FILE" in r_cat and "Disk" in tool_res["agent_name"]) or
+                        ("METADATA" in r_cat and "Disk" in tool_res["agent_name"]) or
+                        ("GENERAL" in r_cat or "CUSTOM" in r_cat)
+                    ):
+                        matched_req = r
+                        break
+
+            req_id = matched_req["id"] if matched_req else None
+            req_title = matched_req["title"] if matched_req else None
+
             tasks_raw.append({
                 "task_key": task_key,
                 "capability_id": cap_id,
@@ -881,11 +905,15 @@ class InvestigationStrategyEngine:
                 "expected_outputs": cap["expected_outputs"],
                 "resource_requirements": cap["resource_profile"],
                 "estimated_cost": {"cpu": cap["resource_profile"].get("cpu", "medium"), "ram": cap["resource_profile"].get("ram", "medium")},
+                "requirement_id": req_id,
+                "requirement_title": req_title,
                 "rationale": {
                     "capability_name": cap["name"],
                     "selection_reason": cap["relevance_reason"],
                     "priority_explanation": prio_res["rationale"],
-                    "tool_resolution": tool_res
+                    "tool_resolution": tool_res,
+                    "requirement_id": req_id,
+                    "requirement_title": req_title,
                 },
                 "blocking_reason": blocking_reason,
                 "dependencies": dep_keys
@@ -937,6 +965,10 @@ class InvestigationStrategyEngine:
             f"Executable Investigation Strategy v{new_version}: {len(ordered_tasks)} task(s) planned across "
             f"{len(evidence_profiles)} evidence item(s). System Resource Status: {system_res['ram_available_mb']}MB RAM free."
         )
+
+        # Retain investigator requirements in resource snapshot
+        system_res["investigation_requirements"] = req_data.get("requirements", [])
+        system_res["global_scope"] = req_data.get("global_scope", {})
 
         plan_record = InvestigationPlan(
             id=plan_id,

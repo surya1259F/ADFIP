@@ -1,11 +1,12 @@
 import html
+import os
 import urllib.parse
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status, UploadFile, File
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, Response
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -15,6 +16,7 @@ from backend.app.core.security import (
     hash_password,
     verify_password,
     create_access_token,
+    verify_access_token,
     revoke_access_token,
     get_current_active_user,
     get_current_user_optional,
@@ -358,6 +360,10 @@ async def upload_user_avatar(
     ext = detected_format
     avatar_dir = settings.DATA_DIR / "avatars"
     avatar_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(avatar_dir, 0o700)
+    except Exception:
+        pass
 
     for old_ext in ("png", "jpg", "jpeg", "webp"):
         old_file = avatar_dir / f"{current_user.id}.{old_ext}"
@@ -370,9 +376,13 @@ async def upload_user_avatar(
     avatar_path = avatar_dir / f"{current_user.id}.{ext}"
     with open(avatar_path, "wb") as f:
         f.write(content)
+    try:
+        os.chmod(avatar_path, 0o600)
+    except Exception:
+        pass
 
     timestamp = int(datetime.now(timezone.utc).timestamp())
-    current_user.avatar_url = f"/api/v1/auth/profile/avatar?t={timestamp}"
+    current_user.avatar_url = f"/api/v1/auth/users/{current_user.id}/avatar?t={timestamp}"
     db.commit()
     db.refresh(current_user)
 
@@ -388,42 +398,113 @@ async def upload_user_avatar(
     return current_user
 
 
+def _render_avatar_svg(name_or_email: str) -> Response:
+    raw = (name_or_email or "Investigator").strip()
+    parts = raw.split()
+    if len(parts) >= 2:
+        initials = (parts[0][0] + parts[1][0]).upper()
+    else:
+        initials = raw[:2].upper()
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="64" fill="#1e293b"/>
+  <text x="50%" y="54%" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="46" font-weight="700" fill="#f8fafc" dominant-baseline="middle" text-anchor="middle">{initials}</text>
+</svg>"""
+    return Response(
+        content=svg,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "private, max-age=300"}
+    )
+
+
 @router.get("/profile/avatar")
 def get_user_avatar(
-    current_user: Optional[User] = Depends(get_current_user_optional)
+    request: Request,
+    token: Optional[str] = Query(None),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    db: Session = Depends(get_db)
 ):
     """
-    Retrieves the current investigator's avatar image.
+    Retrieves the current investigator's avatar image. Supports private Cache-Control and ETag.
     """
+    if not current_user and token:
+        payload = verify_access_token(token)
+        if payload and payload.get("sub"):
+            current_user = db.query(User).filter(User.id == payload["sub"]).first()
+
     if not current_user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated.")
+        return _render_avatar_svg("Investigator")
 
-    avatar_dir = settings.DATA_DIR / "avatars"
-    for ext in ("png", "jpg", "jpeg", "webp"):
-        file_path = avatar_dir / f"{current_user.id}.{ext}"
-        if file_path.exists():
-            media_type = "image/png" if ext == "png" else "image/webp" if ext == "webp" else "image/jpeg"
-            return FileResponse(path=str(file_path), media_type=media_type)
-
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Avatar image not found.")
+    return get_user_avatar_by_id(
+        user_id=current_user.id,
+        request=request,
+        token=token,
+        db=db,
+        current_user=current_user,
+    )
 
 
 @router.get("/users/{user_id}/avatar")
 def get_user_avatar_by_id(
     user_id: str,
-    db: Session = Depends(get_db)
+    request: Request,
+    token: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     """
-    Retrieves avatar image for a given user ID.
+    Retrieves avatar image for a given user ID without requiring Authorization headers in browser <img> tags.
+    Supports HTTP ETag and 304 Not Modified caching.
     """
-    avatar_dir = settings.DATA_DIR / "avatars"
-    for ext in ("png", "jpg", "jpeg", "webp"):
-        file_path = avatar_dir / f"{user_id}.{ext}"
-        if file_path.exists():
-            media_type = "image/png" if ext == "png" else "image/webp" if ext == "webp" else "image/jpeg"
-            return FileResponse(path=str(file_path), media_type=media_type)
+    if not current_user and token:
+        payload = verify_access_token(token)
+        if payload and payload.get("sub"):
+            current_user = db.query(User).filter(User.id == payload["sub"]).first()
 
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Avatar image not found.")
+    if not current_user:
+        cookie_token = request.cookies.get("adfip_token") or request.cookies.get("access_token")
+        if cookie_token:
+            payload = verify_access_token(cookie_token)
+            if payload and payload.get("sub"):
+                current_user = db.query(User).filter(User.id == payload["sub"]).first()
+
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required to view avatar.",
+        )
+
+    # Sanitize user_id to prevent path traversal
+    safe_user_id = os.path.basename(user_id.strip())
+    avatar_dir = settings.DATA_DIR / "avatars"
+
+    for ext in ("png", "jpg", "jpeg", "webp"):
+        file_path = avatar_dir / f"{safe_user_id}.{ext}"
+        if file_path.exists() and file_path.is_file():
+            media_type = "image/png" if ext == "png" else "image/webp" if ext == "webp" else "image/jpeg"
+            mtime = os.path.getmtime(file_path)
+            file_size = os.path.getsize(file_path)
+            etag = f'W/"{safe_user_id}-{int(mtime)}-{file_size}"'
+
+            if_none_match = request.headers.get("if-none-match")
+            if if_none_match and if_none_match.strip() == etag:
+                return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={
+                    "ETag": etag,
+                    "Cache-Control": "private, max-age=300",
+                })
+
+            return FileResponse(
+                path=str(file_path),
+                media_type=media_type,
+                headers={
+                    "ETag": etag,
+                    "Cache-Control": "private, max-age=300",
+                }
+            )
+
+    # If file not found, check user record to render clean SVG initials
+    user = db.query(User).filter(User.id == safe_user_id).first()
+    label = user.name or user.email if user else "Investigator"
+    return _render_avatar_svg(label)
 
 
 @router.delete("/profile/avatar", response_model=UserResponse)
@@ -473,6 +554,15 @@ def get_google_oauth_status():
         client_id_configured=bool(settings.GOOGLE_CLIENT_ID and settings.GOOGLE_CLIENT_ID.strip()),
         redirect_uri=settings.EFFECTIVE_GOOGLE_REDIRECT_URI,
     )
+
+
+@router.get("/google/diagnostics", status_code=status.HTTP_200_OK)
+def get_google_oauth_diagnostics():
+    """
+    Performs live DNS resolution and HTTPS connectivity checks to all Google OAuth endpoints.
+    Safe diagnostic endpoint; exposes zero secrets or credentials.
+    """
+    return GoogleOAuthService.test_connectivity()
 
 
 def make_secure_html_response(content: str, status_code: int = 200) -> HTMLResponse:

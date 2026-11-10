@@ -43,14 +43,19 @@ export const reportsService = {
     return res.data;
   },
 
-  export: async (caseId: string, reportId: string, format: 'markdown' | 'json' = 'markdown'): Promise<{ data: string; filename: string }> => {
+  export: async (caseId: string, reportId: string, format: 'markdown' | 'json' | 'pdf' | 'docx' = 'markdown'): Promise<{ data: any; filename: string }> => {
+    const isBinary = format === 'pdf' || format === 'docx';
     const res = await apiClient.get(`/cases/${caseId}/reports/${reportId}/export`, {
       params: { format },
-      responseType: format === 'json' ? 'json' : 'text',
+      responseType: isBinary ? 'blob' : (format === 'json' ? 'json' : 'text'),
     });
     const disposition = String(res.headers['content-disposition'] || '');
     const match = disposition.match(/filename="?([^"]+)"?/);
-    const filename = match ? match[1] : `report_${reportId}.${format === 'json' ? 'json' : 'md'}`;
-    return { data: typeof res.data === 'string' ? res.data : JSON.stringify(res.data, null, 2), filename };
+    const ext = format === 'markdown' ? 'md' : format;
+    const filename = match ? match[1] : `report_${reportId}.${ext}`;
+    const data = isBinary
+      ? res.data
+      : (typeof res.data === 'string' ? res.data : JSON.stringify(res.data, null, 2));
+    return { data, filename };
   },
 };

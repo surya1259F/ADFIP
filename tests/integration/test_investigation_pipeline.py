@@ -40,7 +40,7 @@ def test_complete_evidence_investigation_pipeline():
     inv_id = inv_data["id"]
 
     # 2. Intake Synthetic Evidence
-    fixture_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "fixtures", "sample-evidence.txt"))
+    fixture_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "fixtures", "disk", "synthetic_disk.img"))
     intake_res = client.post(f"/api/investigations/{inv_id}/evidence/intake", json={
         "path": fixture_path,
         "notes": "Acquired synthetic disk artifact"

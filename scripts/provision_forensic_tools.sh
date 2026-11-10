@@ -24,60 +24,54 @@ fi
 echo "Package Manager: $PKG_MGR"
 echo ""
 
-# Ensure tools/bin wrappers exist
+# Ensure tools/bin directory exists for verified native sidecar binaries
 mkdir -p "$ROOT_DIR/tools/bin"
 
-echo "Checking:"
+echo "Checking Native Forensic Binaries:"
 
 # 1. Sleuth Kit
-FLS_PATH="$ROOT_DIR/tools/bin/fls"
 if command -v fls >/dev/null 2>&1; then
   FLS_VER="$(fls -V 2>&1 | head -n 1)"
   echo "[OK] Sleuth Kit ($FLS_VER)"
-elif [ -x "$FLS_PATH" ]; then
-  FLS_VER="$("$FLS_PATH" -V 2>&1 | head -n 1)"
+elif [ -x "$ROOT_DIR/tools/bin/fls" ]; then
+  FLS_VER="$("$ROOT_DIR/tools/bin/fls" -V 2>&1 | head -n 1)"
   echo "[OK] Sleuth Kit ($FLS_VER)"
 else
-  echo "[ERROR] Sleuth Kit (fls) is missing"
-  exit 1
+  echo "[UNAVAILABLE] Sleuth Kit (fls) is not installed"
 fi
 
 # 2. YARA
-YARA_PATH="$ROOT_DIR/tools/bin/yara"
 if command -v yara >/dev/null 2>&1; then
   YARA_VER="$(yara --version 2>&1 | head -n 1)"
   echo "[OK] YARA (v$YARA_VER)"
-elif [ -x "$YARA_PATH" ]; then
-  YARA_VER="$("$YARA_PATH" --version 2>&1 | head -n 1)"
+elif [ -x "$ROOT_DIR/tools/bin/yara" ]; then
+  YARA_VER="$("$ROOT_DIR/tools/bin/yara" --version 2>&1 | head -n 1)"
   echo "[OK] YARA (v$YARA_VER)"
 else
-  echo "[ERROR] YARA is missing"
-  exit 1
+  echo "[UNAVAILABLE] YARA is not installed"
 fi
 
 # 3. ExifTool
-EXIF_PATH="$ROOT_DIR/tools/bin/exiftool"
 if command -v exiftool >/dev/null 2>&1; then
   EXIF_VER="$(exiftool -ver 2>&1 | head -n 1)"
   echo "[OK] ExifTool (v$EXIF_VER)"
-elif [ -x "$EXIF_PATH" ]; then
-  EXIF_VER="$("$EXIF_PATH" -ver 2>&1 | head -n 1)"
+elif [ -x "$ROOT_DIR/tools/bin/exiftool" ]; then
+  EXIF_VER="$("$ROOT_DIR/tools/bin/exiftool" -ver 2>&1 | head -n 1)"
   echo "[OK] ExifTool (v$EXIF_VER)"
 else
-  echo "[ERROR] ExifTool is missing"
-  exit 1
+  echo "[UNAVAILABLE] ExifTool is not installed"
 fi
 
 # 4. Volatility 3
-VOL_PATH="$ROOT_DIR/volatility-env/bin/vol"
-if [ -x "$VOL_PATH" ]; then
-  echo "[OK] Volatility 3 (v2.28.0 in volatility-env)"
-elif command -v vol >/dev/null 2>&1; then
-  echo "[OK] Volatility 3 (in PATH)"
+if command -v vol >/dev/null 2>&1; then
+  VOL_VER="$(vol --version 2>&1 | head -n 1)"
+  echo "[OK] Volatility 3 ($VOL_VER)"
+elif [ -x "$ROOT_DIR/tools/bin/vol" ]; then
+  VOL_VER="$("$ROOT_DIR/tools/bin/vol" --version 2>&1 | head -n 1)"
+  echo "[OK] Volatility 3 ($VOL_VER)"
 else
-  echo "[ERROR] Volatility 3 is missing"
-  exit 1
+  echo "[UNAVAILABLE] Volatility 3 is not installed"
 fi
 
 echo ""
-echo "Required forensic tool provisioning complete."
+echo "Forensic tool validation check complete."

@@ -840,3 +840,19 @@ def test_report_export_markdown_and_json(db_session):
     assert "sections" in data
     assert "provenance" in data
     assert "report_hash" in data
+
+    # 3. Export as PDF
+    pdf_res = client.get(f"/api/v1/cases/{case.id}/reports/{report_id}/export?format=pdf", headers=headers)
+    assert pdf_res.status_code == 200
+    assert "application/pdf" in pdf_res.headers.get("content-type", "")
+    assert pdf_res.content.startswith(b"%PDF")
+    assert len(pdf_res.content) > 1000
+    assert ".pdf" in pdf_res.headers.get("content-disposition", "")
+
+    # 4. Export as DOCX
+    docx_res = client.get(f"/api/v1/cases/{case.id}/reports/{report_id}/export?format=docx", headers=headers)
+    assert docx_res.status_code == 200
+    assert "wordprocessingml.document" in docx_res.headers.get("content-type", "")
+    assert docx_res.content.startswith(b"PK")  # Standard OOXML Zip package signature
+    assert len(docx_res.content) > 5000
+    assert ".docx" in docx_res.headers.get("content-disposition", "")

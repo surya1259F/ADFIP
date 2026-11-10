@@ -5,6 +5,7 @@ import { FolderKanban, Sun, Moon } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { useUIStore } from '../../stores/uiStore';
 import { casesService } from '../../services/cases';
+import { UserAvatar } from '../ui/UserAvatar';
 
 const ROUTE_LABELS: Record<string, string> = {
   '': 'Home',
@@ -105,20 +106,7 @@ export const TopBar: React.FC = () => {
             to="/account"
             className="flex items-center gap-2 text-xs text-slate-600 hover:text-slate-900 transition-colors pl-1"
           >
-            {user.avatar_url ? (
-              <img
-                src={user.avatar_url}
-                alt={user.name || 'Investigator Avatar'}
-                className="w-6 h-6 rounded-full object-cover border border-stone-300"
-                onError={(e) => {
-                  (e.target as HTMLElement).style.display = 'none';
-                }}
-              />
-            ) : (
-              <div className="w-6 h-6 rounded-full bg-slate-800 text-white text-[10px] font-bold flex items-center justify-center">
-                {(user.name || user.email).slice(0, 2).toUpperCase()}
-              </div>
-            )}
+            <UserAvatar user={user} size="sm" />
             <span className="hidden md:block truncate max-w-[130px] font-medium">
               {user.name || user.email}
             </span>

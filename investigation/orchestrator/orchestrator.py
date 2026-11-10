@@ -31,6 +31,7 @@ from agents.malware.malware_agent import MalwareAgent
 from agents.log.log_agent import LogAgent
 from investigation.planner.planner import InvestigationPlanner
 from investigation.scheduler.scheduler import TaskScheduler
+from forensic_tools.registry import PlatformAwareToolRegistry, tool_registry as global_tool_registry
 
 
 class InvestigationOrchestrator:
@@ -50,6 +51,7 @@ class InvestigationOrchestrator:
         log_agent: Optional[LogAgent] = None,
         planner: Optional[InvestigationPlanner] = None,
         task_scheduler: Optional[TaskScheduler] = None,
+        registry: Optional[PlatformAwareToolRegistry] = None,
     ):
         self.disk_agent = disk_agent or DiskAgent()
         self.memory_agent = memory_agent or MemoryAgent()
@@ -57,6 +59,21 @@ class InvestigationOrchestrator:
         self.log_agent = log_agent or LogAgent()
         self.planner = planner or InvestigationPlanner()
         self.task_scheduler = task_scheduler or TaskScheduler()
+        self.registry = registry or global_tool_registry
+
+    def _get_agent(self, agent_type: Optional[str]):
+        if not agent_type:
+            return None
+        ag = agent_type.strip().lower()
+        if ag in ["diskagent", "disk_agent", "disk"]:
+            return self.disk_agent
+        elif ag in ["memoryagent", "memory_agent", "memory"]:
+            return self.memory_agent
+        elif ag in ["malwareagent", "malware_agent", "malware"]:
+            return self.malware_agent
+        elif ag in ["logagent", "log_agent", "log"]:
+            return self.log_agent
+        return None
 
     def get_plan_status(self, case_id: str, db: Session) -> Optional[Dict[str, Any]]:
         """
@@ -87,27 +104,42 @@ class InvestigationOrchestrator:
     ) -> Dict[str, Any]:
         """
         Executes a single scheduled task through pre/post integrity gates and forensic specialist agents.
+        Truthfully enforces:
+        - Task parameter validation: INVALID_TASK_CONFIGURATION
+        - Evidence compatibility: UNSUPPORTED_EVIDENCE_TYPE
+        - Authoritative tool availability: TOOL_UNAVAILABLE
+        - Binary version verification: TOOL_VALIDATION_FAILED
+        - Execution failure: EXECUTION_FAILED
+        - Successful execution: COMPLETED
         """
-        step_id = task["step_id"]
-
-        # Tool availability check
-        if not task.get("tool_available", True):
+        step_id = task.get("step_id") or task.get("task_id") or task.get("task_key")
+        if not step_id:
             return {
-                "status": "FAILED",
+                "status": "INVALID_TASK_CONFIGURATION",
                 "execution_id": None,
                 "artifacts_count": 0,
                 "findings_count": 0,
-                "error_message": f"Forensic tool '{task.get('tool')}' is not available on this platform.",
+                "error_message": "Task configuration is invalid: missing step_id identifier.",
             }
 
         evidence_id = task.get("evidence_id")
         if not evidence_id:
             return {
-                "status": "FAILED",
+                "status": "INVALID_TASK_CONFIGURATION",
                 "execution_id": None,
                 "artifacts_count": 0,
                 "findings_count": 0,
-                "error_message": "Task has no associated evidence ID.",
+                "error_message": "Task configuration is invalid: missing associated evidence ID.",
+            }
+
+        tool_name_raw = str(task.get("tool", "")).strip()
+        if not tool_name_raw:
+            return {
+                "status": "INVALID_TASK_CONFIGURATION",
+                "execution_id": None,
+                "artifacts_count": 0,
+                "findings_count": 0,
+                "error_message": "Task configuration is invalid: missing tool name.",
             }
 
         evidence = (
@@ -121,10 +153,10 @@ class InvestigationOrchestrator:
                 "execution_id": None,
                 "artifacts_count": 0,
                 "findings_count": 0,
-                "error_message": f"Evidence '{evidence_id}' not found for case.",
+                "error_message": f"Evidence '{evidence_id}' not found for case '{case_id}'.",
             }
 
-        # Mandatory Pre-Analysis Integrity Gate
+        # Mandatory Pre-Analysis Integrity Gate: Vault Path Enforcement
         is_valid_vault, err_msg = validate_vault_storage_path(
             evidence.storage_path, evidence.original_path
         )
@@ -154,6 +186,7 @@ class InvestigationOrchestrator:
                 "error_message": f"Pre-analysis vault check failed: {err_msg}",
             }
 
+        # Mandatory Pre-Analysis Cryptographic Integrity Gate
         target_path = str(Path(evidence.storage_path).resolve())
         try:
             current_hash, _ = calculate_sha256(target_path)
@@ -204,6 +237,55 @@ class InvestigationOrchestrator:
             destination_path=target_path,
             sha256=current_hash,
         )
+
+        # Validate agent type and evidence compatibility
+        agent_type = task.get("agent")
+        agent_inst = self._get_agent(agent_type)
+        if not agent_inst:
+            return {
+                "status": "INVALID_TASK_CONFIGURATION",
+                "execution_id": None,
+                "artifacts_count": 0,
+                "findings_count": 0,
+                "error_message": f"Unknown or unconfigured agent type: '{agent_type}'.",
+            }
+
+        if hasattr(agent_inst, "can_handle") and not agent_inst.can_handle(evidence.evidence_type):
+            return {
+                "status": "UNSUPPORTED_EVIDENCE_TYPE",
+                "execution_id": None,
+                "artifacts_count": 0,
+                "findings_count": 0,
+                "error_message": f"Evidence type '{evidence.evidence_type}' is not supported by {agent_type}.",
+            }
+
+        # Authoritative Tool Validation at Execution Boundary
+        tool_lookup = tool_name_raw.lower()
+        if tool_lookup in ["sleuthkit", "tsk"]:
+            tool_lookup = "sleuthkit"
+        elif tool_lookup in ["volatility3", "volatility", "vol"]:
+            tool_lookup = "volatility3"
+        elif tool_lookup in ["python-evtx", "python_evtx"]:
+            tool_lookup = "python-evtx"
+
+        is_valid, tool_def, val_err = self.registry.validate_tool_executable(tool_lookup)
+        if not is_valid or not tool_def:
+            err_str = str(val_err)
+            if any(k in err_str.lower() for k in ["not registered", "missing", "not executable", "authenticity", "not installed"]):
+                return {
+                    "status": "TOOL_UNAVAILABLE",
+                    "execution_id": None,
+                    "artifacts_count": 0,
+                    "findings_count": 0,
+                    "error_message": val_err or f"Forensic tool '{tool_name_raw}' is unavailable on this platform.",
+                }
+            return {
+                "status": "TOOL_VALIDATION_FAILED",
+                "execution_id": None,
+                "artifacts_count": 0,
+                "findings_count": 0,
+                "error_message": val_err or f"Forensic tool '{tool_name_raw}' failed authoritative validation.",
+            }
 
         # Create ToolExecution with truthful tool_id and command_args
         tool_name_raw = str(task.get("tool", "")).strip()
@@ -449,13 +531,28 @@ class InvestigationOrchestrator:
 
         # Agent response status handling
         if not isinstance(res, dict) or res.get("status") not in ["SUCCESS", "COMPLETED"]:
-            err = (res.get("error") if isinstance(res, dict) else None) or f"Agent analysis reported non-success status: {res.get('status') if isinstance(res, dict) else 'Unknown'}"
+            agent_st = res.get("status") if isinstance(res, dict) else "FAILED"
+            err = (res.get("error") if isinstance(res, dict) else None) or f"Agent analysis reported non-success status: {agent_st}"
             execution.status = "FAILED"
             execution.error_message = err
             execution.completed_at = datetime.now(timezone.utc)
             db.commit()
+
+            mapped_status = "EXECUTION_FAILED"
+            if agent_st in [
+                "TOOL_UNAVAILABLE",
+                "TOOL_VALIDATION_FAILED",
+                "UNSUPPORTED_EVIDENCE_TYPE",
+                "RULE_RESOURCE_NOT_TARGET_EVIDENCE",
+                "INVALID_TASK_CONFIGURATION",
+                "PLUGIN_UNAVAILABLE",
+                "UNVAULTED_EVIDENCE_REJECTED",
+                "INVALID_EVIDENCE_PATH",
+            ]:
+                mapped_status = agent_st
+
             return {
-                "status": "FAILED",
+                "status": mapped_status,
                 "execution_id": execution.id,
                 "artifacts_count": 0,
                 "findings_count": 0,
@@ -641,7 +738,23 @@ class InvestigationOrchestrator:
                 if forensic_exec:
                     forensic_exec.output_count = 2
 
-        db.commit()
+        try:
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            execution.status = "FAILED"
+            execution.error_message = f"Database transaction failed during persistence: {str(e)}"
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+            return {
+                "status": "FAILED",
+                "execution_id": execution.id,
+                "artifacts_count": 0,
+                "findings_count": 0,
+                "error_message": f"Database transaction failed during persistence: {str(e)}",
+            }
 
         log_audit_event(
             db=db,
@@ -738,8 +851,17 @@ class InvestigationOrchestrator:
             if "parameters" not in task_norm or not isinstance(task_norm["parameters"], dict):
                 task_norm["parameters"] = {}
 
-            if "tool_available" not in task_norm:
-                task_norm["tool_available"] = True
+            t_str = (task_norm.get("tool") or "").strip().lower()
+            if t_str in ["sleuthkit", "tsk"]:
+                t_lookup = "sleuthkit"
+            elif t_str in ["volatility3", "volatility", "vol"]:
+                t_lookup = "volatility3"
+            elif t_str in ["python-evtx", "python_evtx"]:
+                t_lookup = "python-evtx"
+            else:
+                t_lookup = t_str
+            tool_def = self.registry.get_tool(t_lookup) if t_lookup else None
+            task_norm["tool_available"] = bool(tool_def and tool_def.is_available)
 
             # If task failed or was cancelled in a previous attempt, reset to PLANNED for execution
             if task_norm.get("status") in ["FAILED", "TIMED_OUT", "CANCELLED"]:
@@ -823,8 +945,10 @@ class InvestigationOrchestrator:
                         matching_task["error_message"] = res["error_message"]
                         matching_task["completed_at"] = datetime.now(timezone.utc).isoformat()
                     else:
+                        st = res.get("status", "FAILED")
                         self.task_scheduler.mark_task_failed(step_id, res["error_message"])
-                        matching_task["status"] = "FAILED"
+                        matching_task["status"] = st
+                        matching_task["execution_id"] = res.get("execution_id")
                         matching_task["error_message"] = res["error_message"]
                         matching_task["completed_at"] = datetime.now(timezone.utc).isoformat()
                 except Exception as e:
@@ -864,8 +988,9 @@ class InvestigationOrchestrator:
                                     self.task_scheduler.mark_task_cancelled(step_id, res["error_message"])
                                 return {"status": res["status"], "step_id": step_id, "res": res}
                             else:
+                                st = res.get("status", "FAILED")
                                 self.task_scheduler.mark_task_failed(step_id, res["error_message"])
-                                return {"status": "FAILED", "step_id": step_id, "error": res["error_message"]}
+                                return {"status": st, "step_id": step_id, "error": res["error_message"], "res": res}
                         except Exception as e:
                             self.task_scheduler.mark_task_failed(step_id, str(e))
                             return {"status": "FAILED", "step_id": step_id, "error": str(e)}
@@ -892,7 +1017,8 @@ class InvestigationOrchestrator:
                             matching_task["error_message"] = res_data["error_message"]
                             matching_task["completed_at"] = datetime.now(timezone.utc).isoformat()
                         else:
-                            matching_task["status"] = "FAILED"
+                            matching_task["status"] = r.get("status", "FAILED")
+                            matching_task["execution_id"] = (r.get("res") or {}).get("execution_id")
                             matching_task["error_message"] = r.get("error")
                             matching_task["completed_at"] = datetime.now(timezone.utc).isoformat()
 
@@ -911,8 +1037,8 @@ class InvestigationOrchestrator:
 
         # Final Plan Status
         tasks_succeeded = sum(1 for t in tasks if t.get("status") == "COMPLETED")
-        tasks_failed = sum(1 for t in tasks if t.get("status") in ["FAILED", "CANCELLED", "TIMED_OUT"])
-        tasks_executed = tasks_succeeded + sum(1 for t in tasks if t.get("status") in ["FAILED", "CANCELLED", "TIMED_OUT"])
+        tasks_failed = sum(1 for t in tasks if t.get("status") != "COMPLETED" and t.get("status") not in ["PLANNED", "RUNNING"])
+        tasks_executed = tasks_succeeded + tasks_failed
         total_artifacts = sum(t.get("artifacts_count", 0) for t in tasks)
         total_findings = sum(t.get("findings_count", 0) for t in tasks)
 

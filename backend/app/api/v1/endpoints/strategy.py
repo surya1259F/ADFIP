@@ -34,7 +34,16 @@ from backend.app.schemas.schemas import (
     PlanToolSelectionSummaryResponse,
     ToolValidationRequest,
     ToolValidationResponse,
-    RegistryValidationResponse
+    RegistryValidationResponse,
+    InvestigativeQuestionCreateRequest,
+    InvestigativeQuestionUpdateRequest,
+    InvestigativeQuestionsBulkSaveRequest,
+    InvestigationScopeSchema,
+    InvestigationRequirementItem,
+    InvestigationRequirementCreateRequest,
+    InvestigationRequirementUpdateRequest,
+    InvestigationRequirementsBulkSaveRequest,
+    InvestigationRequirementsResponse,
 )
 from backend.app.services.authorization import get_authorized_case
 from backend.app.services.strategy_engine import (
@@ -96,6 +105,312 @@ def get_case_investigative_questions(
         "total_questions": len(questions),
         "questions": questions
     }
+
+
+@router.put("/cases/{case_id}/investigative-questions")
+def bulk_save_case_investigative_questions(
+    case_id: str,
+    payload: InvestigativeQuestionsBulkSaveRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Saves investigator-modified questions, custom additions, and approval/rejection decisions.
+    """
+    case = get_authorized_case(case_id, db, current_user)
+    saved = EvidenceDecisionEngine.save_case_investigative_questions(
+        db=db,
+        case_id=case.id,
+        questions=payload.questions,
+        current_user=current_user
+    )
+    return {
+        "case_id": case.id,
+        "case_number": case.case_number,
+        "total_questions": len(saved),
+        "questions": saved,
+        "message": "Investigative questions successfully updated."
+    }
+
+
+@router.post("/cases/{case_id}/investigative-questions")
+def add_custom_investigative_question(
+    case_id: str,
+    payload: InvestigativeQuestionCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Allows investigators to add a custom forensic inquiry to the case strategy.
+    """
+    case = get_authorized_case(case_id, db, current_user)
+    current_questions = EvidenceDecisionEngine.get_case_investigative_questions(db, case.id)
+
+    new_q_id = f"IQ-{len(current_questions) + 1:02d}"
+    new_q = {
+        "question_id": new_q_id,
+        "code": f"CUSTOM_{len(current_questions) + 1:02d}",
+        "archetype": "CUSTOM_INQUIRY",
+        "question_text": payload.question_text.strip(),
+        "category": payload.category.strip().upper(),
+        "hypothesis": (payload.hypothesis or "").strip(),
+        "required_evidence_domains": payload.required_evidence_domains or ["ALL"],
+        "required_capabilities": payload.required_capabilities or [],
+        "approval_status": "APPROVED",
+        "is_custom": True,
+        "is_edited": False,
+    }
+
+    updated_questions = current_questions + [new_q]
+    saved = EvidenceDecisionEngine.save_case_investigative_questions(
+        db=db,
+        case_id=case.id,
+        questions=updated_questions,
+        current_user=current_user
+    )
+    return {
+        "case_id": case.id,
+        "total_questions": len(saved),
+        "question": new_q,
+        "questions": saved,
+        "message": f"Custom question '{new_q_id}' added."
+    }
+
+
+@router.patch("/cases/{case_id}/investigative-questions/{question_id}")
+def update_case_investigative_question(
+    case_id: str,
+    question_id: str,
+    payload: InvestigativeQuestionUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Allows investigators to edit text, hypothesis, or approve/reject an investigative question.
+    """
+    case = get_authorized_case(case_id, db, current_user)
+    current_questions = EvidenceDecisionEngine.get_case_investigative_questions(db, case.id)
+
+    target_q = None
+    for q in current_questions:
+        if q.get("question_id") == question_id or q.get("code") == question_id:
+            target_q = q
+            break
+
+    if not target_q:
+        raise HTTPException(status_code=404, detail=f"Question '{question_id}' not found.")
+
+    if payload.question_text is not None:
+        target_q["question_text"] = payload.question_text.strip()
+        target_q["is_edited"] = True
+    if payload.hypothesis is not None:
+        target_q["hypothesis"] = payload.hypothesis.strip()
+        target_q["is_edited"] = True
+    if payload.category is not None:
+        target_q["category"] = payload.category.strip().upper()
+    if payload.approval_status is not None:
+        valid_statuses = {"APPROVED", "REJECTED", "PENDING"}
+        norm_status = payload.approval_status.strip().upper()
+        if norm_status not in valid_statuses:
+            raise HTTPException(status_code=400, detail=f"Invalid approval status. Must be one of {valid_statuses}")
+        target_q["approval_status"] = norm_status
+
+    saved = EvidenceDecisionEngine.save_case_investigative_questions(
+        db=db,
+        case_id=case.id,
+        questions=current_questions,
+        current_user=current_user
+    )
+
+    return {
+        "case_id": case.id,
+        "question_id": question_id,
+        "updated_question": target_q,
+        "questions": saved,
+        "message": f"Question '{question_id}' updated."
+    }
+
+
+# =========================================================================
+# Investigation Requirements Endpoints (Part 6 & 7)
+# =========================================================================
+
+@router.get("/cases/{case_id}/requirements", response_model=InvestigationRequirementsResponse)
+def get_case_investigation_requirements(
+    case_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Returns investigator-defined discovery requirements, templates, and mapped evidence.
+    """
+    case = get_authorized_case(case_id, db, current_user)
+    data = EvidenceDecisionEngine.get_case_requirements(db, case.id)
+    return InvestigationRequirementsResponse(**data)
+
+
+@router.put("/cases/{case_id}/requirements", response_model=InvestigationRequirementsResponse)
+def bulk_save_case_investigation_requirements(
+    case_id: str,
+    payload: InvestigationRequirementsBulkSaveRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Saves investigator requirements, objective modifications, and scope constraints.
+    """
+    case = get_authorized_case(case_id, db, current_user)
+    data = EvidenceDecisionEngine.save_case_requirements(
+        db=db,
+        case_id=case.id,
+        requirements=[r.model_dump() for r in payload.requirements],
+        objective=payload.objective,
+        global_scope=payload.global_scope.model_dump() if payload.global_scope else None,
+        current_user=current_user
+    )
+    return InvestigationRequirementsResponse(**data)
+
+
+@router.post("/cases/{case_id}/requirements", response_model=InvestigationRequirementsResponse)
+def add_custom_case_investigation_requirement(
+    case_id: str,
+    payload: InvestigationRequirementCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Adds a custom forensic discovery requirement to the case.
+    """
+    case = get_authorized_case(case_id, db, current_user)
+    current_data = EvidenceDecisionEngine.get_case_requirements(db, case.id)
+    existing_reqs = current_data.get("requirements", [])
+
+    new_id = f"REQ-{len(existing_reqs) + 1:02d}"
+    new_req = {
+        "id": new_id,
+        "case_id": case.id,
+        "title": payload.title.strip(),
+        "description": (payload.description or "").strip(),
+        "category": payload.category.strip().upper(),
+        "selected_evidence_ids": payload.selected_evidence_ids or [],
+        "scope": payload.scope.model_dump() if payload.scope else {},
+        "expected_outputs": payload.expected_outputs or ["EVIDENCE_ARTIFACTS"],
+        "approval_status": payload.approval_status or "APPROVED",
+        "status": "SUBMITTED",
+        "order_index": len(existing_reqs) + 1,
+    }
+
+    updated_reqs = existing_reqs + [new_req]
+    saved_data = EvidenceDecisionEngine.save_case_requirements(
+        db=db,
+        case_id=case.id,
+        requirements=updated_reqs,
+        current_user=current_user
+    )
+    return InvestigationRequirementsResponse(**saved_data)
+
+
+@router.patch("/cases/{case_id}/requirements/{requirement_id}", response_model=InvestigationRequirementsResponse)
+def update_case_investigation_requirement(
+    case_id: str,
+    requirement_id: str,
+    payload: InvestigationRequirementUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Updates an individual requirement's title, scope, approval status, or expected outputs.
+    """
+    case = get_authorized_case(case_id, db, current_user)
+    current_data = EvidenceDecisionEngine.get_case_requirements(db, case.id)
+    existing_reqs = current_data.get("requirements", [])
+
+    target_req = None
+    for r in existing_reqs:
+        if r.get("id") == requirement_id:
+            target_req = r
+            break
+
+    if not target_req:
+        raise HTTPException(status_code=404, detail=f"Requirement '{requirement_id}' not found.")
+
+    if payload.title is not None:
+        target_req["title"] = payload.title.strip()
+    if payload.description is not None:
+        target_req["description"] = payload.description.strip()
+    if payload.category is not None:
+        target_req["category"] = payload.category.strip().upper()
+    if payload.selected_evidence_ids is not None:
+        target_req["selected_evidence_ids"] = payload.selected_evidence_ids
+    if payload.scope is not None:
+        target_req["scope"] = payload.scope.model_dump()
+    if payload.expected_outputs is not None:
+        target_req["expected_outputs"] = payload.expected_outputs
+    if payload.approval_status is not None:
+        valid_statuses = {"APPROVED", "REJECTED", "PENDING"}
+        norm_status = payload.approval_status.strip().upper()
+        if norm_status not in valid_statuses:
+            raise HTTPException(status_code=400, detail=f"Invalid approval status. Must be one of {valid_statuses}")
+        target_req["approval_status"] = norm_status
+    if payload.status is not None:
+        target_req["status"] = payload.status.strip().upper()
+
+    saved_data = EvidenceDecisionEngine.save_case_requirements(
+        db=db,
+        case_id=case.id,
+        requirements=existing_reqs,
+        current_user=current_user
+    )
+    return InvestigationRequirementsResponse(**saved_data)
+
+
+@router.delete("/cases/{case_id}/requirements/{requirement_id}", response_model=InvestigationRequirementsResponse)
+def delete_case_investigation_requirement(
+    case_id: str,
+    requirement_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Removes a requirement from the investigation case.
+    """
+    case = get_authorized_case(case_id, db, current_user)
+    current_data = EvidenceDecisionEngine.get_case_requirements(db, case.id)
+    existing_reqs = current_data.get("requirements", [])
+
+    filtered_reqs = [r for r in existing_reqs if r.get("id") != requirement_id]
+    if len(filtered_reqs) == len(existing_reqs):
+        raise HTTPException(status_code=404, detail=f"Requirement '{requirement_id}' not found.")
+
+    for i, r in enumerate(filtered_reqs):
+        r["order_index"] = i + 1
+
+    saved_data = EvidenceDecisionEngine.save_case_requirements(
+        db=db,
+        case_id=case.id,
+        requirements=filtered_reqs,
+        current_user=current_user
+    )
+    return InvestigationRequirementsResponse(**saved_data)
+
+
+@router.post("/cases/{case_id}/requirements/generate-plan", response_model=InvestigationPlanResponse)
+def generate_plan_from_investigation_requirements(
+    case_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Generates a deterministic investigation execution plan mapped to investigator requirements.
+    """
+    case = get_authorized_case(case_id, db, current_user)
+    try:
+        plan_dict = InvestigationStrategyEngine.generate_plan(db, case.id, current_user)
+        return InvestigationPlanResponse(**plan_dict)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate investigation plan from requirements: {str(e)}")
 
 
 @router.get("/cases/{case_id}/investigation-plans", response_model=List[InvestigationPlanResponse])

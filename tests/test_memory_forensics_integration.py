@@ -51,6 +51,7 @@ def test_memory_forensics_vertical_slice_pipeline(monkeypatch):
             evidence_path=tf.name,
             tool_version="2.28.0"
         )
+        monkeypatch.setattr(memory_agent.adapter, "is_available", lambda: True)
         monkeypatch.setattr(memory_agent.adapter, "execute_plugin", MagicMock(return_value=mock_exec))
 
         # 3. Execute Memory Analysis (windows.pslist)

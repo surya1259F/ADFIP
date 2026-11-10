@@ -161,6 +161,136 @@ class CaseResponse(BaseModel):
 InvestigationCreate = CaseCreate
 InvestigationResponse = CaseResponse
 
+# Dashboard Analytics Schemas
+class CaseDashboardStats(BaseModel):
+    total: int = 0
+    completed: int = 0
+    active: int = 0
+    pending: int = 0
+    failed: int = 0
+    attention_required: int = 0
+
+class WorkflowStageMetric(BaseModel):
+    stage_number: int
+    stage_key: str
+    label: str
+    cases_completed: int
+    percentage: float
+
+class DashboardCaseActivity(BaseModel):
+    id: str
+    case_number: str
+    title: str
+    name: str
+    status: str
+    current_stage: str
+    assigned_investigator: str
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    evidence_count: int = 0
+    findings_count: int = 0
+
+class DashboardAuditEvent(BaseModel):
+    id: str
+    case_id: Optional[str] = None
+    case_number: Optional[str] = None
+    actor_name: str
+    event_type: str
+    details: str
+    timestamp: datetime
+    event_hash: Optional[str] = None
+    chain_index: Optional[int] = None
+    is_hash_valid: bool = True
+
+class DashboardAnalyticsResponse(BaseModel):
+    stats: CaseDashboardStats
+    workflow_stages: List[WorkflowStageMetric]
+    recent_activity: List[DashboardCaseActivity]
+    audit_events: List[DashboardAuditEvent]
+
+class InvestigativeQuestionCreateRequest(BaseModel):
+    question_text: str
+    category: str = "INVESTIGATOR_INQUIRY"
+    hypothesis: Optional[str] = None
+    required_evidence_domains: List[str] = Field(default_factory=lambda: ["ALL"])
+    required_capabilities: List[str] = Field(default_factory=list)
+
+class InvestigativeQuestionUpdateRequest(BaseModel):
+    question_text: Optional[str] = None
+    hypothesis: Optional[str] = None
+    category: Optional[str] = None
+    approval_status: Optional[str] = None # APPROVED, REJECTED, PENDING
+
+class InvestigativeQuestionsBulkSaveRequest(BaseModel):
+    questions: List[Dict[str, Any]]
+
+# =============================================================================
+# PART 6: INVESTIGATOR-DEFINED INVESTIGATION REQUIREMENTS SCHEMAS
+# =============================================================================
+
+class InvestigationScopeSchema(BaseModel):
+    time_range_start: Optional[str] = None
+    time_range_end: Optional[str] = None
+    relevant_users: List[str] = Field(default_factory=list)
+    relevant_ips: List[str] = Field(default_factory=list)
+    relevant_hosts: List[str] = Field(default_factory=list)
+    relevant_directories: List[str] = Field(default_factory=list)
+    relevant_processes: List[str] = Field(default_factory=list)
+    additional_context: Optional[str] = None
+
+class InvestigationRequirementItem(BaseModel):
+    id: str = Field(default_factory=lambda: f"REQ-{uuid.uuid4().hex[:6].upper()}")
+    case_id: Optional[str] = None
+    title: str
+    description: Optional[str] = None
+    category: str = "GENERAL"
+    selected_evidence_ids: List[str] = Field(default_factory=list)
+    selected_evidence_names: List[str] = Field(default_factory=list)
+    scope: InvestigationScopeSchema = Field(default_factory=InvestigationScopeSchema)
+    expected_outputs: List[str] = Field(default_factory=list)
+    approval_status: str = "APPROVED"  # APPROVED, REJECTED, PENDING
+    status: str = "SUBMITTED"  # DRAFT, SUBMITTED, IN_PLANNING, COMPLETED
+    assigned_agent: Optional[str] = None
+    assigned_tool: Optional[str] = None
+    order_index: int = 0
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+class InvestigationRequirementCreateRequest(BaseModel):
+    title: str
+    description: Optional[str] = None
+    category: str = "CUSTOM"
+    selected_evidence_ids: List[str] = Field(default_factory=list)
+    scope: Optional[InvestigationScopeSchema] = None
+    expected_outputs: List[str] = Field(default_factory=list)
+    approval_status: str = "APPROVED"
+
+class InvestigationRequirementUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    selected_evidence_ids: Optional[List[str]] = None
+    scope: Optional[InvestigationScopeSchema] = None
+    expected_outputs: Optional[List[str]] = None
+    approval_status: Optional[str] = None
+    status: Optional[str] = None
+
+class InvestigationRequirementsBulkSaveRequest(BaseModel):
+    objective: Optional[str] = None
+    requirements: List[InvestigationRequirementItem]
+    global_scope: Optional[InvestigationScopeSchema] = None
+
+class InvestigationRequirementsResponse(BaseModel):
+    case_id: str
+    case_number: str
+    objective: str
+    total_requirements: int
+    requirements: List[InvestigationRequirementItem]
+    available_evidence: List[Dict[str, Any]] = Field(default_factory=list)
+    available_templates: List[Dict[str, Any]] = Field(default_factory=list)
+    global_scope: Optional[InvestigationScopeSchema] = None
+    plan_status: str = "PLANNED"
+
 # Evidence Schemas
 class EvidenceIntakeRequest(BaseModel):
     path: Optional[str] = None
@@ -2573,6 +2703,60 @@ class UserExternalIdentityResponse(BaseModel):
     provider_email: Optional[str] = None
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+# =============================================================================
+# Forensic Assessment & Attack Classification Schemas (Part 11 & 12)
+# =============================================================================
+
+class ScoreBreakdown(BaseModel):
+    relevance: float
+    source_reliability: float
+    directness: float
+    corroboration: float
+    timeline_consistency: float
+    evidence_integrity: float
+    investigation_coverage: float
+    penalties: float = 0.0
+
+
+class InvestigationCompleteness(BaseModel):
+    total_requirements: int
+    completed_requirements: int
+    partially_completed_requirements: int
+    unanswered_requirements: int
+    failed_tasks: int
+    missing_evidence_domains: List[str] = Field(default_factory=list)
+    percentage: float
+
+
+class ForensicAssessmentResponse(BaseModel):
+    case_id: str
+    case_number: str
+    classification: str  # CONFIRMED_ATTACK, LIKELY_ATTACK, INCONCLUSIVE, NO_ATTACK_OBSERVED, INSUFFICIENT_EVIDENCE
+    evidence_strength_score: float  # 0.0 to 100.0
+    score_breakdown: ScoreBreakdown
+    investigation_completeness: InvestigationCompleteness
+    supporting_observations: List[Dict[str, Any]] = Field(default_factory=list)
+    contradictory_observations: List[Dict[str, Any]] = Field(default_factory=list)
+    alternative_explanations: List[Dict[str, Any]] = Field(default_factory=list)
+    missing_evidence: List[str] = Field(default_factory=list)
+    unresolved_questions: List[str] = Field(default_factory=list)
+    investigation_limitations: List[str] = Field(default_factory=list)
+    ai_synthesis: Optional[str] = None
+    investigator_decision: Optional[str] = None
+    investigator_rationale: Optional[str] = None
+    decided_at: Optional[datetime] = None
+    decided_by: Optional[str] = None
+    generated_at: datetime
+    methodology_version: str = "1.0.0"
+
+
+class InvestigatorAssessmentDecisionRequest(BaseModel):
+    decision: str  # ACCEPT, EDIT, CHALLENGE, REQUEST_MORE_EVIDENCE, REJECT
+    rationale: str
+    edited_classification: Optional[str] = None
+    additional_analysis_requested: Optional[str] = None
 
 
 

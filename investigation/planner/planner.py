@@ -1,5 +1,6 @@
 from typing import List, Dict, Any, Optional
 from forensic_tools.registry import PlatformAwareToolRegistry, tool_registry as global_tool_registry
+from forensic_tools.evidence_types import is_rule_resource
 
 
 class InvestigationPlanner:
@@ -92,8 +93,8 @@ class InvestigationPlanner:
                         })
                         created_mem_tasks += 1
 
+                    netscan_step_id = f"task-mem-netscan-{ev_id[:8]}"
                     if vol.has_capability("network_socket_extraction"):
-                        netscan_step_id = f"task-mem-netscan-{ev_id[:8]}"
                         tasks.append({
                             "step_id": netscan_step_id,
                             "agent": "MemoryAgent",
@@ -123,15 +124,16 @@ class InvestigationPlanner:
                         summary_points.append(f"Memory process and network socket introspection planned for '{ev_name}' via Volatility 3.")
                     else:
                         summary_points.append(
-                            f"Evidence '{ev_name}' ({ev_type}): Volatility 3 lacks required memory analysis capabilities. Requires specialist manual triage."
+                            f"Evidence '{ev_name}' ({ev_type}): Volatility3 is missing process or socket capabilities. Cannot plan memory introspection. Requires specialist manual triage."
                         )
                 else:
+                    status_reason = "not installed" if (not vol or not vol.is_available) else "missing capability"
                     summary_points.append(
-                        f"Evidence '{ev_name}' ({ev_type}): Volatility 3 tool is not available on host. Cannot plan memory introspection. Requires specialist manual triage."
+                        f"Evidence '{ev_name}' ({ev_type}): Volatility3 tool is {status_reason}. Cannot plan memory introspection. Requires specialist manual triage."
                     )
 
             # 3. Windows Event Log Evidence -> python-evtx -> security_log_parsing
-            elif ev_type in ["log", "event_log", "evtx", "system_log"] or src_kind == "event_log":
+            elif ev_type in ["log", "event_log", "evtx", "windows_event_log", "system_log"] or src_kind == "event_log":
                 evtx = self.registry.get_tool("python-evtx") or self.registry.get_tool("python_evtx")
                 req_cap = "security_log_parsing"
                 if evtx and evtx.is_available and evtx.has_capability(req_cap):
@@ -165,11 +167,16 @@ class InvestigationPlanner:
                         f"Evidence '{ev_name}' ({ev_type}): python-evtx parser is {status_reason}. Cannot plan event log analysis. Requires specialist manual triage."
                     )
 
-            # 4. Executable / Malware / Suspicious Binary Evidence -> YARA -> signature_scan
+            # 4. YARA Detection Rules & Rule Resources
+            elif is_rule_resource(ev_type) or ev_type in ["yara_rule", "rule_resource", "detection_rule"] or ev_name.lower().endswith((".yar", ".yara")):
+                summary_points.append(
+                    f"Evidence '{ev_name}' ({ev_type}): Classified as RULE_RESOURCE. YARA rule definitions specify detection signatures for target evidence and cannot be scanned as target evidence."
+                )
+
+            # 5. Executable / Malware / Suspicious Binary Target Evidence -> YARA -> signature_scan
             elif (
-                ev_type in ["executable", "suspicious_file", "malware", "pe_executable", "elf_executable", "suspicious_binary", "yara_rule"]
+                ev_type in ["executable", "suspicious_file", "malware", "pe_executable", "elf_executable", "suspicious_binary", "binary", "generic_binary"]
                 or src_kind in ["malware_sample"]
-                or "yara" in ev_name.lower()
                 or "malware" in ev_name.lower()
                 or "payload" in ev_name.lower()
             ):
@@ -206,7 +213,7 @@ class InvestigationPlanner:
                         f"Evidence '{ev_name}' ({ev_type}): YARA tool is {status_reason}. Cannot plan signature scanning. Requires specialist manual triage."
                     )
 
-            # 5. File / Document / Archive / Image / Metadata Evidence -> ExifTool -> metadata_extraction
+            # 6. File / Document / Archive / Image / Metadata Evidence -> ExifTool -> metadata_extraction
             elif ev_type in ["file", "document", "archive", "text", "generic_binary", "unknown", "image", "raw_image", "png", "jpeg", "jpg", "bmp", "tiff", "gif", "webp", "browser_artifact", "sqlite_database"] or src_kind in ["file", "archive", "browser_db", "image", "unknown"]:
                 exif = self.registry.get_tool("exiftool")
                 req_cap = "metadata_extraction"

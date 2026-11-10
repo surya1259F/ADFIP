@@ -14,7 +14,7 @@ from sqlalchemy import (
     BigInteger,
     UniqueConstraint
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, synonym
 from backend.app.core.database import Base
 
 def utc_now():
@@ -525,6 +525,7 @@ class Finding(Base):
     timestamp = Column(DateTime, nullable=True)
     evidence_reference = Column(String, nullable=True) # inode, memory offset, record ID, file path
     verification_status = Column(String, default="UNVERIFIED", nullable=False, index=True) # SUPPORTED, UNSUPPORTED, CONFLICTING, UNVERIFIED
+    governance_status = synonym("verification_status")
     raw_output_reference = Column(Text, nullable=True)
     created_at = Column(DateTime, default=utc_now, nullable=False)
 

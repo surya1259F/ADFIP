@@ -19,7 +19,7 @@ def create_synthetic_disk_image(target_path: Path) -> Path:
     if not mkfs_vfat:
         raise RuntimeError("mkfs.vfat not found on system.")
 
-    subprocess.run([mkfs_vfat, str(target_path)], check=True, capture_output=True)
+    subprocess.run([mkfs_vfat, "--invariant", "-i", "12345678", str(target_path)], check=True, capture_output=True)
 
     # 3. Inject standard FAT directory entries directly into root directory sector
     with open(target_path, "r+b") as f:

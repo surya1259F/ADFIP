@@ -8,7 +8,7 @@ from agents.base.agent import Agent, AgentAnalysisResult, CapabilityRequest
 from forensic_tools.sleuthkit.adapter import SleuthKitAdapter
 from forensic_tools.exiftool.adapter import ExifToolAdapter
 from agents.disk.parsers.fls_parser import FlsParser, FlsParserResult
-from forensic_tools.evidence_types import calculate_deterministic_confidence
+from forensic_tools.evidence_types import calculate_deterministic_confidence, build_extraction_quality
 
 SUSPICIOUS_EXTENSIONS = {".bat", ".ps1", ".vbs", ".cmd", ".scr", ".pif", ".exe", ".dll", ".hta"}
 SUSPICIOUS_PATHS = {"temp", "tmp", "appdata", "public", "downloads", "perflogs"}
@@ -103,23 +103,31 @@ class DiskAgent(Agent):
 
                 # 1. Deleted file
                 if is_del:
+                    eq = build_extraction_quality(
+                        parser_name="SleuthKit",
+                        source_integrity=1.0,
+                        parse_validity=1.0,
+                        is_corroborated=False,
+                        limitations="Filesystem deleted entry parsed from metadata structure; does not establish intentional anti-forensics or malicious activity."
+                    )
                     observations.append({
                         "fact_type": "DELETED_FILE_OBSERVED",
                         "description": f"Deleted filesystem artifact detected: '{file_path}'.",
                         "supporting_evidence_ids": [ev_id] if ev_id else [],
                         "supporting_artifact_ids": [art_id],
                         "details": {"file_path": file_path, "inode": fields.get("inode"), "status": "deleted"},
-                        "confidence": 0.95
+                        "confidence": None,
+                        "extraction_quality": eq
                     })
 
                 # 2. Suspicious path
                 if any(p in path_lower for p in SUSPICIOUS_PATHS):
-                    conf_score, conf_inputs = calculate_deterministic_confidence(
+                    eq_path = build_extraction_quality(
+                        parser_name="SleuthKit",
                         source_integrity=1.0,
-                        artifact_confidence=0.85,
-                        identifier_match_confidence=0.80,
-                        supporting_source_count=1,
-                        contradictory_evidence=False
+                        parse_validity=1.0,
+                        is_corroborated=False,
+                        limitations="Filesystem entry path matched temporary/suspicious directory heuristic; does not establish malicious origin without process execution context."
                     )
                     observations.append({
                         "fact_type": "SUSPICIOUS_FILE_LOCATION",
@@ -127,8 +135,8 @@ class DiskAgent(Agent):
                         "supporting_evidence_ids": [ev_id] if ev_id else [],
                         "supporting_artifact_ids": [art_id],
                         "details": {"file_path": file_path, "suspicious_paths_matched": [p for p in SUSPICIOUS_PATHS if p in path_lower]},
-                        "confidence": conf_score,
-                        "confidence_inputs": conf_inputs
+                        "confidence": None,
+                        "extraction_quality": eq_path
                     })
 
                 # 3. Suspicious extension
@@ -395,6 +403,13 @@ class DiskAgent(Agent):
             artifacts.append(art)
 
             if metadata_dict:
+                eq_meta = build_extraction_quality(
+                    parser_name="ExifTool",
+                    source_integrity=1.0,
+                    parse_validity=1.0,
+                    is_corroborated=False,
+                    limitations="Metadata extracted from file headers; indicates syntactic header tags and does not establish tampering or culpability."
+                )
                 findings.append({
                     "id": str(uuid.uuid4()),
                     "investigation_id": inv_id,
@@ -404,7 +419,9 @@ class DiskAgent(Agent):
                     "finding_type": "file_metadata",
                     "title": f"Extracted File Metadata: {file_name}",
                     "description": f"ExifTool extracted {len(metadata_dict)} metadata attributes for {file_name}.",
-                    "confidence": 0.90,
+                    "classification": "FACT",
+                    "confidence": None,
+                    "extraction_quality": eq_meta,
                     "evidence_reference": source_ref,
                     "verification_status": "UNVERIFIED",
                     "raw_output_reference": raw_output_path
@@ -551,6 +568,13 @@ class DiskAgent(Agent):
 
             # Case A: Deleted File
             if entry.is_deleted:
+                eq_del = build_extraction_quality(
+                    parser_name="SleuthKit",
+                    source_integrity=1.0,
+                    parse_validity=1.0,
+                    is_corroborated=False,
+                    limitations="Filesystem inode marked unallocated/deleted; does not establish intentional deletion or malicious anti-forensics."
+                )
                 findings.append({
                     "id": str(uuid.uuid4()),
                     "investigation_id": inv_id,
@@ -560,7 +584,9 @@ class DiskAgent(Agent):
                     "finding_type": "deleted_artifact",
                     "title": f"Deleted Filesystem Entry: {entry.file_path}",
                     "description": f"Deleted {entry.entry_type} identified at inode {entry.inode} ({entry.raw_line}).",
-                    "confidence": 0.95,
+                    "classification": "FACT",
+                    "confidence": None,
+                    "extraction_quality": eq_del,
                     "evidence_reference": source_ref,
                     "verification_status": "UNVERIFIED",
                     "raw_output_reference": entry.raw_line
@@ -568,12 +594,12 @@ class DiskAgent(Agent):
 
             # Case B: Executable/Script in Suspicious Path
             elif file_ext in SUSPICIOUS_EXTENSIONS and (path_parts & SUSPICIOUS_PATHS):
-                conf_score, conf_inputs = calculate_deterministic_confidence(
+                eq_susp = build_extraction_quality(
+                    parser_name="SleuthKit",
                     source_integrity=1.0,
-                    artifact_confidence=0.85,
-                    identifier_match_confidence=0.80,
-                    supporting_source_count=1,
-                    contradictory_evidence=False
+                    parse_validity=1.0,
+                    is_corroborated=False,
+                    limitations="File extension matches executable script in temporary directory; observation only, not proof of malicious execution."
                 )
                 findings.append({
                     "id": str(uuid.uuid4()),
@@ -582,10 +608,11 @@ class DiskAgent(Agent):
                     "agent": self.name,
                     "tool": "SleuthKit",
                     "finding_type": "suspicious_file_location",
-                    "title": f"Suspicious Executable Location: {entry.file_path}",
-                    "description": f"Executable file '{file_name}' located in temporary/suspicious directory path at inode {entry.inode}.",
-                    "confidence": conf_score,
-                    "confidence_inputs": conf_inputs,
+                    "title": f"Executable in Suspicious Path: {entry.file_path}",
+                    "description": f"Executable file '{file_name}' located in temporary or user directory: {entry.file_path}.",
+                    "classification": "FACT",
+                    "confidence": None,
+                    "extraction_quality": eq_susp,
                     "evidence_reference": source_ref,
                     "verification_status": "UNVERIFIED",
                     "raw_output_reference": entry.raw_line

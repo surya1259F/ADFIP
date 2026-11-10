@@ -6,7 +6,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 from agents.base.agent import Agent, CapabilityRequest, AgentAnalysisResult, AgentSafetyProfile
 from agents.log.parsers.evtx_parser import EvtxParser
-from forensic_tools.evidence_types import calculate_deterministic_confidence
+from forensic_tools.evidence_types import calculate_deterministic_confidence, build_extraction_quality
 
 class LogAgent(Agent):
     """
@@ -37,10 +37,9 @@ class LogAgent(Agent):
     def can_handle(self, evidence_type: str) -> bool:
         if not evidence_type or not isinstance(evidence_type, str):
             return False
-        et = evidence_type.lower()
+        et = evidence_type.lower().strip()
         return et in [
-            "log", "file", "event_log", "evtx", "system_log", "unknown", "text", "document"
-            "log", "file", "event_log", "evtx", "windows_event_log", "system_log", "unknown", "text", "document"
+            "log", "event_log", "evtx", "windows_event_log", "system_log", "xml", "text"
         ]
 
     def plan(self, evidence_item: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -219,8 +218,17 @@ class LogAgent(Agent):
 
             # Generate Evidence-Backed Candidate Findings
             # Rule: Factual observations only. Never claim "Confirmed Compromise".
+            # Forensic Principle: A valid log event record does not establish malicious intent or compromise.
             if event.event_id == 4625:
                 # Failed Logon
+                eq = build_extraction_quality(
+                    parser_name="python-evtx",
+                    source_integrity=1.0,
+                    parse_validity=1.0,
+                    mitre_attack_mappings=["T1110"],
+                    is_corroborated=False,
+                    limitations="Windows Event 4625 records a logon failure event; does not establish brute-force attack or malicious compromise."
+                )
                 findings.append({
                     "id": str(uuid.uuid4()),
                     "investigation_id": inv_id,
@@ -230,13 +238,23 @@ class LogAgent(Agent):
                     "finding_type": "windows_logon_failure",
                     "title": f"Failed Logon Attempt (Event 4625) for {event.user or 'Unknown User'} on {event.computer or 'Host'}",
                     "description": f"Windows Event 4625 recorded logon failure for account '{event.user or 'N/A'}' (Domain: '{event.domain or 'N/A'}') from source IP '{event.source_ip or 'Local'}'.",
-                    "confidence": 0.80,
+                    "classification": "FACT",
+                    "confidence": None,
+                    "extraction_quality": eq,
                     "evidence_reference": source_ref,
                     "verification_status": "UNVERIFIED",
                     "raw_output_reference": f"{raw_output_path}:{source_ref}"
                 })
             elif event.event_id == 4672:
                 # Special Privileges Assigned
+                eq = build_extraction_quality(
+                    parser_name="python-evtx",
+                    source_integrity=1.0,
+                    parse_validity=1.0,
+                    mitre_attack_mappings=["T1078"],
+                    is_corroborated=False,
+                    limitations="Windows Event 4672 records assignment of administrative privileges during logon; standard administrative behavior."
+                )
                 findings.append({
                     "id": str(uuid.uuid4()),
                     "investigation_id": inv_id,
@@ -246,7 +264,9 @@ class LogAgent(Agent):
                     "finding_type": "windows_privilege_escalation_marker",
                     "title": f"Special Privileges Assigned (Event 4672) to {event.user or 'Account'} on {event.computer or 'Host'}",
                     "description": f"Windows Event 4672: Special administrator/system privileges assigned to logon session for user '{event.user or 'N/A'}'.",
-                    "confidence": 0.75,
+                    "classification": "FACT",
+                    "confidence": None,
+                    "extraction_quality": eq,
                     "evidence_reference": source_ref,
                     "verification_status": "UNVERIFIED",
                     "raw_output_reference": f"{raw_output_path}:{source_ref}"
@@ -254,12 +274,13 @@ class LogAgent(Agent):
             elif event.event_id in [4697, 7045]:
                 # Service Installation
                 svc_title = event.service_name or "Unknown Service"
-                conf_score, conf_inputs = calculate_deterministic_confidence(
+                eq = build_extraction_quality(
+                    parser_name="python-evtx",
                     source_integrity=1.0,
-                    artifact_confidence=0.90,
-                    identifier_match_confidence=0.85,
-                    supporting_source_count=1,
-                    contradictory_evidence=False
+                    parse_validity=1.0,
+                    mitre_attack_mappings=["T1543.003"],
+                    is_corroborated=False,
+                    limitations="Windows Event records service installation; observation only, does not establish persistence mechanism or malware installation."
                 )
                 findings.append({
                     "id": str(uuid.uuid4()),
@@ -270,8 +291,9 @@ class LogAgent(Agent):
                     "finding_type": "windows_service_installation",
                     "title": f"New Service Installed (Event {event.event_id}): {svc_title} on {event.computer or 'Host'}",
                     "description": f"Windows Event {event.event_id}: Service '{svc_title}' installed with binary image path '{event.service_file_name or 'N/A'}'.",
-                    "confidence": conf_score,
-                    "confidence_inputs": conf_inputs,
+                    "classification": "FACT",
+                    "confidence": None,
+                    "extraction_quality": eq,
                     "evidence_reference": source_ref,
                     "verification_status": "UNVERIFIED",
                     "raw_output_reference": f"{raw_output_path}:{source_ref}"
@@ -279,12 +301,13 @@ class LogAgent(Agent):
             elif event.event_id == 4720:
                 # User Account Created
                 tgt = event.target_user or "Unknown Account"
-                conf_score, conf_inputs = calculate_deterministic_confidence(
+                eq = build_extraction_quality(
+                    parser_name="python-evtx",
                     source_integrity=1.0,
-                    artifact_confidence=0.90,
-                    identifier_match_confidence=0.85,
-                    supporting_source_count=1,
-                    contradictory_evidence=False
+                    parse_validity=1.0,
+                    mitre_attack_mappings=["T1136.001"],
+                    is_corroborated=False,
+                    limitations="Windows Event 4720 records user account creation; standard administrative operation."
                 )
                 findings.append({
                     "id": str(uuid.uuid4()),
@@ -295,8 +318,9 @@ class LogAgent(Agent):
                     "finding_type": "windows_account_creation",
                     "title": f"New User Account Created (Event 4720): {tgt} on {event.computer or 'Host'}",
                     "description": f"Windows Event 4720: User account '{tgt}' created by subject user '{event.user or 'System'}'.",
-                    "confidence": conf_score,
-                    "confidence_inputs": conf_inputs,
+                    "classification": "FACT",
+                    "confidence": None,
+                    "extraction_quality": eq,
                     "evidence_reference": source_ref,
                     "verification_status": "UNVERIFIED",
                     "raw_output_reference": f"{raw_output_path}:{source_ref}"
@@ -305,12 +329,13 @@ class LogAgent(Agent):
                 # Member Added to Security Group
                 grp = event.group_name or "Security Group"
                 mbr = event.member_name or "Member"
-                conf_score, conf_inputs = calculate_deterministic_confidence(
+                eq = build_extraction_quality(
+                    parser_name="python-evtx",
                     source_integrity=1.0,
-                    artifact_confidence=0.90,
-                    identifier_match_confidence=0.85,
-                    supporting_source_count=1,
-                    contradictory_evidence=False
+                    parse_validity=1.0,
+                    mitre_attack_mappings=["T1098"],
+                    is_corroborated=False,
+                    limitations="Windows Event records security group membership modification; observation only."
                 )
                 findings.append({
                     "id": str(uuid.uuid4()),
@@ -321,8 +346,9 @@ class LogAgent(Agent):
                     "finding_type": "windows_group_membership_change",
                     "title": f"Member Added to Security Group (Event {event.event_id}): {mbr} to {grp} on {event.computer or 'Host'}",
                     "description": f"Windows Event {event.event_id}: Member '{mbr}' added to group '{grp}' by subject user '{event.user or 'System'}'.",
-                    "confidence": conf_score,
-                    "confidence_inputs": conf_inputs,
+                    "classification": "FACT",
+                    "confidence": None,
+                    "extraction_quality": eq,
                     "evidence_reference": source_ref,
                     "verification_status": "UNVERIFIED",
                     "raw_output_reference": f"{raw_output_path}:{source_ref}"
@@ -335,6 +361,14 @@ class LogAgent(Agent):
                     "certutil.exe", "vssadmin.exe", "mimikatz.exe", "procdump.exe"
                 ])
                 if is_suspicious_proc or event.command_line:
+                    eq = build_extraction_quality(
+                        parser_name="python-evtx",
+                        source_integrity=1.0,
+                        parse_validity=1.0,
+                        mitre_attack_mappings=["T1059"],
+                        is_corroborated=False,
+                        limitations="Windows Event 4688 records process execution; process execution alone does not establish malicious activity without parent context or behavioral analysis."
+                    )
                     findings.append({
                         "id": str(uuid.uuid4()),
                         "investigation_id": inv_id,
@@ -344,7 +378,9 @@ class LogAgent(Agent):
                         "finding_type": "windows_process_execution",
                         "title": f"Process Execution (Event 4688): {event.process_name or 'Unknown'} on {event.computer or 'Host'}",
                         "description": f"Windows Event 4688: Process '{event.process_name}' executed with command line: '{event.command_line or 'N/A'}' by user '{event.user or 'N/A'}'.",
-                        "confidence": 0.80,
+                        "classification": "FACT",
+                        "confidence": None,
+                        "extraction_quality": eq,
                         "evidence_reference": source_ref,
                         "verification_status": "UNVERIFIED",
                         "raw_output_reference": f"{raw_output_path}:{source_ref}"

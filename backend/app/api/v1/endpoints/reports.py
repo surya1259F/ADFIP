@@ -319,7 +319,7 @@ def api_get_case_report_provenance(
 def api_export_case_report(
     case_id: str,
     report_id: str,
-    format: str = Query(default="markdown", pattern="^(markdown|md|json)$"),
+    format: str = Query(default="markdown", pattern="^(markdown|md|json|pdf|docx)$"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -416,7 +416,7 @@ def alias_get_case_report_provenance(
 def alias_export_case_report(
     case_id: str,
     report_id: str,
-    format: str = Query(default="markdown", pattern="^(markdown|md|json)$"),
+    format: str = Query(default="markdown", pattern="^(markdown|md|json|pdf|docx)$"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):

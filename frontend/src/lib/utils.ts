@@ -49,6 +49,17 @@ export const STATUS_TONES: Record<string, 'neutral' | 'info' | 'success' | 'warn
   PENDING: 'warning', DRAFT: 'neutral', READY: 'success', FINAL: 'success', ACCEPTED: 'success', REJECTED: 'danger', CHALLENGED: 'warning', ACTIVE: 'active', CLOSED: 'neutral', ARCHIVED: 'neutral'
 };
 
+export function resolveMediaUrl(url?: string | null): string | undefined {
+  if (!url) return undefined;
+  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:') || url.startsWith('blob:')) {
+    return url;
+  }
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8001/api/v1';
+  const origin = baseUrl.replace(/\/api\/v1\/?$/, '');
+  return `${origin}${url.startsWith('/') ? '' : '/'}${url}`;
+}
+
+
 export function getStatusTone(status: string): 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'active' {
   return STATUS_TONES[status?.toUpperCase()] || 'neutral';
 }

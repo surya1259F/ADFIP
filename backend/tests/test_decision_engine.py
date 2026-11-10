@@ -318,3 +318,176 @@ def test_investigative_questions_api_endpoint(db_session: Session):
             QuestionFeasibility.UNSUPPORTED_BY_TOOLS.value,
             QuestionFeasibility.NOT_APPLICABLE.value
         ]
+
+
+def test_add_custom_investigative_question(db_session: Session):
+    """Verifies adding a custom question via POST /api/v1/cases/{case_id}/investigative-questions."""
+    user, case = create_user_and_case(db_session, "Investigate database tamper incident")
+    headers = get_auth_headers(user)
+
+    payload = {
+        "question_text": "Did unauthorized SQL queries alter the audit ledger tables?",
+        "category": "DATA_INTEGRITY",
+        "hypothesis": "Adversary gained direct DB credentials and bypassed application layer."
+    }
+
+    res = client.post(f"/api/v1/cases/{case.id}/investigative-questions", headers=headers, json=payload)
+    assert res.status_code == 200, res.text
+    data = res.json()
+
+    assert data["question"]["question_text"] == payload["question_text"]
+    assert data["question"]["category"] == "DATA_INTEGRITY"
+    assert data["question"]["approval_status"] == "APPROVED"
+    assert data["question"]["hypothesis"] == payload["hypothesis"]
+
+    # Verify question is persisted in GET
+    get_res = client.get(f"/api/v1/cases/{case.id}/investigative-questions", headers=headers)
+    assert get_res.status_code == 200
+    all_q = get_res.json()["questions"]
+    found = [q for q in all_q if q.get("question_id") == data["question"]["question_id"]]
+    assert len(found) == 1
+    assert found[0]["question_text"] == payload["question_text"]
+
+
+def test_patch_investigative_question_approval_and_edit(db_session: Session):
+    """Verifies investigator governance: approving, rejecting, and editing questions."""
+    user, case = create_user_and_case(db_session, "Phishing email investigation")
+    headers = get_auth_headers(user)
+
+    # Initial questions
+    init_res = client.get(f"/api/v1/cases/{case.id}/investigative-questions", headers=headers)
+    assert init_res.status_code == 200
+    questions = init_res.json()["questions"]
+    assert len(questions) > 0
+    target_q = questions[0]
+    target_id = target_q.get("question_id") or target_q.get("code")
+    assert target_id is not None
+
+    # 1. Reject question
+    patch_rej = client.patch(
+        f"/api/v1/cases/{case.id}/investigative-questions/{target_id}",
+        headers=headers,
+        json={"approval_status": "REJECTED"}
+    )
+    assert patch_rej.status_code == 200, patch_rej.text
+    rej_data = patch_rej.json()
+    assert rej_data["updated_question"]["approval_status"] == "REJECTED"
+
+    # 2. Edit text and approve
+    patch_edit = client.patch(
+        f"/api/v1/cases/{case.id}/investigative-questions/{target_id}",
+        headers=headers,
+        json={
+            "question_text": "Updated question: What was the primary email attachment hash?",
+            "approval_status": "APPROVED",
+            "hypothesis": "Malicious macro contained in XLSM attachment."
+        }
+    )
+    assert patch_edit.status_code == 200, patch_edit.text
+    edit_data = patch_edit.json()
+    assert edit_data["updated_question"]["question_text"] == "Updated question: What was the primary email attachment hash?"
+    assert edit_data["updated_question"]["approval_status"] == "APPROVED"
+    assert edit_data["updated_question"]["hypothesis"] == "Malicious macro contained in XLSM attachment."
+
+    # 3. Verify changes persist across GET
+    verify_res = client.get(f"/api/v1/cases/{case.id}/investigative-questions", headers=headers)
+    assert verify_res.status_code == 200
+    updated_q = next(q for q in verify_res.json()["questions"] if (q.get("question_id") == target_id or q.get("code") == target_id))
+    assert updated_q["question_text"] == "Updated question: What was the primary email attachment hash?"
+    assert updated_q["approval_status"] == "APPROVED"
+
+
+def test_bulk_save_investigative_questions(db_session: Session):
+    """Verifies bulk saving questions via PUT /api/v1/cases/{case_id}/investigative-questions."""
+    user, case = create_user_and_case(db_session, "Ransomware outbreak analysis")
+    headers = get_auth_headers(user)
+
+    bulk_questions = [
+        {
+            "question_id": "IQ-91",
+            "code": "RANSOM_EXT",
+            "question_text": "Which encryption extension was appended to user files?",
+            "category": "RANSOMWARE_ENCRYPTION",
+            "hypothesis": "Files were renamed with .lockbit extension.",
+            "approval_status": "APPROVED"
+        },
+        {
+            "question_id": "IQ-92",
+            "code": "VSS_DELETE",
+            "question_text": "Was volume shadow copy service deleted via vssadmin?",
+            "category": "ANTI_FORENSICS",
+            "hypothesis": "Shadow copies purged prior to encryption.",
+            "approval_status": "APPROVED"
+        }
+    ]
+
+    put_res = client.put(
+        f"/api/v1/cases/{case.id}/investigative-questions",
+        headers=headers,
+        json={"questions": bulk_questions}
+    )
+    assert put_res.status_code == 200, put_res.text
+    put_data = put_res.json()
+    assert len(put_data["questions"]) == 2
+    assert put_data["questions"][0]["question_id"] == "IQ-91"
+    assert put_data["questions"][1]["question_id"] == "IQ-92"
+
+    # Confirm persistence
+    get_res = client.get(f"/api/v1/cases/{case.id}/investigative-questions", headers=headers)
+    assert get_res.status_code == 200
+    saved = get_res.json()["questions"]
+    assert len(saved) == 2
+    assert saved[0]["question_text"] == "Which encryption extension was appended to user files?"
+
+
+def test_evidence_intelligence_driven_questions(db_session: Session):
+    """Verifies that evidence-type specific questions are generated for disk, memory, pcap, and event logs."""
+    from backend.app.models.models import EvidenceItem
+    user, case = create_user_and_case(db_session, "Lateral compromise assessment")
+
+    # Add disk image evidence with valid non-null size_bytes
+    disk_ev = EvidenceItem(
+        id=f"ev-disk-{uuid.uuid4().hex[:6]}",
+        case_id=case.id,
+        name="server_c_drive.raw",
+        original_path="/tmp/server_c_drive.raw",
+        storage_path="/tmp/server_c_drive.raw",
+        evidence_type="DISK_IMAGE",
+        detected_format="raw",
+        size_bytes=1048576,
+        status="PRESERVED",
+        sha256="1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+    )
+    # Add memory dump evidence with valid non-null size_bytes
+    mem_ev = EvidenceItem(
+        id=f"ev-mem-{uuid.uuid4().hex[:6]}",
+        case_id=case.id,
+        name="server_ram.dmp",
+        original_path="/tmp/server_ram.dmp",
+        storage_path="/tmp/server_ram.dmp",
+        evidence_type="MEMORY_DUMP",
+        detected_format="raw",
+        size_bytes=2097152,
+        status="PRESERVED",
+        sha256="abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+    )
+    db_session.add(disk_ev)
+    db_session.add(mem_ev)
+    db_session.commit()
+
+    questions = EvidenceDecisionEngine.get_case_investigative_questions(db_session, case.id)
+    q_categories = [q.get("category") for q in questions]
+
+    # Verify evidence-driven categories are present
+    assert any("FILESYSTEM" in c or "DELETED" in c for c in q_categories)
+    assert any("MEMORY" in c or "VOLATILE" in c for c in q_categories)
+
+    # Verify questions reference file system and memory injection/unlinked processes
+    disk_qs = [q for q in questions if "FILESYSTEM" in q.get("category", "") or "DELETED" in q.get("category", "")]
+    mem_qs = [q for q in questions if "MEMORY" in q.get("category", "") or "VOLATILE" in q.get("category", "")]
+    assert len(disk_qs) > 0
+    assert len(mem_qs) > 0
+    assert any("file system" in q["question_text"].lower() or "unallocated" in q["question_text"].lower() for q in disk_qs)
+    assert any("memory" in q["question_text"].lower() or "injection" in q["question_text"].lower() or "unlinked" in q["question_text"].lower() for q in mem_qs)
+
+

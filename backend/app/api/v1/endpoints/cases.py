@@ -2,11 +2,27 @@ import uuid
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Request
+from sqlalchemy import or_, func
 from sqlalchemy.orm import Session
 
 from backend.app.core.database import get_db
 from backend.app.core.security import get_current_active_user
-from backend.app.models.models import Case, CaseMember, EvidenceItem, Finding, ExecutionArtifact, User
+from backend.app.models.models import (
+    Case,
+    CaseMember,
+    EvidenceItem,
+    Finding,
+    ExecutionArtifact,
+    ToolExecution,
+    EvidenceIntelligence,
+    CorrelationGroup,
+    AIReasoningRecord,
+    InvestigatorDecision,
+    InvestigatorReviewRecord,
+    Report,
+    AuditEvent,
+    User,
+)
 from backend.app.schemas.schemas import (
     CaseCreate,
     CaseUpdate,
@@ -21,6 +37,11 @@ from backend.app.schemas.schemas import (
     InvestigatorDecisionCreate,
     InvestigatorDecisionResponse,
     EvidenceVerificationResponse,
+    DashboardAnalyticsResponse,
+    CaseDashboardStats,
+    WorkflowStageMetric,
+    DashboardCaseActivity,
+    DashboardAuditEvent,
 )
 from backend.app.services.authorization import (
     get_authorized_case,
@@ -152,11 +173,352 @@ def create_case(
 @router.get("/", response_model=List[CaseResponse])
 @router.get("", response_model=List[CaseResponse])
 def list_cases(
+    filter: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     cases = get_user_cases(db, current_user)
+    filter_name = (filter or "all").strip().lower()
+    if filter_name not in {"all", "active", "completed", "pending", "failed", "attention"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid case filter. Expected all, active, completed, pending, failed, or attention.",
+        )
+
+    if filter_name != "all":
+        case_ids = [case.id for case in cases]
+        failed_execution_case_ids = set()
+        unreviewed_finding_case_ids = set()
+        if case_ids:
+            failed_execution_case_ids = {
+                row[0]
+                for row in db.query(ToolExecution.case_id)
+                .filter(
+                    ToolExecution.case_id.in_(case_ids),
+                    ToolExecution.status == "FAILED",
+                )
+                .distinct()
+                .all()
+            }
+            unreviewed_finding_case_ids = {
+                row[0]
+                for row in db.query(Finding.case_id)
+                .filter(
+                    Finding.case_id.in_(case_ids),
+                    Finding.verification_status.in_(
+                        ["PENDING_REVIEW", "REQUIRES_REVIEW", "PROPOSED", "UNVERIFIED"]
+                    ),
+                )
+                .distinct()
+                .all()
+            }
+
+        def matches(case: Case) -> bool:
+            status_norm = (case.status or "").upper().strip()
+            if filter_name == "active":
+                return status_norm in {"OPEN", "ACTIVE", "IN_PROGRESS"}
+            if filter_name == "completed":
+                return status_norm in {"CLOSED", "ARCHIVED"}
+            if filter_name == "pending":
+                return status_norm in {"DRAFT", "PENDING"}
+            if filter_name == "failed":
+                return status_norm == "FAILED" or case.id in failed_execution_case_ids
+            return (
+                status_norm == "FAILED"
+                or case.id in failed_execution_case_ids
+                or case.id in unreviewed_finding_case_ids
+            )
+
+        cases = [case for case in cases if matches(case)]
     return [_build_case_response(c, db) for c in cases]
+
+
+@router.get("/dashboard/stats", response_model=DashboardAnalyticsResponse)
+def get_dashboard_stats(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Returns live database-driven statistics, 10-stage workflow progress,
+    investigation activities, and actionable cryptographically verified audit events.
+    """
+    from backend.app.services.audit import compute_audit_hash, compute_legacy_audit_hash, canonical_timestamp_iso, GENESIS_HASH
+
+    cases = get_user_cases(db, current_user)
+    case_ids = [c.id for c in cases]
+    total_cases = len(cases)
+
+    # 1. Real database-driven case statistics
+    completed_count = 0
+    active_count = 0
+    pending_count = 0
+    failed_cases_set = set()
+    attention_cases_set = set()
+
+    for c in cases:
+        status_norm = (c.status or "").upper().strip()
+        if status_norm in ("CLOSED", "ARCHIVED"):
+            completed_count += 1
+        elif status_norm in ("OPEN", "ACTIVE", "IN_PROGRESS"):
+            active_count += 1
+        elif status_norm in ("DRAFT", "PENDING"):
+            pending_count += 1
+        elif status_norm == "FAILED":
+            failed_cases_set.add(c.id)
+
+    # Check for failed tool executions across user cases
+    if case_ids:
+        failed_execs = db.query(ToolExecution.case_id).filter(
+            ToolExecution.case_id.in_(case_ids),
+            ToolExecution.status == "FAILED"
+        ).distinct().all()
+        for row in failed_execs:
+            failed_cases_set.add(row[0])
+            attention_cases_set.add(row[0])
+
+        # Check for unreviewed findings across user cases
+        unreviewed_findings = db.query(Finding.case_id).filter(
+            Finding.case_id.in_(case_ids),
+            Finding.verification_status.in_(["PENDING_REVIEW", "REQUIRES_REVIEW", "PROPOSED", "UNVERIFIED"])
+        ).distinct().all()
+        for row in unreviewed_findings:
+            attention_cases_set.add(row[0])
+
+    # 2. 10-Stage Workflow Progress Indicator
+    evidence_counts = dict(
+        db.query(EvidenceItem.case_id, func.count(EvidenceItem.id))
+        .filter(EvidenceItem.case_id.in_(case_ids))
+        .group_by(EvidenceItem.case_id).all()
+    ) if case_ids else {}
+
+    artifact_counts = dict(
+        db.query(ExecutionArtifact.case_id, func.count(ExecutionArtifact.id))
+        .filter(ExecutionArtifact.case_id.in_(case_ids))
+        .group_by(ExecutionArtifact.case_id).all()
+    ) if case_ids else {}
+
+    execution_counts = dict(
+        db.query(ToolExecution.case_id, func.count(ToolExecution.id))
+        .filter(ToolExecution.case_id.in_(case_ids))
+        .group_by(ToolExecution.case_id).all()
+    ) if case_ids else {}
+
+    carving_cases = set(
+        r[0] for r in (
+            db.query(ToolExecution.case_id)
+            .filter(
+                ToolExecution.case_id.in_(case_ids),
+                or_(
+                    ToolExecution.tool_id.ilike("%carv%"),
+                    ToolExecution.tool_id.ilike("%foremost%"),
+                    ToolExecution.tool_id.ilike("%scalpel%"),
+                    ToolExecution.tool_id.ilike("%bulk_extractor%")
+                )
+            ).distinct().all()
+        )
+    ) if case_ids else set()
+
+    strings_cases = set(
+        r[0] for r in (
+            db.query(ToolExecution.case_id)
+            .filter(
+                ToolExecution.case_id.in_(case_ids),
+                or_(
+                    ToolExecution.tool_id.ilike("%string%"),
+                    ToolExecution.tool_id.ilike("%grep%"),
+                    ToolExecution.tool_id.ilike("%pattern%")
+                )
+            ).distinct().all()
+        )
+    ) if case_ids else set()
+
+    intelligence_cases = set(
+        r[0] for r in (
+            db.query(EvidenceIntelligence.evidence_id)
+            .join(EvidenceItem, EvidenceItem.id == EvidenceIntelligence.evidence_id)
+            .filter(EvidenceItem.case_id.in_(case_ids))
+            .distinct().all()
+        )
+    ) if case_ids else set()
+
+    correlation_counts = dict(
+        db.query(CorrelationGroup.case_id, func.count(CorrelationGroup.id))
+        .filter(CorrelationGroup.case_id.in_(case_ids))
+        .group_by(CorrelationGroup.case_id).all()
+    ) if case_ids else {}
+
+    ai_reasoning_cases = set(
+        r[0] for r in (
+            db.query(AIReasoningRecord.case_id)
+            .filter(AIReasoningRecord.case_id.in_(case_ids))
+            .distinct().all()
+        )
+    ) if case_ids else set()
+
+    review_cases = set(
+        r[0] for r in (
+            db.query(InvestigatorReviewRecord.case_id)
+            .filter(InvestigatorReviewRecord.case_id.in_(case_ids))
+            .distinct().all()
+        )
+    ) if case_ids else set()
+    decision_cases = set(
+        r[0] for r in (
+            db.query(InvestigatorDecision.case_id)
+            .filter(InvestigatorDecision.case_id.in_(case_ids))
+            .distinct().all()
+        )
+    ) if case_ids else set()
+    all_review_cases = review_cases | decision_cases
+
+    report_counts = dict(
+        db.query(Report.case_id, func.count(Report.id))
+        .filter(Report.case_id.in_(case_ids))
+        .group_by(Report.case_id).all()
+    ) if case_ids else {}
+
+    findings_counts = dict(
+        db.query(Finding.case_id, func.count(Finding.id))
+        .filter(Finding.case_id.in_(case_ids))
+        .group_by(Finding.case_id).all()
+    ) if case_ids else {}
+
+    s1_cases = sum(1 for cid in case_ids if evidence_counts.get(cid, 0) > 0)
+    s2_cases = sum(1 for cid in case_ids if artifact_counts.get(cid, 0) > 0 or execution_counts.get(cid, 0) > 0)
+    s3_cases = sum(1 for cid in case_ids if cid in intelligence_cases or artifact_counts.get(cid, 0) > 0)
+    s4_cases = sum(1 for cid in case_ids if cid in carving_cases)
+    s5_cases = sum(1 for cid in case_ids if cid in strings_cases)
+    s6_cases = sum(1 for cid in case_ids if correlation_counts.get(cid, 0) > 0)
+    s7_cases = sum(1 for cid in case_ids if cid in ai_reasoning_cases)
+    s8_cases = sum(1 for cid in case_ids if cid in all_review_cases)
+    s9_cases = sum(1 for cid in case_ids if report_counts.get(cid, 0) > 0)
+    s10_cases = sum(1 for c in cases if (c.status or "").upper() in ("CLOSED", "ARCHIVED"))
+
+    calc_pct = lambda count: round((count / total_cases * 100.0), 1) if total_cases > 0 else 0.0
+
+    workflow_stages = [
+        WorkflowStageMetric(stage_number=1, stage_key="INGESTION", label="Evidence Intake & Vault", cases_completed=s1_cases, percentage=calc_pct(s1_cases)),
+        WorkflowStageMetric(stage_number=2, stage_key="EXTRACTION", label="Forensic Tool Extraction", cases_completed=s2_cases, percentage=calc_pct(s2_cases)),
+        WorkflowStageMetric(stage_number=3, stage_key="METADATA_ANALYSIS", label="Metadata & Entropy Analysis", cases_completed=s3_cases, percentage=calc_pct(s3_cases)),
+        WorkflowStageMetric(stage_number=4, stage_key="CARVING", label="File & Data Carving", cases_completed=s4_cases, percentage=calc_pct(s4_cases)),
+        WorkflowStageMetric(stage_number=5, stage_key="STRING_SEARCH", label="GNU Strings & Pattern Search", cases_completed=s5_cases, percentage=calc_pct(s5_cases)),
+        WorkflowStageMetric(stage_number=6, stage_key="CORRELATION", label="Cross-Domain Correlation", cases_completed=s6_cases, percentage=calc_pct(s6_cases)),
+        WorkflowStageMetric(stage_number=7, stage_key="AGENT_REASONING", label="Multi-Agent AI Reasoning", cases_completed=s7_cases, percentage=calc_pct(s7_cases)),
+        WorkflowStageMetric(stage_number=8, stage_key="INVESTIGATOR_REVIEW", label="Human-in-the-Loop Review", cases_completed=s8_cases, percentage=calc_pct(s8_cases)),
+        WorkflowStageMetric(stage_number=9, stage_key="REPORT_GENERATION", label="Authoritative Report Generation", cases_completed=s9_cases, percentage=calc_pct(s9_cases)),
+        WorkflowStageMetric(stage_number=10, stage_key="ARCHIVAL", label="Evidence Sealed & Case Closure", cases_completed=s10_cases, percentage=calc_pct(s10_cases)),
+    ]
+
+    # 3. Investigation Activity List (top 10 recent cases)
+    recent_activity = []
+    case_map = {c.id: c.case_number for c in cases}
+    for c in cases[:10]:
+        if (c.status or "").upper() in ("CLOSED", "ARCHIVED"):
+            c_stage = "ARCHIVAL (CLOSED)"
+        elif report_counts.get(c.id, 0) > 0:
+            c_stage = "REPORT_GENERATION"
+        elif c.id in all_review_cases:
+            c_stage = "INVESTIGATOR_REVIEW"
+        elif c.id in ai_reasoning_cases:
+            c_stage = "AGENT_REASONING"
+        elif correlation_counts.get(c.id, 0) > 0:
+            c_stage = "CORRELATION"
+        elif c.id in strings_cases:
+            c_stage = "STRING_SEARCH"
+        elif c.id in carving_cases:
+            c_stage = "CARVING"
+        elif c.id in intelligence_cases:
+            c_stage = "METADATA_ANALYSIS"
+        elif artifact_counts.get(c.id, 0) > 0 or execution_counts.get(c.id, 0) > 0:
+            c_stage = "EXTRACTION"
+        elif evidence_counts.get(c.id, 0) > 0:
+            c_stage = "INGESTION"
+        else:
+            c_stage = "WORKSPACE_INITIALIZED"
+
+        investigator = c.created_by or c.owner_id or "Investigator"
+        recent_activity.append(
+            DashboardCaseActivity(
+                id=c.id,
+                case_number=c.case_number,
+                title=c.name or c.case_number,
+                name=c.name or c.case_number,
+                status=c.status,
+                current_stage=c_stage,
+                assigned_investigator=investigator,
+                created_at=c.created_at,
+                updated_at=c.updated_at,
+                evidence_count=evidence_counts.get(c.id, 0),
+                findings_count=findings_counts.get(c.id, 0),
+            )
+        )
+
+    # 4. Actionable Audit Event Stream (last 15 events)
+    recent_audit_events = []
+    audit_query = db.query(AuditEvent)
+    if case_ids:
+        audit_query = audit_query.filter(or_(AuditEvent.case_id.in_(case_ids), AuditEvent.case_id.is_(None)))
+    else:
+        audit_query = audit_query.filter(AuditEvent.case_id.is_(None))
+
+    audit_records = audit_query.order_by(AuditEvent.timestamp.desc(), AuditEvent.id.desc()).limit(15).all()
+
+    for ev in audit_records:
+        is_valid = True
+        if ev.event_hash:
+            try:
+                expected_hash = compute_audit_hash(
+                    chain_index=ev.chain_index or 0,
+                    previous_hash=ev.previous_hash or GENESIS_HASH,
+                    timestamp_iso=canonical_timestamp_iso(ev.timestamp),
+                    event_type=ev.event_type,
+                    case_id=ev.case_id,
+                    actor_name=ev.actor_name,
+                    details=ev.details,
+                    metadata_json=ev.metadata_json or {},
+                    provenance_context=ev.provenance_context or {}
+                )
+                if ev.event_hash != expected_hash:
+                    legacy_hash = compute_legacy_audit_hash(
+                        timestamp_iso=canonical_timestamp_iso(ev.timestamp),
+                        event_type=ev.event_type,
+                        case_id=ev.case_id,
+                        actor_name=ev.actor_name,
+                        details=ev.details,
+                        metadata_json=ev.metadata_json or {}
+                    )
+                    is_valid = (ev.event_hash == legacy_hash)
+            except Exception:
+                is_valid = False
+
+        recent_audit_events.append(
+            DashboardAuditEvent(
+                id=ev.id,
+                case_id=ev.case_id,
+                case_number=case_map.get(ev.case_id) if ev.case_id else None,
+                actor_name=ev.actor_name,
+                event_type=ev.event_type,
+                details=ev.details,
+                timestamp=ev.timestamp,
+                event_hash=ev.event_hash,
+                chain_index=ev.chain_index,
+                is_hash_valid=is_valid,
+            )
+        )
+
+    return DashboardAnalyticsResponse(
+        stats=CaseDashboardStats(
+            total=total_cases,
+            completed=completed_count,
+            active=active_count,
+            pending=pending_count,
+            failed=len(failed_cases_set),
+            attention_required=len(attention_cases_set),
+        ),
+        workflow_stages=workflow_stages,
+        recent_activity=recent_activity,
+        audit_events=recent_audit_events,
+    )
 
 
 @router.get("/{case_id}", response_model=CaseResponse)

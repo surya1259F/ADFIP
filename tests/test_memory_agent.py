@@ -10,8 +10,26 @@ def test_memory_agent_can_handle():
     assert agent.can_handle("raw_memory") is True
     assert agent.can_handle("vmem") is True
     assert agent.can_handle("dmp") is True
+    assert agent.can_handle("minidump") is False
     assert agent.can_handle("disk_image") is False
     assert agent.can_handle("network_capture") is False
+
+def test_memory_agent_tool_unavailable_truthfully(monkeypatch):
+    agent = MemoryAgent()
+    monkeypatch.setattr(agent.adapter, "is_available", lambda: False)
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".dmp") as tf:
+        res = agent.analyze({
+            "id": "ev-1",
+            "investigation_id": "inv-1",
+            "name": "mem.dmp",
+            "evidence_type": "memory_dump",
+            "original_path": "/raw/source/mem.dmp",
+            "storage_path": tf.name
+        }, parameters={"plugin": "windows.pslist"})
+        assert res["status"] == "TOOL_UNAVAILABLE"
+        assert len(res["artifacts"]) == 0
+        assert len(res["findings"]) == 0
 
 def test_memory_agent_rejects_unsupported_evidence():
     agent = MemoryAgent()
@@ -59,8 +77,9 @@ def test_memory_agent_handles_invalid_path():
     })
     assert res["status"] == "INVALID_EVIDENCE_PATH"
 
-def test_memory_agent_rejects_disallowed_plugin():
+def test_memory_agent_rejects_disallowed_plugin(monkeypatch):
     agent = MemoryAgent()
+    monkeypatch.setattr(agent.adapter, "is_available", lambda: True)
     # Create fake temporary file for path validation
     import tempfile
     with tempfile.NamedTemporaryFile(suffix=".dmp") as tf:
@@ -77,6 +96,7 @@ def test_memory_agent_rejects_disallowed_plugin():
 def test_memory_agent_pslist_artifact_and_finding_generation(monkeypatch):
     import tempfile
     agent = MemoryAgent()
+    monkeypatch.setattr(agent.adapter, "is_available", lambda: True)
 
     # Mock the adapter's execute_plugin to return representative pslist output
     mock_res = ToolExecutionResult(
@@ -112,6 +132,7 @@ def test_memory_agent_pslist_artifact_and_finding_generation(monkeypatch):
 def test_memory_agent_netscan_finding_generation(monkeypatch):
     import tempfile
     agent = MemoryAgent()
+    monkeypatch.setattr(agent.adapter, "is_available", lambda: True)
 
     mock_res = ToolExecutionResult(
         tool_name="volatility3",

@@ -1,5 +1,5 @@
 import React from 'react';
-import { NavLink, useParams, useNavigate } from 'react-router-dom';
+import { NavLink, Link, useParams, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   FolderKanban,
@@ -22,6 +22,7 @@ import {
 import { useUIStore } from '../../stores/uiStore';
 import { useAuthStore } from '../../stores/authStore';
 import { Tooltip } from '../ui/Tooltip';
+import { UserAvatar } from '../ui/UserAvatar';
 import { cn } from '../../lib/utils';
 import { useQuery } from '@tanstack/react-query';
 import { casesService } from '../../services/cases';
@@ -231,11 +232,24 @@ export const Sidebar: React.FC = () => {
       {/* Footer / Account */}
       <div className="border-t border-stone-200/80 p-2">
         {!collapsed && user && (
-          <div className="px-2 py-1.5 mb-1 bg-stone-100/60 rounded-md">
-            <p className="text-xs font-semibold text-slate-800 truncate">{user.name || user.email}</p>
-            <p className="text-[10px] text-slate-500 truncate font-mono uppercase">
-              {user.role || 'INVESTIGATOR'}
-            </p>
+          <Link
+            to="/account"
+            className="flex items-center gap-2.5 px-2 py-1.5 mb-1.5 bg-stone-100/70 hover:bg-stone-200/60 rounded-md transition-colors"
+          >
+            <UserAvatar user={user} size="sm" />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-slate-800 truncate">{user.name || user.email}</p>
+              <p className="text-[10px] text-slate-500 truncate font-mono uppercase">
+                {user.role || 'INVESTIGATOR'}
+              </p>
+            </div>
+          </Link>
+        )}
+        {collapsed && user && (
+          <div className="flex justify-center mb-1.5">
+            <Link to="/account" title={user.name || user.email}>
+              <UserAvatar user={user} size="sm" />
+            </Link>
           </div>
         )}
         <button

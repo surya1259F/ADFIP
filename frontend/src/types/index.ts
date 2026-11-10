@@ -489,6 +489,68 @@ export interface InvestigativeQuestion {
   matching_evidence_ids?: string[];
   matching_evidence_names?: string[];
   missing_evidence_domains?: string[];
+  approval_status?: 'APPROVED' | 'REJECTED' | 'PENDING';
+  is_custom?: boolean;
+  is_edited?: boolean;
+}
+
+export interface InvestigationScope {
+  time_range_start?: string;
+  time_range_end?: string;
+  relevant_users?: string[];
+  relevant_ips?: string[];
+  relevant_hosts?: string[];
+  relevant_directories?: string[];
+  relevant_processes?: string[];
+  additional_context?: string;
+}
+
+export interface InvestigationRequirementItem {
+  id: string;
+  case_id?: string;
+  title: string;
+  description?: string;
+  category: string;
+  selected_evidence_ids: string[];
+  selected_evidence_names?: string[];
+  scope: InvestigationScope;
+  expected_outputs: string[];
+  approval_status: 'APPROVED' | 'REJECTED' | 'PENDING';
+  status: 'DRAFT' | 'SUBMITTED' | 'IN_PLANNING' | 'COMPLETED';
+  assigned_agent?: string;
+  assigned_tool?: string;
+  order_index?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface InvestigationRequirementTemplate {
+  title: string;
+  category: string;
+  description: string;
+  recommended_agent: string;
+  expected_outputs: string[];
+}
+
+export interface InvestigationRequirementsResponse {
+  case_id: string;
+  case_number: string;
+  objective: string;
+  total_requirements: number;
+  requirements: InvestigationRequirementItem[];
+  available_evidence: Array<{
+    id: string;
+    name: string;
+    evidence_type: string;
+    detected_format?: string;
+    size_bytes?: number;
+    sha256?: string;
+    status?: string;
+    integrity_status?: string;
+  }>;
+  available_templates: InvestigationRequirementTemplate[];
+  global_scope?: InvestigationScope;
+  plan_status: string;
 }
 
 export interface InvestigationPlan {
@@ -509,6 +571,7 @@ export interface InvestigationPlan {
   stopping_conditions?: StoppingCondition[];
   adjustments?: PlanAdjustment[];
   investigative_questions?: InvestigativeQuestion[];
+  requirements?: InvestigationRequirementItem[];
   created_at?: string;
   completed_at?: string;
 }
@@ -1028,6 +1091,70 @@ export interface ClaimProvenanceResponse {
   verified_integrity: boolean;
 }
 
+export interface ScoreBreakdown {
+  relevance: number;
+  source_reliability: number;
+  directness: number;
+  corroboration: number;
+  timeline_consistency: number;
+  evidence_integrity: number;
+  investigation_coverage: number;
+  penalties: number;
+}
+
+export interface InvestigationCompleteness {
+  total_requirements: number;
+  completed_requirements: number;
+  partially_completed_requirements: number;
+  unanswered_requirements: number;
+  failed_tasks: number;
+  missing_evidence_domains: string[];
+  percentage: number;
+}
+
+export type AttackClassification =
+  | 'CONFIRMED_ATTACK'
+  | 'LIKELY_ATTACK'
+  | 'INCONCLUSIVE'
+  | 'NO_ATTACK_OBSERVED'
+  | 'INSUFFICIENT_EVIDENCE';
+
+export type AssessmentDecisionType =
+  | 'ACCEPT'
+  | 'EDIT'
+  | 'CHALLENGE'
+  | 'REQUEST_MORE_EVIDENCE'
+  | 'REJECT';
+
+export interface ForensicAssessment {
+  case_id: string;
+  case_number: string;
+  classification: AttackClassification;
+  evidence_strength_score: number;
+  score_breakdown: ScoreBreakdown;
+  investigation_completeness: InvestigationCompleteness;
+  supporting_observations: Array<Record<string, any>>;
+  contradictory_observations: Array<Record<string, any>>;
+  alternative_explanations: Array<Record<string, any>>;
+  missing_evidence: string[];
+  unresolved_questions: string[];
+  investigation_limitations: string[];
+  ai_synthesis?: string | null;
+  investigator_decision?: AssessmentDecisionType | null;
+  investigator_rationale?: string | null;
+  decided_at?: string | null;
+  decided_by?: string | null;
+  generated_at: string;
+  methodology_version: string;
+}
+
+export interface InvestigatorAssessmentDecisionRequest {
+  decision: AssessmentDecisionType;
+  rationale: string;
+  edited_classification?: string | null;
+  additional_analysis_requested?: string | null;
+}
+
 // Step 20 Final Forensic Report Interfaces
 export interface ForensicReportGenerateRequest {
   title?: string;
@@ -1270,3 +1397,55 @@ export interface SystemHealth {
   database?: string;
   uptime_seconds?: number;
 }
+
+export interface CaseDashboardStats {
+  total: number;
+  completed: number;
+  active: number;
+  pending: number;
+  failed: number;
+  attention_required: number;
+}
+
+export interface WorkflowStageMetric {
+  stage_number: number;
+  stage_key: string;
+  label: string;
+  cases_completed: number;
+  percentage: number;
+}
+
+export interface DashboardCaseActivity {
+  id: string;
+  case_number: string;
+  title: string;
+  name: string;
+  status: string;
+  current_stage: string;
+  assigned_investigator: string;
+  created_at: string;
+  updated_at?: string;
+  evidence_count: number;
+  findings_count: number;
+}
+
+export interface DashboardAuditEvent {
+  id: string;
+  case_id?: string;
+  case_number?: string;
+  actor_name: string;
+  event_type: string;
+  details: string;
+  timestamp: string;
+  event_hash?: string;
+  chain_index?: number;
+  is_hash_valid: boolean;
+}
+
+export interface DashboardAnalyticsResponse {
+  stats: CaseDashboardStats;
+  workflow_stages: WorkflowStageMetric[];
+  recent_activity: DashboardCaseActivity[];
+  audit_events: DashboardAuditEvent[];
+}
+

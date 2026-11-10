@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { FolderKanban, Plus } from 'lucide-react';
 import { casesService } from '../../services/cases';
@@ -99,11 +99,25 @@ const CreateCaseDialog: React.FC<{ open: boolean; onClose: () => void }> = ({
 
 export const CasesPage: React.FC = () => {
   const [createOpen, setCreateOpen] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const currentFilter = (searchParams.get('filter') || 'all').toLowerCase();
 
-  const { data: cases, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['cases'],
-    queryFn: casesService.list,
+  const { data: allCases = [], isLoading: isLoadingAll } = useQuery({
+    queryKey: ['cases', 'all'],
+    queryFn: () => casesService.list('all'),
   });
+  const { data: filteredCases = [], isLoading, isError, error, refetch } = useQuery({
+    queryKey: ['cases', currentFilter],
+    queryFn: () => casesService.list(currentFilter),
+  });
+
+  const filterTabs = [
+    { key: 'all', label: 'All Cases', count: allCases.length },
+    { key: 'active', label: 'Active', count: allCases.filter((c) => ['OPEN', 'ACTIVE', 'IN_PROGRESS'].includes((c.status || '').toUpperCase())).length },
+    { key: 'completed', label: 'Completed', count: allCases.filter((c) => ['CLOSED', 'ARCHIVED'].includes((c.status || '').toUpperCase())).length },
+    { key: 'pending', label: 'Pending', count: allCases.filter((c) => ['DRAFT', 'PENDING'].includes((c.status || '').toUpperCase())).length },
+    { key: 'failed', label: 'Failed', count: allCases.filter((c) => (c.status || '').toUpperCase() === 'FAILED').length },
+  ];
 
   return (
     <div className="max-w-5xl mx-auto space-y-4">
@@ -122,6 +136,33 @@ export const CasesPage: React.FC = () => {
         }
       />
 
+      {/* Filter Tabs */}
+      <div className="flex items-center gap-1.5 border-b border-stone-200 pb-2">
+        {filterTabs.map((tab) => {
+          const isActive = currentFilter === tab.key;
+          return (
+            <button
+              key={tab.key}
+              onClick={() => setSearchParams({ filter: tab.key })}
+              className={`px-3 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                isActive
+                  ? 'bg-slate-900 text-white'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-stone-100'
+              }`}
+            >
+              <span>{tab.label}</span>
+              <span
+                className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                  isActive ? 'bg-slate-700 text-white' : 'bg-stone-200 text-slate-600'
+                }`}
+              >
+                {tab.count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
       {isError && (
         <ErrorState message={normalizeError(error)} onRetry={refetch} />
       )}
@@ -134,7 +175,7 @@ export const CasesPage: React.FC = () => {
         </Card>
       )}
 
-      {!isLoading && !isError && (cases?.length ?? 0) === 0 && (
+      {!isLoading && !isError && !isLoadingAll && allCases.length === 0 && (
         <EmptyState
           icon={<FolderKanban className="w-8 h-8" />}
           title="No investigations yet"
@@ -151,7 +192,24 @@ export const CasesPage: React.FC = () => {
         />
       )}
 
-      {!isLoading && !isError && (cases?.length ?? 0) > 0 && (
+      {!isLoading && !isError && allCases.length > 0 && filteredCases.length === 0 && (
+        <EmptyState
+          icon={<FolderKanban className="w-8 h-8" />}
+          title={`No ${currentFilter} investigations found`}
+          description="Try selecting a different filter above."
+          action={
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setSearchParams({ filter: 'all' })}
+            >
+              Show All Cases
+            </Button>
+          }
+        />
+      )}
+
+      {!isLoading && !isError && filteredCases.length > 0 && (
         <Card padding={false}>
           <table className="w-full text-sm">
             <thead>
@@ -172,7 +230,7 @@ export const CasesPage: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {cases!.map((c: Case) => (
+              {filteredCases.map((c: Case) => (
                 <tr
                   key={c.id}
                   className="border-b border-stone-50 hover:bg-stone-50 transition-colors"

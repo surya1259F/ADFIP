@@ -7,9 +7,15 @@ SAMPLE_XML_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "log" / "sam
 def test_log_agent_can_handle():
     agent = LogAgent()
     assert agent.can_handle("log") is True
-    assert agent.can_handle("file") is True
     assert agent.can_handle("event_log") is True
     assert agent.can_handle("evtx") is True
+    assert agent.can_handle("windows_event_log") is True
+    assert agent.can_handle("system_log") is True
+    assert agent.can_handle("xml") is True
+    assert agent.can_handle("text") is True
+    assert agent.can_handle("document") is False
+    assert agent.can_handle("binary") is False
+    assert agent.can_handle("disk_image") is False
     assert agent.can_handle("network_capture") is False
 
 def test_log_agent_rejects_unsupported_evidence():
