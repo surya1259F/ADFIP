@@ -48,7 +48,7 @@ jobs:
       - name: Rust Cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: 'frontend/src-tauri -> target'
+          workspaces: "frontend/src-tauri"
 
       - name: Install Python Dependencies & PyInstaller
         shell: pwsh
@@ -158,5 +158,4 @@ jobs:
             frontend/src-tauri/target/release/bundle/nsis/*.exe
             frontend/src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
-          retention-days: 14
           retention-days: 14
