@@ -22,7 +22,8 @@ data/
 evidence/intake/*
 .adfir_prod_test_data/
 build/
-tools/
+/tools/
+!frontend/src/pages/tools/
 .vscode/
 *.E01
 *.raw
