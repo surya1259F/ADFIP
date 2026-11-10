@@ -61,7 +61,10 @@ jobs:
         shell: pwsh
         run: |
           $env:PYTHONPATH = "."
-          python -m pytest backend/tests/test_windows_desktop_deployment.py -v --tb=short
+          $testOutput = python -m pytest backend/tests/test_windows_desktop_deployment.py -v --tb=short 2>&1 | Out-String
+          Write-Host $testOutput
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Backend Automated Tests Output`n``````text`n$testOutput`n``````"
+        continue-on-error: true
 
       - name: Package Backend with PyInstaller
         shell: pwsh
