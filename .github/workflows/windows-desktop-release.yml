@@ -61,7 +61,7 @@ jobs:
         shell: pwsh
         run: |
           $env:PYTHONPATH = "."
-          pytest backend/tests/test_windows_desktop_deployment.py -v --tb=short
+          python -m pytest backend/tests/test_windows_desktop_deployment.py -v --tb=short
 
       - name: Package Backend with PyInstaller
         shell: pwsh

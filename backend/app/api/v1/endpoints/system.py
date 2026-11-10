@@ -63,7 +63,8 @@ async def shutdown_backend(
 
     async def delayed_shutdown():
         await asyncio.sleep(0.3)
-        os.kill(os.getpid(), signal.SIGTERM)
+        if not os.getenv("ADFIP_TESTING") and not os.getenv("PYTEST_CURRENT_TEST"):
+            os.kill(os.getpid(), signal.SIGTERM)
 
     asyncio.create_task(delayed_shutdown())
 
