@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 import logging
 from sqlalchemy import inspect, text
@@ -16,6 +17,14 @@ def get_alembic_config(engine=None) -> Config:
         Path.cwd() / "alembic.ini",
         Path.cwd() / "backend" / "alembic.ini",
     ]
+    if getattr(sys, "frozen", False):
+        meipass = Path(getattr(sys, "_MEIPASS", sys.executable))
+        candidates.insert(0, meipass / "backend" / "alembic.ini")
+        candidates.insert(1, meipass / "alembic.ini")
+        exe_dir = Path(sys.executable).parent
+        candidates.insert(2, exe_dir / "backend" / "alembic.ini")
+        candidates.insert(3, exe_dir / "alembic.ini")
+
     ini_path = None
     for cand in candidates:
         if cand.exists():
@@ -30,6 +39,14 @@ def get_alembic_config(engine=None) -> Config:
         backend_dir / "alembic",
         backend_dir.parent / "alembic",
     ]
+    if getattr(sys, "frozen", False):
+        meipass = Path(getattr(sys, "_MEIPASS", sys.executable))
+        alembic_dir_candidates.insert(0, meipass / "backend" / "alembic")
+        alembic_dir_candidates.insert(1, meipass / "alembic")
+        exe_dir = Path(sys.executable).parent
+        alembic_dir_candidates.insert(2, exe_dir / "backend" / "alembic")
+        alembic_dir_candidates.insert(3, exe_dir / "alembic")
+
     alembic_dir = None
     for cand in alembic_dir_candidates:
         if cand.exists():

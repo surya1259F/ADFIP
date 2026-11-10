@@ -1,0 +1,162 @@
+name: ADFIP Windows Desktop Release
+
+on:
+  push:
+    branches:
+      - feature/frontend-rebuild
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - feature/frontend-rebuild
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    name: Build Windows x64 Desktop (NSIS & MSI)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python 3.11 x64
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: 'x64'
+          cache: 'pip'
+
+      - name: Set up Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'frontend/package-lock.json'
+
+      - name: Set up Rust Stable (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: 'frontend/src-tauri -> target'
+
+      - name: Install Python Dependencies & PyInstaller
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -r backend/requirements.txt
+          python -m pip install pyinstaller>=6.5.0
+
+      - name: Run Backend Automated Tests
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "."
+          pytest backend/tests/test_windows_desktop_deployment.py -v --tb=short
+
+      - name: Package Backend with PyInstaller
+        shell: pwsh
+        run: |
+          pyinstaller backend/adfir-backend.spec --distpath dist --workpath build/pyinstaller -y
+          if (-not (Test-Path "dist/adfir-backend/adfir-backend.exe")) {
+            Write-Error "PyInstaller failed to produce dist/adfir-backend/adfir-backend.exe"
+            exit 1
+          }
+          Write-Host "PyInstaller successfully generated dist/adfir-backend/adfir-backend.exe"
+
+      - name: Verify Backend Executable Standalone Execution
+        shell: pwsh
+        run: |
+          $env:ADFIP_PORT = "54321"
+          $env:ADFIP_INTERNAL_SECRET = "ci_test_secret_12345"
+          $env:ADFIP_DATA_DIR = "$env:TEMP\ADFIP_CI_DATA"
+          New-Item -ItemType Directory -Force -Path $env:ADFIP_DATA_DIR
+
+          $proc = Start-Process -FilePath "dist/adfir-backend/adfir-backend.exe" -PassThru -NoNewWindow
+          Start-Sleep -Seconds 4
+
+          try {
+            $resp = Invoke-RestMethod -Uri "http://127.0.0.1:54321/api/v1/system/health" -Method Get -TimeoutSec 5
+            Write-Host "Health check response: $($resp | ConvertTo-Json -Compress)"
+            if ($resp.status -ne "online") {
+              throw "Backend health returned non-online status: $($resp.status)"
+            }
+          } finally {
+            # Gracefully trigger shutdown
+            try {
+              $headers = @{ "X-ADFIP-Bootstrap-Secret" = "ci_test_secret_12345" }
+              Invoke-RestMethod -Uri "http://127.0.0.1:54321/api/v1/system/shutdown" -Method Post -Headers $headers -TimeoutSec 3
+            } catch {
+              Write-Host "Shutdown endpoint called, terminating process if still alive."
+            }
+            Start-Sleep -Seconds 1
+            if (-not $proc.HasExited) {
+              Stop-Process -Id $proc.Id -Force
+            }
+          }
+
+      - name: Install Frontend Dependencies
+        shell: pwsh
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Build Frontend Vite Assets
+        shell: pwsh
+        run: |
+          cd frontend
+          npm run build
+
+      - name: Build Tauri Desktop Installers (NSIS & MSI)
+        shell: pwsh
+        run: |
+          cd frontend
+          npx tauri build --bundles nsis,msi --no-sign
+
+      - name: Verify Generated Installers
+        shell: pwsh
+        run: |
+          $bundleDir = "frontend/src-tauri/target/release/bundle"
+          $nsisExes = Get-ChildItem -Path "$bundleDir/nsis/*.exe" -ErrorAction SilentlyContinue
+          $msiPkgs = Get-ChildItem -Path "$bundleDir/msi/*.msi" -ErrorAction SilentlyContinue
+          $backendExe = Get-Item -Path "dist/adfir-backend/adfir-backend.exe" -ErrorAction SilentlyContinue
+
+          Write-Host "Discovered Standalone Backend Executable:"
+          if ($backendExe) {
+            Write-Host " - $($backendExe.FullName) ($([math]::Round($backendExe.Length / 1MB, 2)) MB)"
+          } else {
+            Write-Error "Backend executable missing at dist/adfir-backend/adfir-backend.exe"
+            exit 1
+          }
+
+          Write-Host "Discovered NSIS Installers:"
+          $nsisExes | ForEach-Object { Write-Host " - $($_.FullName) ($([math]::Round($_.Length / 1MB, 2)) MB)" }
+
+          Write-Host "Discovered MSI Installers:"
+          $msiPkgs | ForEach-Object { Write-Host " - $($_.FullName) ($([math]::Round($_.Length / 1MB, 2)) MB)" }
+
+          if ($nsisExes.Count -eq 0 -and $msiPkgs.Count -eq 0) {
+            Write-Error "Neither NSIS .exe nor MSI installer was generated!"
+            exit 1
+          }
+
+      - name: Upload Windows Backend Binary & Installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: ADFIP-Windows-x64-Binaries-and-Installers
+          path: |
+            dist/adfir-backend/adfir-backend.exe
+            frontend/src-tauri/target/release/bundle/nsis/*.exe
+            frontend/src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+          retention-days: 14
+          retention-days: 14

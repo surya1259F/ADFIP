@@ -8,16 +8,22 @@ import sys
 def get_user_data_dir() -> Path:
     if sys.platform.startswith("win"):
         local_app_data = os.getenv("LOCALAPPDATA")
-        if local_app_data:
-            return Path(local_app_data) / "adfir"
-        return Path.home() / "AppData" / "Local" / "adfir"
+        base = Path(local_app_data) if local_app_data else (Path.home() / "AppData" / "Local")
+        # Check if legacy adfir exists and ADFIP does not
+        if (base / "adfir").exists() and not (base / "ADFIP").exists():
+            return base / "adfir"
+        return base / "ADFIP"
     elif sys.platform.startswith("darwin"):
-        return Path.home() / "Library" / "Application Support" / "adfir"
+        base = Path.home() / "Library" / "Application Support"
+        if (base / "adfir").exists() and not (base / "ADFIP").exists():
+            return base / "adfir"
+        return base / "ADFIP"
     else:
         xdg_data = os.getenv("XDG_DATA_HOME")
-        if xdg_data:
-            return Path(xdg_data) / "adfir"
-        return Path.home() / ".local" / "share" / "adfir"
+        base = Path(xdg_data) if xdg_data else (Path.home() / ".local" / "share")
+        if (base / "adfir").exists() and not (base / "ADFIP").exists():
+            return base / "adfir"
+        return base / "adfir"
 
 def get_repo_root_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -48,13 +54,16 @@ def _resolve_env_files() -> tuple[Path, ...]:
     return tuple(candidates)
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "ADFIR - Autonomous DFIR Platform"
+    PROJECT_NAME: str = "ADFIP - Autonomous Digital Forensic Investigation Platform"
     VERSION: str = "0.1.0"
     API_V1_STR: str = "/api/v1"
     
     # Environment control variables for standalone desktop mode
+    ADFIP_DATA_DIR: Optional[str] = None
     ADFIR_DATA_DIR: Optional[str] = None
+    ADFIP_PORT: Optional[int] = None
     ADFIR_PORT: Optional[int] = None
+    ADFIP_INTERNAL_SECRET: Optional[str] = None
     ADFIR_INTERNAL_SECRET: Optional[str] = None
     
     # Base directory (repository or installation root)
@@ -63,7 +72,7 @@ class Settings(BaseSettings):
     # Dynamic application data path properties
     @property
     def DATA_DIR(self) -> Path:
-        env_val = os.getenv("ADFIR_DATA_DIR") or self.ADFIR_DATA_DIR
+        env_val = os.getenv("ADFIP_DATA_DIR") or os.getenv("ADFIR_DATA_DIR") or self.ADFIP_DATA_DIR or self.ADFIR_DATA_DIR
         if env_val and str(env_val).strip():
             p = Path(env_val).resolve()
         elif getattr(sys, 'frozen', False):
@@ -99,25 +108,32 @@ class Settings(BaseSettings):
 
     @property
     def DATABASE_URL(self) -> str:
-        env_val = os.getenv("ADFIR_DATA_DIR") or self.ADFIR_DATA_DIR
+        env_val = os.getenv("ADFIP_DATA_DIR") or os.getenv("ADFIR_DATA_DIR") or self.ADFIP_DATA_DIR or self.ADFIR_DATA_DIR
         if env_val and str(env_val).strip():
             data_p = Path(env_val).resolve()
             data_p.mkdir(parents=True, exist_ok=True)
-            return f"sqlite:///{data_p / 'adfir.db'}"
+            db_file = data_p / "adfip.db" if (data_p / "adfip.db").exists() else data_p / "adfir.db"
+            return f"sqlite:///{db_file}"
         elif getattr(sys, 'frozen', False):
             data_p = get_user_data_dir()
             data_p.mkdir(parents=True, exist_ok=True)
-            return f"sqlite:///{data_p / 'adfir.db'}"
-        return f"sqlite:///{self.BASE_DIR / 'adfir.db'}"
+            db_file = data_p / "adfip.db" if (data_p / "adfip.db").exists() else data_p / "adfir.db"
+            return f"sqlite:///{db_file}"
+        db_file = self.BASE_DIR / "adfip.db" if (self.BASE_DIR / "adfip.db").exists() else self.BASE_DIR / "adfir.db"
+        return f"sqlite:///{db_file}"
 
 
     # Forensic tool paths
     @property
     def VOLATILITY_PYTHON(self) -> Path:
+        if sys.platform.startswith("win"):
+            return self.BASE_DIR / "volatility-env" / "Scripts" / "python.exe"
         return self.BASE_DIR / "volatility-env" / "bin" / "python"
 
     @property
     def VOLATILITY_CLI(self) -> Path:
+        if sys.platform.startswith("win"):
+            return self.BASE_DIR / "volatility-env" / "Scripts" / "vol.exe"
         return self.BASE_DIR / "volatility-env" / "bin" / "vol"
     
     # LLM Settings (Provider Abstraction)
@@ -175,15 +191,17 @@ def validate_port(port_val: Any) -> int:
     try:
         port_int = int(port_val)
     except (ValueError, TypeError):
-        raise ValueError(f"Invalid ADFIR_PORT '{port_val}': port must be an integer.")
+        raise ValueError(f"Invalid ADFIP/ADFIR_PORT '{port_val}': port must be an integer.")
     if not (1 <= port_int <= 65535):
-        raise ValueError(f"Invalid ADFIR_PORT {port_int}: port must be between 1 and 65535.")
+        raise ValueError(f"Invalid ADFIP/ADFIR_PORT {port_int}: port must be between 1 and 65535.")
     return port_int
 
 def get_backend_port() -> int:
-    port_env = os.getenv("ADFIR_PORT")
+    port_env = os.getenv("ADFIP_PORT") or os.getenv("ADFIR_PORT")
     if port_env is not None and str(port_env).strip() != "":
         return validate_port(port_env)
+    if settings.ADFIP_PORT is not None:
+        return validate_port(settings.ADFIP_PORT)
     if settings.ADFIR_PORT is not None:
         return validate_port(settings.ADFIR_PORT)
     return 8001

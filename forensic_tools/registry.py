@@ -266,7 +266,10 @@ class PlatformAwareToolRegistry:
 
     def _resolve_binary_path(self, bin_name: str) -> Optional[str]:
         # 1. System PATH
-        path = shutil.which(bin_name)
+        try:
+            path = shutil.which(bin_name)
+        except Exception:
+            path = None
         if path and not self._is_mock_or_script(path):
             return path
 
@@ -296,6 +299,20 @@ class PlatformAwareToolRegistry:
             vol_env = settings.BASE_DIR / "volatility-env" / ("Scripts/vol.exe" if self.current_os == "windows" else "bin/vol")
             if vol_env.exists() and os.access(vol_env, os.X_OK) and not self._is_mock_or_script(str(vol_env)):
                 return str(vol_env)
+
+        # 6. Standard Windows Installation Paths
+        if self.current_os == "windows":
+            standard_win_dirs = [
+                Path("C:/Program Files/The Sleuth Kit/bin"),
+                Path("C:/Program Files (x86)/The Sleuth Kit/bin"),
+                Path("C:/Program Files/Wireshark"),
+                Path("C:/ProgramData/chocolatey/bin"),
+                Path("C:/tools"),
+            ]
+            for sdir in standard_win_dirs:
+                cand = sdir / bin_name
+                if cand.exists() and not self._is_mock_or_script(str(cand)):
+                    return str(cand)
 
         return None
 

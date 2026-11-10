@@ -201,37 +201,54 @@ impl BackendManager {
 
     /// Resolves an external writable per-user application data directory for packaged backend execution.
     pub fn resolve_user_data_dir() -> PathBuf {
-        if let Ok(data_dir) = std::env::var("ADFIR_DATA_DIR") {
+        if let Ok(data_dir) = std::env::var("ADFIP_DATA_DIR").or_else(|_| std::env::var("ADFIR_DATA_DIR")) {
             if !data_dir.trim().is_empty() {
                 return PathBuf::from(data_dir);
             }
         }
         if cfg!(windows) {
             if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-                return PathBuf::from(local_app_data).join("adfir");
+                let base = PathBuf::from(local_app_data);
+                if base.join("adfir").exists() && !base.join("ADFIP").exists() {
+                    return base.join("adfir");
+                }
+                return base.join("ADFIP");
             }
             if let Ok(user_profile) = std::env::var("USERPROFILE") {
-                return PathBuf::from(user_profile)
+                let base = PathBuf::from(user_profile)
                     .join("AppData")
-                    .join("Local")
-                    .join("adfir");
+                    .join("Local");
+                if base.join("adfir").exists() && !base.join("ADFIP").exists() {
+                    return base.join("adfir");
+                }
+                return base.join("ADFIP");
             }
         } else if cfg!(target_os = "macos") {
             if let Ok(home) = std::env::var("HOME") {
-                return PathBuf::from(home)
+                let base = PathBuf::from(home)
                     .join("Library")
-                    .join("Application Support")
-                    .join("adfir");
+                    .join("Application Support");
+                if base.join("adfir").exists() && !base.join("ADFIP").exists() {
+                    return base.join("adfir");
+                }
+                return base.join("ADFIP");
             }
         } else {
             if let Ok(xdg_data) = std::env::var("XDG_DATA_HOME") {
-                return PathBuf::from(xdg_data).join("adfir");
+                let base = PathBuf::from(xdg_data);
+                if base.join("adfir").exists() && !base.join("ADFIP").exists() {
+                    return base.join("adfir");
+                }
+                return base.join("adfir");
             }
             if let Ok(home) = std::env::var("HOME") {
-                return PathBuf::from(home)
+                let base = PathBuf::from(home)
                     .join(".local")
-                    .join("share")
-                    .join("adfir");
+                    .join("share");
+                if base.join("adfir").exists() && !base.join("ADFIP").exists() {
+                    return base.join("adfir");
+                }
+                return base.join("adfir");
             }
         }
         PathBuf::from(".adfir_data")
@@ -239,56 +256,60 @@ impl BackendManager {
 
     /// Resolves PyInstaller executable location with Tauri app resource directory fallback.
     pub fn resolve_backend_executable() -> Option<PathBuf> {
-        let exe_name = if cfg!(windows) {
-            "adfir-backend.exe"
+        let exe_names = if cfg!(windows) {
+            &["adfir-backend.exe", "ADFIP-backend.exe", "ADFIP.exe"][..]
         } else {
-            "adfir-backend"
+            &["adfir-backend", "ADFIP-backend", "ADFIP"][..]
         };
 
-        // 1. Check relative build dist directory (development/build environment)
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let repo_dist = manifest_dir
             .parent()
             .unwrap()
             .join("dist")
             .join("adfir-backend");
-        let candidate1 = repo_dist.join(exe_name);
-        if candidate1.exists() {
-            return Some(candidate1);
+
+        for exe_name in exe_names {
+            let candidate1 = repo_dist.join(exe_name);
+            if candidate1.exists() {
+                return Some(candidate1);
+            }
         }
 
         // 2. Check current executable parent sidecar & resource locations (packaged app runtime)
         if let Ok(current_exe) = std::env::current_exe() {
             if let Some(parent) = current_exe.parent() {
-                let candidates = [
-                    parent.join(exe_name),
-                    parent.join("adfir-backend").join(exe_name),
-                    parent
-                        .join("resources")
-                        .join("adfir-backend")
-                        .join(exe_name),
-                    parent
-                        .join("_up_")
-                        .join("_up_")
-                        .join("dist")
-                        .join("adfir-backend")
-                        .join(exe_name),
-                    parent
-                        .join("resources")
-                        .join("_up_")
-                        .join("_up_")
-                        .join("dist")
-                        .join("adfir-backend")
-                        .join(exe_name),
-                    parent
-                        .join("resources")
-                        .join("dist")
-                        .join("adfir-backend")
-                        .join(exe_name),
-                ];
-                for cand in candidates {
-                    if cand.exists() {
-                        return Some(cand);
+                for exe_name in exe_names {
+                    let candidates = [
+                        parent.join(exe_name),
+                        parent.join("adfir-backend").join(exe_name),
+                        parent
+                            .join("resources")
+                            .join("adfir-backend")
+                            .join(exe_name),
+                        parent
+                            .join("_up_")
+                            .join("_up_")
+                            .join("dist")
+                            .join("adfir-backend")
+                            .join(exe_name),
+                        parent
+                            .join("resources")
+                            .join("_up_")
+                            .join("_up_")
+                            .join("dist")
+                            .join("adfir-backend")
+                            .join(exe_name),
+                        parent
+                            .join("resources")
+                            .join("dist")
+                            .join("adfir-backend")
+                            .join(exe_name),
+                    ];
+                    for cand in candidates {
+                        if cand.exists() {
+                            return Some(cand);
+                        }
                     }
                 }
             }
@@ -333,9 +354,12 @@ impl BackendManager {
                 let bootstrap_secret = Self::generate_bootstrap_secret();
 
                 let mut cmd = Command::new(&bin_path);
+                cmd.env("ADFIP_PORT", port.to_string());
                 cmd.env("ADFIR_PORT", port.to_string());
+                cmd.env("ADFIP_INTERNAL_SECRET", &bootstrap_secret);
                 cmd.env("ADFIR_INTERNAL_SECRET", &bootstrap_secret);
-                if std::env::var("ADFIR_DATA_DIR").is_err() {
+                if std::env::var("ADFIP_DATA_DIR").is_err() && std::env::var("ADFIR_DATA_DIR").is_err() {
+                    cmd.env("ADFIP_DATA_DIR", &user_data_dir);
                     cmd.env("ADFIR_DATA_DIR", &user_data_dir);
                 }
 
@@ -381,6 +405,7 @@ impl BackendManager {
 
                     let res = client
                         .get(&health_url)
+                        .header("X-ADFIP-Bootstrap-Secret", &bootstrap_secret)
                         .header("X-ADFIR-Bootstrap-Secret", &bootstrap_secret)
                         .send();
 
@@ -470,6 +495,7 @@ impl BackendManager {
 
                 let _ = client
                     .post(&shutdown_url)
+                    .header("X-ADFIP-Bootstrap-Secret", &proc.bootstrap_secret)
                     .header("X-ADFIR-Bootstrap-Secret", &proc.bootstrap_secret)
                     .send();
 
@@ -495,6 +521,13 @@ impl BackendManager {
 
                     if should_kill {
                         let _ = proc.child.kill();
+                        #[cfg(target_os = "windows")]
+                        {
+                            // On Windows, forcefully terminate process tree
+                            let _ = std::process::Command::new("taskkill")
+                                .args(["/F", "/T", "/PID", &proc.pid.to_string()])
+                                .output();
+                        }
                         let _ = proc.child.wait();
                     }
                 }
