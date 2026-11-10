@@ -84,27 +84,55 @@ jobs:
           $env:ADFIP_DATA_DIR = "$env:TEMP\ADFIP_CI_DATA"
           New-Item -ItemType Directory -Force -Path $env:ADFIP_DATA_DIR
 
-          $proc = Start-Process -FilePath "dist/adfir-backend/adfir-backend.exe" -PassThru -NoNewWindow
-          Start-Sleep -Seconds 4
+          $stdoutLog = "$env:TEMP\backend_stdout.log"
+          $stderrLog = "$env:TEMP\backend_stderr.log"
 
-          try {
-            $resp = Invoke-RestMethod -Uri "http://127.0.0.1:54321/api/v1/system/health" -Method Get -TimeoutSec 5
-            Write-Host "Health check response: $($resp | ConvertTo-Json -Compress)"
-            if ($resp.status -ne "online") {
-              throw "Backend health returned non-online status: $($resp.status)"
+          $proc = Start-Process -FilePath "dist/adfir-backend/adfir-backend.exe" `
+            -RedirectStandardOutput $stdoutLog `
+            -RedirectStandardError $stderrLog `
+            -PassThru
+
+          $ready = $false
+          $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+          $healthUrl = "http://127.0.0.1:54321/api/v1/system/health"
+
+          while ($stopwatch.Elapsed.TotalSeconds -lt 25) {
+            Start-Sleep -Milliseconds 500
+            if ($proc.HasExited) {
+              Write-Host "Backend process exited prematurely with code $($proc.ExitCode)"
+              break
             }
-          } finally {
-            # Gracefully trigger shutdown
             try {
-              $headers = @{ "X-ADFIP-Bootstrap-Secret" = "ci_test_secret_12345" }
-              Invoke-RestMethod -Uri "http://127.0.0.1:54321/api/v1/system/shutdown" -Method Post -Headers $headers -TimeoutSec 3
+              $resp = Invoke-RestMethod -Uri $healthUrl -Method Get -TimeoutSec 2
+              if ($resp.status -eq "online") {
+                $ready = $true
+                Write-Host "Backend successfully verified online in $($stopwatch.Elapsed.TotalSeconds)s: $($resp | ConvertTo-Json -Compress)"
+                break
+              }
             } catch {
-              Write-Host "Shutdown endpoint called, terminating process if still alive."
+              # Waiting for uvicorn listener
             }
+          }
+
+          if (-not $ready) {
+            Write-Host "=== Backend Stdout ==="
+            Get-Content $stdoutLog -ErrorAction SilentlyContinue
+            Write-Host "=== Backend Stderr ==="
+            Get-Content $stderrLog -ErrorAction SilentlyContinue
+            throw "Backend failed readiness check within 25 seconds!"
+          }
+
+          # Gracefully trigger shutdown
+          try {
+            $headers = @{ "X-ADFIP-Bootstrap-Secret" = "ci_test_secret_12345" }
+            Invoke-RestMethod -Uri "http://127.0.0.1:54321/api/v1/system/shutdown" -Method Post -Headers $headers -TimeoutSec 3
             Start-Sleep -Seconds 1
-            if (-not $proc.HasExited) {
-              Stop-Process -Id $proc.Id -Force
-            }
+          } catch {
+            Write-Host "Shutdown endpoint returned error or closed connection."
+          }
+
+          if (-not $proc.HasExited) {
+            Stop-Process -Id $proc.Id -Force
           }
 
       - name: Install Frontend Dependencies
