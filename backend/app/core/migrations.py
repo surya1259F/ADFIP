@@ -24,6 +24,8 @@ def get_alembic_config(engine=None) -> Config:
         exe_dir = Path(sys.executable).parent
         candidates.insert(2, exe_dir / "backend" / "alembic.ini")
         candidates.insert(3, exe_dir / "alembic.ini")
+        candidates.insert(4, exe_dir / "_internal" / "backend" / "alembic.ini")
+        candidates.insert(5, exe_dir / "_internal" / "alembic.ini")
 
     ini_path = None
     for cand in candidates:
@@ -46,6 +48,8 @@ def get_alembic_config(engine=None) -> Config:
         exe_dir = Path(sys.executable).parent
         alembic_dir_candidates.insert(2, exe_dir / "backend" / "alembic")
         alembic_dir_candidates.insert(3, exe_dir / "alembic")
+        alembic_dir_candidates.insert(4, exe_dir / "_internal" / "backend" / "alembic")
+        alembic_dir_candidates.insert(5, exe_dir / "_internal" / "alembic")
 
     alembic_dir = None
     for cand in alembic_dir_candidates:
