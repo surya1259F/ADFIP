@@ -146,18 +146,25 @@ function Find-WindowsSdkTool([string]$toolName) {
         return $cmd.Source
     }
 
-    # 2. Search Windows Kits 10 32-bit & 64-bit root directories
+    # 2. Check versioned subdirectories of Windows Kits 10
     $searchRoots = @(
         "C:\Program Files (x86)\Windows Kits\10\bin",
         "C:\Program Files\Windows Kits\10\bin"
     )
     foreach ($basePath in $searchRoots) {
         if (Test-Path $basePath) {
-            $found = Get-ChildItem -Path $basePath -Recurse -Filter $toolName -File -ErrorAction SilentlyContinue |
-                Where-Object { $_.FullName -like "*\x64\*" }
-            if ($found) {
-                # Pick the latest SDK version (last in natural sorting)
-                return ($found | Select-Object -Last 1).FullName
+            $dirs = Get-ChildItem -Path $basePath -Directory -ErrorAction SilentlyContinue |
+                Sort-Object Name -Descending
+            foreach ($d in $dirs) {
+                $cand = Join-Path $d.FullName "x64\$toolName"
+                if (Test-Path $cand) {
+                    return $cand
+                }
+            }
+            # Also check direct x64 subfolder
+            $directCand = Join-Path $basePath "x64\$toolName"
+            if (Test-Path $directCand) {
+                return $directCand
             }
         }
     }

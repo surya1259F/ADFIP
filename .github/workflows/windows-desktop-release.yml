@@ -203,19 +203,43 @@ jobs:
       - name: Package MSIX Application
         shell: pwsh
         run: |
-          powershell -ExecutionPolicy Bypass -File scripts/package-msix.ps1 -Version "0.1.0.0"
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "MSIX packaging failed with exit code $LASTEXITCODE"
-            exit 1
+          $p = Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -File scripts/package-msix.ps1 -Version 0.1.0.0" -NoNewWindow -Wait -PassThru -RedirectStandardOutput "package_stdout.log" -RedirectStandardError "package_stderr.log"
+          $outText = Get-Content "package_stdout.log" -Raw -ErrorAction SilentlyContinue
+          $errText = Get-Content "package_stderr.log" -Raw -ErrorAction SilentlyContinue
+          Write-Host "=== Package Stdout ==="
+          Write-Host $outText
+          Write-Host "=== Package Stderr ==="
+          Write-Host $errText
+          if ($env:GITHUB_STEP_SUMMARY) {
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Package Stdout`n``````text`n$outText`n``````"
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Package Stderr`n``````text`n$errText`n``````"
+          }
+          if ($p.ExitCode -ne 0) {
+            $msg = "$errText $outText" -replace "`r?`n", " -- "
+            $headMsg = if ($msg.Length -gt 250) { $msg.Substring(0, 250) } else { $msg }
+            Write-Host "::error title=MSIX Packaging Failure::$headMsg"
+            exit $p.ExitCode
           }
 
       - name: Install and Verify MSIX Desktop Application
         shell: pwsh
         run: |
-          powershell -ExecutionPolicy Bypass -File scripts/verify-msix-installed.ps1
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "MSIX installation verification failed with exit code $LASTEXITCODE"
-            exit 1
+          $p = Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -File scripts/verify-msix-installed.ps1" -NoNewWindow -Wait -PassThru -RedirectStandardOutput "verify_stdout.log" -RedirectStandardError "verify_stderr.log"
+          $outText = Get-Content "verify_stdout.log" -Raw -ErrorAction SilentlyContinue
+          $errText = Get-Content "verify_stderr.log" -Raw -ErrorAction SilentlyContinue
+          Write-Host "=== Verify Stdout ==="
+          Write-Host $outText
+          Write-Host "=== Verify Stderr ==="
+          Write-Host $errText
+          if ($env:GITHUB_STEP_SUMMARY) {
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Verify Stdout`n``````text`n$outText`n``````"
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Verify Stderr`n``````text`n$errText`n``````"
+          }
+          if ($p.ExitCode -ne 0) {
+            $msg = "$errText $outText" -replace "`r?`n", " -- "
+            $headMsg = if ($msg.Length -gt 250) { $msg.Substring(0, 250) } else { $msg }
+            Write-Host "::error title=MSIX Verify Failure::$headMsg"
+            exit $p.ExitCode
           }
 
       - name: Verify Generated Installers
