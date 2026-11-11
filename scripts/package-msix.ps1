@@ -193,7 +193,7 @@ if ($makeAppx -and (Test-Path $makeAppx)) {
     Write-Host "[*] Packaging with MakeAppx: $makeAppx ..." -ForegroundColor Cyan
     Write-Host "    Source directory: $stagePath"
     Write-Host "    Output MSIX:      $msixFile"
-    & "$makeAppx" pack /d "$stagePath" /p "$msixFile" /nv /o
+    & "$makeAppx" pack /d "$stagePath" /p "$msixFile" /o /v /nv
     $ec = $LASTEXITCODE
     Write-Host "[*] MakeAppx completed with exit code: $ec"
     if ($ec -eq 0 -and (Test-Path $msixFile)) {

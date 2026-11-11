@@ -18,13 +18,21 @@
     <Description>Autonomous Digital Forensic Investigation, AI Assessment, Specialist Agent Orchestration and Professional Reporting Platform.</Description>
   </Properties>
 
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
   <Dependencies>
     <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.22621.0" />
   </Dependencies>
 
-  <Resources>
-    <Resource Language="en-us" />
-  </Resources>
+  <Capabilities>
+    <Capability Name="internetClient" />
+    <Capability Name="internetClientServer" />
+    <Capability Name="privateNetworkClientServer" />
+    <!-- Full trust capability required for packaged desktop application with bundled Python backend execution -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
 
   <Applications>
     <Application Id="ADFIP" Executable="ADFIP.exe" EntryPoint="Windows.FullTrustApplication">
@@ -44,12 +52,4 @@
       </uap:VisualElements>
     </Application>
   </Applications>
-
-  <Capabilities>
-    <Capability Name="internetClient" />
-    <Capability Name="internetClientServer" />
-    <Capability Name="privateNetworkClientServer" />
-    <!-- Full trust capability required for packaged desktop application with bundled Python backend execution -->
-    <rescap:Capability Name="runFullTrust" />
-  </Capabilities>
 </Package>

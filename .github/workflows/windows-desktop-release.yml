@@ -217,9 +217,9 @@ jobs:
           if ($p.ExitCode -ne 0) {
             $cleanOut = $outText -replace "`r?`n", " -- "
             $cleanErr = $errText -replace "`r?`n", " -- "
-            $headOut = if ($cleanOut.Length -gt 250) { $cleanOut.Substring(0, 250) } else { $cleanOut }
-            $tailOut = if ($cleanOut.Length -gt 350) { $cleanOut.Substring($cleanOut.Length - 350) } else { $cleanOut }
-            $tailErr = if ($cleanErr.Length -gt 350) { $cleanErr.Substring($cleanErr.Length - 350) } else { $cleanErr }
+            $headOut = if ($cleanOut.Length -gt 1500) { $cleanOut.Substring(0, 1500) } else { $cleanOut }
+            $tailOut = if ($cleanOut.Length -gt 1500) { $cleanOut.Substring($cleanOut.Length - 1500) } else { $cleanOut }
+            $tailErr = if ($cleanErr.Length -gt 1500) { $cleanErr.Substring($cleanErr.Length - 1500) } else { $cleanErr }
             Write-Host "::error title=MSIX Package Stdout Head::$headOut"
             Write-Host "::error title=MSIX Package Stdout Tail::$tailOut"
             Write-Host "::error title=MSIX Package Stderr Tail::$tailErr"
@@ -243,9 +243,9 @@ jobs:
           if ($p.ExitCode -ne 0) {
             $cleanOut = $outText -replace "`r?`n", " -- "
             $cleanErr = $errText -replace "`r?`n", " -- "
-            $headOut = if ($cleanOut.Length -gt 250) { $cleanOut.Substring(0, 250) } else { $cleanOut }
-            $tailOut = if ($cleanOut.Length -gt 350) { $cleanOut.Substring($cleanOut.Length - 350) } else { $cleanOut }
-            $tailErr = if ($cleanErr.Length -gt 350) { $cleanErr.Substring($cleanErr.Length - 350) } else { $cleanErr }
+            $headOut = if ($cleanOut.Length -gt 1500) { $cleanOut.Substring(0, 1500) } else { $cleanOut }
+            $tailOut = if ($cleanOut.Length -gt 1500) { $cleanOut.Substring($cleanOut.Length - 1500) } else { $cleanOut }
+            $tailErr = if ($cleanErr.Length -gt 1500) { $cleanErr.Substring($cleanErr.Length - 1500) } else { $cleanErr }
             Write-Host "::error title=MSIX Verify Stdout Head::$headOut"
             Write-Host "::error title=MSIX Verify Stdout Tail::$tailOut"
             Write-Host "::error title=MSIX Verify Stderr Tail::$tailErr"
