@@ -287,6 +287,14 @@ jobs:
             exit 1
           }
 
+      - name: Upload Dedicated MSIX Package Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ADFIP-MSIX-x64
+          path: dist/*.msix
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Upload Windows Backend Binary & Installers
         uses: actions/upload-artifact@v4
         with:
