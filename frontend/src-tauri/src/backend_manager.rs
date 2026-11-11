@@ -15,6 +15,23 @@ pub struct BackendConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackendRequestPayload {
+    pub method: String,
+    pub path: String,
+    pub query: Option<std::collections::HashMap<String, String>>,
+    pub headers: Option<std::collections::HashMap<String, String>>,
+    pub body: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackendResponsePayload {
+    pub status: u16,
+    pub status_text: String,
+    pub headers: std::collections::HashMap<String, String>,
+    pub data: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackendStatus {
     pub is_running: bool,
     pub is_packaged: bool,
@@ -710,5 +727,108 @@ impl BackendManager {
                 has_crashed: false,
             }
         }
+    }
+
+    /// Executes an HTTP request to the running backend directly from native Rust,
+    /// bypassing WebView2 AppContainer loopback network isolation entirely.
+    pub fn forward_request(
+        &self,
+        request: BackendRequestPayload,
+    ) -> Result<BackendResponsePayload, String> {
+        let (port, secret) = {
+            let read_lock = self.state.read().map_err(|e| e.to_string())?;
+            if let Some(ref proc) = *read_lock {
+                if proc.is_running {
+                    (proc.port, proc.bootstrap_secret.clone())
+                } else {
+                    drop(read_lock);
+                    let cfg = self.spawn_backend()?;
+                    (cfg.port, cfg.bootstrap_secret)
+                }
+            } else {
+                drop(read_lock);
+                let cfg = self.spawn_backend()?;
+                (cfg.port, cfg.bootstrap_secret)
+            }
+        };
+
+        let mut normalized_path = request.path.trim().to_string();
+        if !normalized_path.starts_with('/') {
+            normalized_path = format!("/{}", normalized_path);
+        }
+        if !normalized_path.starts_with("/api") {
+            normalized_path = format!("/api/v1{}", normalized_path);
+        }
+
+        let mut target_url = format!("http://127.0.0.1:{}{}", port, normalized_path);
+        if let Some(query_params) = request.query {
+            if !query_params.is_empty() {
+                let query_string: Vec<String> = query_params
+                    .iter()
+                    .map(|(k, v)| format!("{}={}", k, v))
+                    .collect();
+                target_url = format!("{}?{}", target_url, query_string.join("&"));
+            }
+        }
+
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(60))
+            .build()
+            .map_err(|e| e.to_string())?;
+
+        let method = match request.method.to_uppercase().as_str() {
+            "GET" => reqwest::Method::GET,
+            "POST" => reqwest::Method::POST,
+            "PUT" => reqwest::Method::PUT,
+            "DELETE" => reqwest::Method::DELETE,
+            "PATCH" => reqwest::Method::PATCH,
+            "OPTIONS" => reqwest::Method::OPTIONS,
+            "HEAD" => reqwest::Method::HEAD,
+            _ => reqwest::Method::GET,
+        };
+
+        let mut req_builder = client.request(method, &target_url);
+        req_builder = req_builder.header("X-ADFIP-Bootstrap-Secret", &secret);
+        req_builder = req_builder.header("X-ADFIR-Bootstrap-Secret", &secret);
+
+        if let Some(custom_headers) = request.headers {
+            for (k, v) in custom_headers {
+                let lower = k.to_lowercase();
+                if lower != "x-adfip-bootstrap-secret" && lower != "x-adfir-bootstrap-secret" {
+                    req_builder = req_builder.header(&k, &v);
+                }
+            }
+        }
+
+        if let Some(body_content) = request.body {
+            req_builder = req_builder.body(body_content);
+        }
+
+        let resp = req_builder
+            .send()
+            .map_err(|e| format!("Native backend IPC request failed to {}: {}", target_url, e))?;
+
+        let status = resp.status().as_u16();
+        let status_text = resp
+            .status()
+            .canonical_reason()
+            .unwrap_or("OK")
+            .to_string();
+
+        let mut headers = std::collections::HashMap::new();
+        for (k, v) in resp.headers().iter() {
+            if let Ok(v_str) = v.to_str() {
+                headers.insert(k.as_str().to_string(), v_str.to_string());
+            }
+        }
+
+        let data = resp.text().unwrap_or_default();
+
+        Ok(BackendResponsePayload {
+            status,
+            status_text,
+            headers,
+            data,
+        })
     }
 }

@@ -91,7 +91,11 @@ export const getAccessToken = (): string | null => {
   return currentToken;
 };
 
-import { setApiBaseUrl as setClientApiBaseUrl, setBootstrapSecret as setClientBootstrapSecret } from './client';
+import {
+  setApiBaseUrl as setClientApiBaseUrl,
+  setBootstrapSecret as setClientBootstrapSecret,
+  resilientTauriAdapter,
+} from './client';
 
 export const setBootstrapSecret = (secret: string | null) => {
   currentBootstrapSecret = secret;
@@ -112,6 +116,7 @@ export const setBackendNetworkErrorHandler = (handler: ((error: any) => void) | 
 
 const client = axios.create({
   baseURL: currentApiBase,
+  adapter: resilientTauriAdapter,
   headers: {
     'Content-Type': 'application/json',
   },

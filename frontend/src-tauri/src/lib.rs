@@ -1,6 +1,8 @@
 pub mod backend_manager;
 
-use backend_manager::{BackendConfig, BackendManager, BackendStatus};
+use backend_manager::{
+    BackendConfig, BackendManager, BackendRequestPayload, BackendResponsePayload, BackendStatus,
+};
 use std::sync::Arc;
 use tauri::State;
 
@@ -17,6 +19,14 @@ fn get_backend_status(manager: State<'_, Arc<BackendManager>>) -> BackendStatus 
 #[tauri::command]
 fn shutdown_backend(manager: State<'_, Arc<BackendManager>>) -> Result<(), String> {
     manager.shutdown_backend()
+}
+
+#[tauri::command]
+fn execute_backend_request(
+    manager: State<'_, Arc<BackendManager>>,
+    request: BackendRequestPayload,
+) -> Result<BackendResponsePayload, String> {
+    manager.forward_request(request)
 }
 
 #[tauri::command]
@@ -110,6 +120,7 @@ pub fn run() {
             get_backend_config,
             get_backend_status,
             shutdown_backend,
+            execute_backend_request,
             select_evidence_file,
             read_evidence_file
         ])

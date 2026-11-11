@@ -252,7 +252,7 @@ jobs:
           path: |
             dist/adfir-backend/adfir-backend.exe
             dist/*.msix
-            build/msix_staging/devcert.pfx
+            dist/*.cer
             frontend/src-tauri/target/release/bundle/nsis/*.exe
             frontend/src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error

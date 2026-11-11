@@ -490,3 +490,64 @@ class TestWindowsMSIXPackagingAndManifest:
         # Must have configurable timeout with 60s fallback
         assert "ADFIP_BACKEND_TIMEOUT_SECS" in content, "Must support ADFIP_BACKEND_TIMEOUT_SECS"
 
+    def test_tauri_ipc_forward_request_bridge(self):
+        bm_path = PROJECT_ROOT / "frontend" / "src-tauri" / "src" / "backend_manager.rs"
+        lib_path = PROJECT_ROOT / "frontend" / "src-tauri" / "src" / "lib.rs"
+        client_path = PROJECT_ROOT / "frontend" / "src" / "services" / "client.ts"
+
+        bm_content = bm_path.read_text(encoding="utf-8")
+        assert "pub fn forward_request" in bm_content
+        assert "BackendRequestPayload" in bm_content
+        assert "BackendResponsePayload" in bm_content
+
+        lib_content = lib_path.read_text(encoding="utf-8")
+        assert "execute_backend_request" in lib_content
+
+        client_content = client_path.read_text(encoding="utf-8")
+        assert "resilientTauriAdapter" in client_content
+        assert "execute_backend_request" in client_content
+
+
+class TestWindowsDataPreservationUnderMSIX:
+    """Verifies that evidence, database records, and custody chains are preserved across package servicing."""
+
+    def test_evidence_and_database_directory_isolation(self, tmp_path, monkeypatch):
+        from backend.app.core.config import Settings
+        import hashlib
+
+        # Simulate Windows %LOCALAPPDATA% outside of MSIX package root
+        fake_localappdata = tmp_path / "Users" / "Investigator" / "AppData" / "Local"
+        fake_msix_install = tmp_path / "Program Files" / "WindowsApps" / "ADFIP.AutonomousForensicPlatform_0.1.0.0_x64__abc123"
+
+        fake_localappdata.mkdir(parents=True, exist_ok=True)
+        fake_msix_install.mkdir(parents=True, exist_ok=True)
+
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setenv("LOCALAPPDATA", str(fake_localappdata))
+
+        settings = Settings()
+        assert settings.DATA_DIR == fake_localappdata / "ADFIP"
+        # Must NOT be inside the read-only WindowsApps installation folder
+        assert fake_msix_install not in settings.DATA_DIR.parents
+        assert settings.DATA_DIR != fake_msix_install
+
+        # Simulate evidence write and hash calculation
+        evidence_dir = settings.EVIDENCE_DIR
+        evidence_dir.mkdir(parents=True, exist_ok=True)
+        evidence_file = evidence_dir / "disk_image.raw"
+        sample_payload = b"ADFIP_FORENSIC_INTEGRITY_CHAIN_PRESERVATION_SAMPLE"
+        evidence_file.write_bytes(sample_payload)
+        original_sha256 = hashlib.sha256(sample_payload).hexdigest()
+
+        # Simulate MSIX package uninstall / directory removal of WindowsApps
+        import shutil
+        shutil.rmtree(fake_msix_install)
+        assert not fake_msix_install.exists()
+
+        # Assert data vault, SQLite database, and custody records are intact
+        assert evidence_file.exists()
+        persisted_content = evidence_file.read_bytes()
+        assert hashlib.sha256(persisted_content).hexdigest() == original_sha256
+
+

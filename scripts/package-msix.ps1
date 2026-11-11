@@ -156,7 +156,12 @@ if ($CreateDevCert -and (-not $CertPath -or -not (Test-Path $CertPath))) {
 
     Export-PfxCertificate -Cert $existingCert -FilePath $certOut -Password $securePass | Out-Null
     $CertPath = $certOut
-    Write-Host "[+] Development certificate exported to $CertPath" -ForegroundColor Green
+    Write-Host "[+] Ephemeral signing key generated at $CertPath for CI build signing only (PRIVATE KEY NOT DISTRIBUTED)" -ForegroundColor Green
+
+    # Export PUBLIC certificate only (contains NO private keys, safe for developer trust installation)
+    $publicCert = Join-Path $outPath "ADFIP_Dev_Public.cer"
+    Export-Certificate -Cert $existingCert -FilePath $publicCert | Out-Null
+    Write-Host "[+] Public certificate exported to $publicCert (NO private keys)" -ForegroundColor Green
 }
 
 # Locate SignTool
