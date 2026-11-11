@@ -40,6 +40,11 @@ if ($CertPath -and (Test-Path $CertPath)) {
     Import-PfxCertificate -FilePath $CertPath -CertStoreLocation "Cert:\LocalMachine\Root" -Password $securePass | Out-Null
     Import-PfxCertificate -FilePath $CertPath -CertStoreLocation "Cert:\LocalMachine\TrustedPeople" -Password $securePass | Out-Null
     Write-Host "[+] Developer certificate installed into machine trust stores." -ForegroundColor Green
+} elseif (Test-Path "dist/ADFIP_Dev_Public.cer") {
+    Write-Host "[*] Importing public developer certificate to Trusted Root & Trusted People ..." -ForegroundColor Yellow
+    Import-Certificate -FilePath "dist/ADFIP_Dev_Public.cer" -CertStoreLocation "Cert:\LocalMachine\Root" | Out-Null
+    Import-Certificate -FilePath "dist/ADFIP_Dev_Public.cer" -CertStoreLocation "Cert:\LocalMachine\TrustedPeople" | Out-Null
+    Write-Host "[+] Public developer certificate installed into machine trust stores." -ForegroundColor Green
 }
 
 # 3. Sideload Install MSIX

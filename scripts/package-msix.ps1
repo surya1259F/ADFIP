@@ -83,6 +83,7 @@ Copy-Item -Path $backendDir -Destination (Join-Path $stagePath "adfir-backend") 
 
 # Copy Manifest and Assets
 Copy-Item -Path $manifestSrc -Destination (Join-Path $stagePath "AppxManifest.xml") -Force
+Copy-Item -Path $manifestSrc -Destination (Join-Path $stagePath "Package.appxmanifest") -Force
 Copy-Item -Path $assetsSrc -Destination (Join-Path $stagePath "Assets") -Recurse -Force
 if (Test-Path "$root/msix/winapp.yaml") {
     Copy-Item -Path "$root/msix/winapp.yaml" -Destination (Join-Path $stagePath "winapp.yaml") -Force
@@ -93,20 +94,52 @@ if (Test-Path $msixFile) {
     Remove-Item $msixFile -Force
 }
 
-# 5. Locate Packaging Tools (winapp CLI or MakeAppx.exe)
-$hasWinApp = [bool](Get-Command winapp -ErrorAction SilentlyContinue)
-$makeAppx = $null
-
-$sdkPaths = @(
-    "C:\Program Files (x86)\Windows Kits\10\bin\10.0.*\x64\makeappx.exe",
-    "C:\Program Files (x86)\Windows Kits\10\bin\x64\makeappx.exe"
-)
-foreach ($pattern in $sdkPaths) {
-    $found = Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
-    if ($found) {
-        $makeAppx = $found.FullName
-        break
+# 5. Locate Packaging Tools (Windows SDK MakeAppx.exe or WinApp CLI)
+function Find-WindowsSdkTool([string]$toolName) {
+    $cmd = Get-Command $toolName -ErrorAction SilentlyContinue
+    if ($cmd) {
+        return $cmd.Source
     }
+
+    $kitsBin = "C:\Program Files (x86)\Windows Kits\10\bin"
+    if (Test-Path $kitsBin) {
+        $versionDirs = Get-ChildItem -Path $kitsBin -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } |
+            Sort-Object { [version]$_.Name } -Descending
+
+        foreach ($vDir in $versionDirs) {
+            $candidate = Join-Path $vDir.FullName "x64\$toolName"
+            if (Test-Path $candidate) {
+                return $candidate
+            }
+        }
+    }
+
+    $fallbacks = @(
+        "C:\Program Files (x86)\Windows Kits\10\bin\x64\$toolName",
+        "C:\Program Files\Windows Kits\10\bin\x64\$toolName"
+    )
+    foreach ($cand in $fallbacks) {
+        if (Test-Path $cand) {
+            return $cand
+        }
+    }
+    return $null
+}
+
+$makeAppx = Find-WindowsSdkTool "makeappx.exe"
+$signTool = Find-WindowsSdkTool "signtool.exe"
+$hasWinApp = [bool](Get-Command winapp -ErrorAction SilentlyContinue)
+
+if ($makeAppx) {
+    Write-Host "[+] Discovered Windows SDK MakeAppx: $makeAppx" -ForegroundColor Green
+} else {
+    Write-Host "[-] MakeAppx.exe not found in Windows Kits" -ForegroundColor Yellow
+}
+if ($signTool) {
+    Write-Host "[+] Discovered Windows SDK SignTool: $signTool" -ForegroundColor Green
+} else {
+    Write-Host "[-] SignTool.exe not found in Windows Kits" -ForegroundColor Yellow
 }
 
 $packaged = $false
@@ -114,18 +147,20 @@ $packaged = $false
 # Try MakeAppx first for direct, deterministic packaging
 if ($makeAppx -and (Test-Path $makeAppx)) {
     Write-Host "[*] Packaging with MakeAppx: $makeAppx ..." -ForegroundColor Cyan
-    & $makeAppx pack /d $stagePath /p $msixFile /nv /o
+    $makeAppxOut = & $makeAppx pack /d $stagePath /p $msixFile /nv /o 2>&1
+    Write-Host ($makeAppxOut -join "`n")
     if ($LASTEXITCODE -eq 0 -and (Test-Path $msixFile)) {
         $packaged = $true
         Write-Host "[+] MakeAppx successfully produced: $msixFile" -ForegroundColor Green
     } else {
-        Write-Warning "MakeAppx failed with exit code $LASTEXITCODE. Trying winapp CLI..."
+        Write-Warning "MakeAppx failed with exit code $LASTEXITCODE. Trying WinApp CLI..."
     }
 }
 
 if (-not $packaged -and $hasWinApp) {
     Write-Host "[*] Packaging with WinApp CLI ..." -ForegroundColor Cyan
-    winapp pack $stagePath --output $msixFile
+    $winappOut = & winapp pack $stagePath --output $msixFile 2>&1
+    Write-Host ($winappOut -join "`n")
     if ($LASTEXITCODE -eq 0 -and (Test-Path $msixFile)) {
         $packaged = $true
         Write-Host "[+] WinApp CLI successfully produced: $msixFile" -ForegroundColor Green
@@ -164,23 +199,10 @@ if ($CreateDevCert -and (-not $CertPath -or -not (Test-Path $CertPath))) {
     Write-Host "[+] Public certificate exported to $publicCert (NO private keys)" -ForegroundColor Green
 }
 
-# Locate SignTool
-$signTool = $null
-$signtoolPaths = @(
-    "C:\Program Files (x86)\Windows Kits\10\bin\10.0.*\x64\signtool.exe",
-    "C:\Program Files (x86)\Windows Kits\10\bin\x64\signtool.exe"
-)
-foreach ($pattern in $signtoolPaths) {
-    $found = Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
-    if ($found) {
-        $signTool = $found.FullName
-        break
-    }
-}
-
 if ($CertPath -and (Test-Path $CertPath) -and $signTool) {
     Write-Host "[*] Signing MSIX with SignTool: $signTool ..." -ForegroundColor Cyan
-    & $signTool sign /fd SHA256 /f $CertPath /p $CertPassword $msixFile
+    $signOut = & $signTool sign /fd SHA256 /f $CertPath /p $CertPassword $msixFile 2>&1
+    Write-Host ($signOut -join "`n")
     if ($LASTEXITCODE -eq 0) {
         Write-Host "[+] Successfully signed MSIX package!" -ForegroundColor Green
     } else {

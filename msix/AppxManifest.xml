@@ -14,8 +14,8 @@
   <Properties>
     <DisplayName>ADFIP - Autonomous Digital Forensic Investigation Platform</DisplayName>
     <PublisherDisplayName>ADFIP Team</PublisherDisplayName>
-    <Description>Autonomous Digital Forensic Investigation, AI Assessment, Specialist Agent Orchestration and Professional Reporting Platform.</Description>
     <Logo>Assets\StoreLogo.png</Logo>
+    <Description>Autonomous Digital Forensic Investigation, AI Assessment, Specialist Agent Orchestration and Professional Reporting Platform.</Description>
   </Properties>
 
   <Dependencies>
@@ -46,10 +46,10 @@
   </Applications>
 
   <Capabilities>
-    <!-- Full trust capability required for packaged desktop application with bundled Python backend execution -->
-    <rescap:Capability Name="runFullTrust" />
     <Capability Name="internetClient" />
     <Capability Name="internetClientServer" />
     <Capability Name="privateNetworkClientServer" />
+    <!-- Full trust capability required for packaged desktop application with bundled Python backend execution -->
+    <rescap:Capability Name="runFullTrust" />
   </Capabilities>
 </Package>
