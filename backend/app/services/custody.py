@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 import hashlib
 import json
 import logging
 from datetime import datetime, timezone
+from typing import Tuple, Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 from backend.app.models.models import ChainOfCustodyEvent
 

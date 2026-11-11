@@ -257,63 +257,149 @@ impl BackendManager {
     /// Resolves PyInstaller executable location with Tauri app resource directory fallback.
     pub fn resolve_backend_executable() -> Option<PathBuf> {
         let exe_names = if cfg!(windows) {
-            &["adfir-backend.exe", "ADFIP-backend.exe", "ADFIP.exe"][..]
+            &[
+                "adfir-backend.exe",
+                "adfip-backend.exe",
+                "ADFIP-backend.exe",
+                "ADFIP.exe",
+            ][..]
         } else {
-            &["adfir-backend", "ADFIP-backend", "ADFIP"][..]
+            &["adfir-backend", "adfip-backend", "ADFIP-backend", "ADFIP"][..]
         };
 
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let repo_dist = manifest_dir
-            .parent()
-            .unwrap()
-            .join("dist")
-            .join("adfir-backend");
+        let mut candidate_dirs: Vec<PathBuf> = Vec::new();
 
-        for exe_name in exe_names {
-            let candidate1 = repo_dist.join(exe_name);
-            if candidate1.exists() {
-                return Some(candidate1);
-            }
+        // 1. Repo root dist (development/test build mode)
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        if let Some(repo_root) = manifest_dir.parent().and_then(|p| p.parent()) {
+            candidate_dirs.push(repo_root.join("dist").join("adfir-backend"));
+            candidate_dirs.push(repo_root.join("dist"));
+        }
+        if let Some(frontend_dir) = manifest_dir.parent() {
+            candidate_dirs.push(frontend_dir.join("dist").join("adfir-backend"));
         }
 
-        // 2. Check current executable parent sidecar & resource locations (packaged app runtime)
+        // 2. Current executable parent sidecar & resource locations (packaged app runtime)
         if let Ok(current_exe) = std::env::current_exe() {
             if let Some(parent) = current_exe.parent() {
-                for exe_name in exe_names {
-                    let candidates = [
-                        parent.join(exe_name),
-                        parent.join("adfir-backend").join(exe_name),
-                        parent
-                            .join("resources")
-                            .join("adfir-backend")
-                            .join(exe_name),
-                        parent
-                            .join("_up_")
-                            .join("_up_")
-                            .join("dist")
-                            .join("adfir-backend")
-                            .join(exe_name),
-                        parent
-                            .join("resources")
-                            .join("_up_")
-                            .join("_up_")
-                            .join("dist")
-                            .join("adfir-backend")
-                            .join(exe_name),
-                        parent
-                            .join("resources")
-                            .join("dist")
-                            .join("adfir-backend")
-                            .join(exe_name),
-                    ];
-                    for cand in candidates {
-                        if cand.exists() {
-                            return Some(cand);
-                        }
-                    }
-                }
+                candidate_dirs.push(parent.to_path_buf());
+                candidate_dirs.push(parent.join("adfir-backend"));
+                candidate_dirs.push(parent.join("dist").join("adfir-backend"));
+                candidate_dirs.push(parent.join("resources"));
+                candidate_dirs.push(parent.join("resources").join("adfir-backend"));
+                candidate_dirs.push(parent.join("resources").join("dist").join("adfir-backend"));
+                candidate_dirs.push(
+                    parent
+                        .join("_up_")
+                        .join("_up_")
+                        .join("dist")
+                        .join("adfir-backend"),
+                );
+                candidate_dirs.push(
+                    parent
+                        .join("resources")
+                        .join("_up_")
+                        .join("_up_")
+                        .join("dist")
+                        .join("adfir-backend"),
+                );
             }
         }
+
+        // 3. User local app data & system installation locations (Windows installed per-user / machine)
+        if cfg!(windows) {
+            if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+                let base = PathBuf::from(&local_app_data);
+                candidate_dirs.push(base.join("ADFIP"));
+                candidate_dirs.push(
+                    base.join("ADFIP")
+                        .join("_up_")
+                        .join("_up_")
+                        .join("dist")
+                        .join("adfir-backend"),
+                );
+                candidate_dirs.push(
+                    base.join("ADFIP")
+                        .join("resources")
+                        .join("_up_")
+                        .join("_up_")
+                        .join("dist")
+                        .join("adfir-backend"),
+                );
+                candidate_dirs.push(base.join("Programs").join("ADFIP"));
+                candidate_dirs.push(
+                    base.join("Programs")
+                        .join("ADFIP")
+                        .join("_up_")
+                        .join("_up_")
+                        .join("dist")
+                        .join("adfir-backend"),
+                );
+                candidate_dirs.push(
+                    base.join("Programs")
+                        .join("ADFIP")
+                        .join("resources")
+                        .join("_up_")
+                        .join("_up_")
+                        .join("dist")
+                        .join("adfir-backend"),
+                );
+                candidate_dirs.push(base.join("adfir"));
+                candidate_dirs.push(
+                    base.join("adfir")
+                        .join("_up_")
+                        .join("_up_")
+                        .join("dist")
+                        .join("adfir-backend"),
+                );
+            }
+            if let Ok(prog_files) = std::env::var("ProgramFiles") {
+                let base = PathBuf::from(&prog_files);
+                candidate_dirs.push(base.join("ADFIP"));
+                candidate_dirs.push(
+                    base.join("ADFIP")
+                        .join("_up_")
+                        .join("_up_")
+                        .join("dist")
+                        .join("adfir-backend"),
+                );
+                candidate_dirs.push(
+                    base.join("ADFIP")
+                        .join("resources")
+                        .join("_up_")
+                        .join("_up_")
+                        .join("dist")
+                        .join("adfir-backend"),
+                );
+            }
+        }
+
+        let mut checked_paths: Vec<PathBuf> = Vec::new();
+
+        for dir in &candidate_dirs {
+            for exe_name in exe_names {
+                let cand = dir.join(exe_name);
+                if cand.exists() {
+                    println!(
+                        "[ADFIP Backend Manager] Discovered backend executable at: {}",
+                        cand.display()
+                    );
+                    return Some(cand);
+                }
+                checked_paths.push(cand);
+            }
+        }
+
+        eprintln!(
+            "[ADFIP Backend Manager] Could not locate backend executable. Checked {} candidate locations. First few candidates:\n{}",
+            checked_paths.len(),
+            checked_paths
+                .iter()
+                .take(12)
+                .map(|p| format!("  - {}", p.display()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
 
         None
     }

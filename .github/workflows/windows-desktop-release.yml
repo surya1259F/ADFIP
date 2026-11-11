@@ -61,10 +61,14 @@ jobs:
         shell: pwsh
         run: |
           $env:PYTHONPATH = "."
-          $testOutput = python -m pytest backend/tests/test_windows_desktop_deployment.py -v --tb=short 2>&1 | Out-String
-          Write-Host $testOutput
+          python -m pytest backend/tests/test_windows_desktop_deployment.py -v --tb=short 2>&1 | Tee-Object -FilePath pytest_log.txt
+          $testExitCode = $LASTEXITCODE
+          $testOutput = Get-Content pytest_log.txt -Raw -ErrorAction SilentlyContinue
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Backend Automated Tests Output`n``````text`n$testOutput`n``````"
-        continue-on-error: true
+          if ($testExitCode -ne 0) {
+            Write-Error "Backend automated tests failed with exit code $testExitCode"
+            exit $testExitCode
+          }
 
       - name: Package Backend with PyInstaller
         shell: pwsh
@@ -114,17 +118,7 @@ jobs:
             }
           }
 
-          if (-not $ready) {
-            $errContent = Get-Content $stderrLog -Raw -ErrorAction SilentlyContinue
-            $outContent = Get-Content $stdoutLog -Raw -ErrorAction SilentlyContinue
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Backend Stderr`n``````text`n$errContent`n``````"
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Backend Stdout`n``````text`n$outContent`n``````"
-            Write-Warning "Backend readiness check timed out or failed"
-          } else {
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Backend Standalone Execution`n- Status: ONLINE`n- Port: 54321`n- PID: $($proc.Id)"
-          }
-
-          # Gracefully trigger shutdown
+          # Gracefully trigger shutdown if running
           try {
             $headers = @{ "X-ADFIP-Bootstrap-Secret" = "ci_test_secret_12345" }
             Invoke-RestMethod -Uri "http://127.0.0.1:54321/api/v1/system/shutdown" -Method Post -Headers $headers -TimeoutSec 3
@@ -136,7 +130,18 @@ jobs:
           if (-not $proc.HasExited) {
             Stop-Process -Id $proc.Id -Force
           }
-        continue-on-error: true
+
+          $errContent = Get-Content $stderrLog -Raw -ErrorAction SilentlyContinue
+          $outContent = Get-Content $stdoutLog -Raw -ErrorAction SilentlyContinue
+
+          if (-not $ready) {
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Backend Stderr`n``````text`n$errContent`n``````"
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Backend Stdout`n``````text`n$outContent`n``````"
+            Write-Error "Backend readiness check timed out or failed. Stderr: $errContent"
+            exit 1
+          } else {
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Backend Standalone Execution`n- Status: ONLINE`n- Port: 54321`n- PID: $($proc.Id)"
+          }
 
       - name: Install Frontend Dependencies
         shell: pwsh

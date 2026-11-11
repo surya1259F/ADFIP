@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import sys
 import os
 import shutil
@@ -6,7 +8,7 @@ import time
 import platform
 import hashlib
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple, Set, Union, Callable
 from pydantic import BaseModel, Field
 
 import threading

@@ -252,3 +252,129 @@ class TestDesktopConfigurationAndSecurity:
         )
         assert res_ok.status_code == 200
         assert res_ok.json()["status"] == "SHUTTING_DOWN"
+
+
+class TestForensicRegistryAndTypingIntegrity:
+    """Verifies that forensic tool registry and startup modules import cleanly and type hints resolve."""
+
+    def test_forensic_tools_registry_imports(self):
+        import forensic_tools.registry
+        from forensic_tools.registry import PlatformAwareToolRegistry
+        assert hasattr(forensic_tools.registry, "PlatformAwareToolRegistry")
+
+    def test_platform_aware_tool_registry_instantiation(self):
+        from forensic_tools.registry import PlatformAwareToolRegistry
+        registry = PlatformAwareToolRegistry()
+        assert registry is not None
+        assert hasattr(registry, "_tools")
+        assert len(registry._tools) > 0
+
+    def test_check_tool_authenticity_controlled_files(self, tmp_path):
+        from forensic_tools.registry import PlatformAwareToolRegistry
+        registry = PlatformAwareToolRegistry()
+
+        # 1. Non-existent file
+        is_auth, err, reason = registry._check_tool_authenticity("sleuthkit", str(tmp_path / "nonexistent.exe"))
+        assert is_auth is False
+        assert reason == "FILE_NOT_FOUND"
+
+        # 2. Mock directory path
+        mock_dir = tmp_path / "tests" / "mocks"
+        mock_dir.mkdir(parents=True, exist_ok=True)
+        mock_file = mock_dir / "fls.exe"
+        mock_file.write_bytes(b"\x7fELFfakebinary")
+        is_auth, err, reason = registry._check_tool_authenticity("sleuthkit", str(mock_file))
+        assert is_auth is False
+        assert reason == "REJECTED_MOCK_DIRECTORY"
+
+        # 3. Synthetic mock signature
+        synthetic_dir = tmp_path / "bin"
+        synthetic_dir.mkdir(parents=True, exist_ok=True)
+        synthetic_file = synthetic_dir / "fls.exe"
+        synthetic_file.write_bytes(b"ADFIR_Synthetic test mock payload")
+        is_auth, err, reason = registry._check_tool_authenticity("sleuthkit", str(synthetic_file))
+        assert is_auth is False
+        assert reason == "REJECTED_SYNTHETIC_MOCK"
+
+        # 4. Unapproved script masquerading as binary
+        tools_bin_dir = tmp_path / "tools" / "bin"
+        tools_bin_dir.mkdir(parents=True, exist_ok=True)
+        unapproved_script = tools_bin_dir / "fls.sh"
+        unapproved_script.write_bytes(b"#!/bin/bash\necho fake fls\n")
+        is_auth, err, reason = registry._check_tool_authenticity("sleuthkit", str(unapproved_script))
+        assert is_auth is False
+        assert reason == "REJECTED_UNAPPROVED_SCRIPT"
+
+    def test_typing_annotations_integrity_across_modules(self):
+        """Scans forensic_tools and backend/app for unresolved annotation names before packaging."""
+        import ast
+        import builtins
+        builtin_names = set(dir(builtins))
+
+        scan_dirs = [
+            PROJECT_ROOT / "forensic_tools",
+            PROJECT_ROOT / "backend" / "app",
+            PROJECT_ROOT / "backend" / "entrypoint.py",
+        ]
+
+        unresolved = []
+
+        for target in scan_dirs:
+            if target.is_file():
+                files = [target]
+            else:
+                files = list(target.rglob("*.py"))
+
+            for file_path in files:
+                if "__pycache__" in str(file_path):
+                    continue
+                content = file_path.read_text(encoding="utf-8")
+                tree = ast.parse(content, filename=str(file_path))
+
+                defined = set(builtin_names)
+                for node in tree.body:
+                    if isinstance(node, ast.Import):
+                        for alias in node.names:
+                            defined.add(alias.asname or alias.name.split('.')[0])
+                    elif isinstance(node, ast.ImportFrom):
+                        for alias in node.names:
+                            defined.add(alias.asname or alias.name)
+                    elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                        defined.add(node.name)
+                    elif isinstance(node, ast.Assign):
+                        for t in node.targets:
+                            if isinstance(t, ast.Name):
+                                defined.add(t.id)
+
+                for node in ast.walk(tree):
+                    annotations = []
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        if node.returns:
+                            annotations.append(node.returns)
+                        for arg in node.args.args + node.args.kwonlyargs:
+                            if arg.annotation:
+                                annotations.append(arg.annotation)
+                    elif isinstance(node, ast.AnnAssign):
+                        annotations.append(node.annotation)
+
+                    for ann in annotations:
+                        for sub in ast.walk(ann):
+                            if isinstance(sub, ast.Name):
+                                if sub.id not in defined and sub.id not in {"T", "Self"}:
+                                    unresolved.append((str(file_path.relative_to(PROJECT_ROOT)), sub.lineno, sub.id))
+
+        assert not unresolved, f"Found unresolved type annotations: {unresolved}"
+
+    def test_startup_endpoints_and_services_import_cleanly(self):
+        """Ensures all modules loaded during FastAPI startup and entrypoint import without NameError."""
+        import backend.entrypoint
+        import backend.app.main
+        import backend.app.api.endpoints.system
+        import backend.app.api.v1.endpoints.system
+        import backend.app.core.config
+        import backend.app.core.database
+        import backend.app.services.custody
+        import forensic_tools.registry
+
+        assert backend.app.main.app is not None
+        assert forensic_tools.registry.PlatformAwareToolRegistry is not None
