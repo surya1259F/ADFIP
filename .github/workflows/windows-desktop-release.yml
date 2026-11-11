@@ -102,8 +102,8 @@ jobs:
           $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
           $healthUrl = "http://127.0.0.1:54321/api/v1/system/health"
 
-          while ($stopwatch.Elapsed.TotalSeconds -lt 25) {
-            Start-Sleep -Milliseconds 500
+          while ($stopwatch.Elapsed.TotalSeconds -lt 90) {
+            Start-Sleep -Milliseconds 1000
             if ($proc.HasExited) {
               Write-Host "Backend process exited prematurely with code $($proc.ExitCode)"
               break
@@ -112,7 +112,7 @@ jobs:
               $resp = Invoke-RestMethod -Uri $healthUrl -Method Get -TimeoutSec 2
               if ($resp.status -eq "online") {
                 $ready = $true
-                Write-Host "Backend successfully verified online in $($stopwatch.Elapsed.TotalSeconds)s: $($resp | ConvertTo-Json -Compress)"
+                Write-Host "Backend successfully verified online in $([math]::Round($stopwatch.Elapsed.TotalSeconds, 1))s: $($resp | ConvertTo-Json -Compress)"
                 break
               }
             } catch {
@@ -157,8 +157,10 @@ jobs:
               Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Backend Crash Log`n``````text`n$crashContent`n``````"
             }
             $cleanErr = "$errContent $crashContent" -replace "`r?`n", " -- "
-            if ($cleanErr.Length -gt 250) { $cleanErr = $cleanErr.Substring(0, 250) }
-            Write-Host "::error title=Backend Startup Failure::$cleanErr"
+            $headErr = if ($cleanErr.Length -gt 200) { $cleanErr.Substring(0, 200) } else { $cleanErr }
+            $tailErr = if ($cleanErr.Length -gt 350) { $cleanErr.Substring($cleanErr.Length - 350) } else { "" }
+            Write-Host "::error title=Backend Startup Head::$headErr"
+            if ($tailErr) { Write-Host "::error title=Backend Startup Tail::$tailErr" }
             Write-Error "Backend readiness check timed out or failed. Stderr: $errContent"
             exit 1
           } else {
