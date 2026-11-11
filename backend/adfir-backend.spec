@@ -101,6 +101,30 @@ hidden_imports = [
     'alembic.script',
 ]
 
+def collect_local_submodules(package_dir, package_name):
+    mods = [package_name]
+    p = BASE_DIR / package_dir
+    if not p.exists():
+        return mods
+    for py in p.rglob('*.py'):
+        if any(skip in py.parts for skip in ['.venv', '__pycache__', 'tests', 'test', 'node_modules', 'fixtures', 'mocks']):
+            continue
+        rel = py.relative_to(BASE_DIR)
+        parts = list(rel.parts)
+        if parts[-1] == '__init__.py':
+            parts.pop()
+        elif parts[-1].endswith('.py'):
+            parts[-1] = parts[-1][:-3]
+        mod = '.'.join(parts)
+        if mod not in mods:
+            mods.append(mod)
+    return mods
+
+for pkg, pkg_name in [('backend/app', 'backend.app'), ('forensic_tools', 'forensic_tools'), ('investigation', 'investigation'), ('agents', 'agents')]:
+    for mod in collect_local_submodules(pkg, pkg_name):
+        if mod not in hidden_imports:
+            hidden_imports.append(mod)
+
 a = Analysis(
     [str(BASE_DIR / 'backend' / 'entrypoint.py')],
     pathex=[str(BASE_DIR)],

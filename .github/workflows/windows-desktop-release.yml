@@ -81,8 +81,11 @@ jobs:
         shell: pwsh
         run: |
           $env:ADFIP_PORT = "54321"
+          $env:ADFIR_PORT = "54321"
           $env:ADFIP_INTERNAL_SECRET = "ci_test_secret_12345"
+          $env:ADFIR_INTERNAL_SECRET = "ci_test_secret_12345"
           $env:ADFIP_DATA_DIR = "$env:TEMP\ADFIP_CI_DATA"
+          $env:ADFIR_DATA_DIR = "$env:TEMP\ADFIP_CI_DATA"
           New-Item -ItemType Directory -Force -Path $env:ADFIP_DATA_DIR
 
           $stdoutLog = "backend_stdout.log"
@@ -130,6 +133,11 @@ jobs:
 
           $errContent = Get-Content $stderrLog -Raw -ErrorAction SilentlyContinue
           $outContent = Get-Content $stdoutLog -Raw -ErrorAction SilentlyContinue
+
+          Write-Host "=== Backend Stderr ==="
+          Write-Host $errContent
+          Write-Host "=== Backend Stdout ==="
+          Write-Host $outContent
 
           if (-not $ready) {
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Backend Stderr`n``````text`n$errContent`n``````"
