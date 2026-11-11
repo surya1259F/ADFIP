@@ -204,11 +204,19 @@ jobs:
         shell: pwsh
         run: |
           powershell -ExecutionPolicy Bypass -File scripts/package-msix.ps1 -Version "0.1.0.0"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "MSIX packaging failed with exit code $LASTEXITCODE"
+            exit 1
+          }
 
       - name: Install and Verify MSIX Desktop Application
         shell: pwsh
         run: |
           powershell -ExecutionPolicy Bypass -File scripts/verify-msix-installed.ps1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "MSIX installation verification failed with exit code $LASTEXITCODE"
+            exit 1
+          }
 
       - name: Verify Generated Installers
         shell: pwsh

@@ -16,7 +16,7 @@ param(
     [switch]$CreateDevCert = $true
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 $root = (Get-Item $PSScriptRoot).Parent.FullName
 
 Write-Host "==========================================" -ForegroundColor Cyan
@@ -140,32 +140,25 @@ if (Test-Path $msixFile) {
 
 # 5. Locate Packaging Tools (Windows SDK MakeAppx.exe or WinApp CLI)
 function Find-WindowsSdkTool([string]$toolName) {
+    # 1. Direct command lookup if already in PATH
     $cmd = Get-Command $toolName -ErrorAction SilentlyContinue
     if ($cmd) {
         return $cmd.Source
     }
 
-    $kitsBin = "C:\Program Files (x86)\Windows Kits\10\bin"
-    if (Test-Path $kitsBin) {
-        $versionDirs = Get-ChildItem -Path $kitsBin -Directory -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -match '^\d+\.\d+\.\d+\.\d+$' } |
-            Sort-Object { [version]$_.Name } -Descending
-
-        foreach ($vDir in $versionDirs) {
-            $candidate = Join-Path $vDir.FullName "x64\$toolName"
-            if (Test-Path $candidate) {
-                return $candidate
-            }
-        }
-    }
-
-    $fallbacks = @(
-        "C:\Program Files (x86)\Windows Kits\10\bin\x64\$toolName",
-        "C:\Program Files\Windows Kits\10\bin\x64\$toolName"
+    # 2. Search Windows Kits 10 32-bit & 64-bit root directories
+    $searchRoots = @(
+        "C:\Program Files (x86)\Windows Kits\10\bin",
+        "C:\Program Files\Windows Kits\10\bin"
     )
-    foreach ($cand in $fallbacks) {
-        if (Test-Path $cand) {
-            return $cand
+    foreach ($basePath in $searchRoots) {
+        if (Test-Path $basePath) {
+            $found = Get-ChildItem -Path $basePath -Recurse -Filter $toolName -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -like "*\x64\*" }
+            if ($found) {
+                # Pick the latest SDK version (last in natural sorting)
+                return ($found | Select-Object -Last 1).FullName
+            }
         }
     }
     return $null
@@ -188,34 +181,32 @@ if ($signTool) {
 
 $packaged = $false
 
-# Temporarily relax ErrorActionPreference so native CLI stderr does not cause NativeCommandError
-$prevEAP = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
-
 # Try MakeAppx first for direct, deterministic packaging
 if ($makeAppx -and (Test-Path $makeAppx)) {
     Write-Host "[*] Packaging with MakeAppx: $makeAppx ..." -ForegroundColor Cyan
-    $makeAppxOut = & $makeAppx pack /d $stagePath /p $msixFile /nv /o 2>&1
-    Write-Host ($makeAppxOut -join "`n")
-    if ($LASTEXITCODE -eq 0 -and (Test-Path $msixFile)) {
+    Write-Host "    Source directory: $stagePath"
+    Write-Host "    Output MSIX:      $msixFile"
+    & "$makeAppx" pack /d "$stagePath" /p "$msixFile" /nv /o
+    $ec = $LASTEXITCODE
+    Write-Host "[*] MakeAppx completed with exit code: $ec"
+    if ($ec -eq 0 -and (Test-Path $msixFile)) {
         $packaged = $true
-        Write-Host "[+] MakeAppx successfully produced: $msixFile" -ForegroundColor Green
+        $f = Get-Item $msixFile
+        Write-Host "[+] MakeAppx successfully produced: $msixFile ($([math]::Round($f.Length / 1MB, 2)) MB)" -ForegroundColor Green
     } else {
-        Write-Warning "MakeAppx failed with code $LASTEXITCODE. Trying WinApp CLI..."
+        Write-Warning "MakeAppx failed with code $ec. Trying WinApp CLI..."
     }
 }
 
 if (-not $packaged -and $hasWinApp) {
     Write-Host "[*] Packaging with WinApp CLI ..." -ForegroundColor Cyan
-    $winappOut = & winapp pack $stagePath --output $msixFile 2>&1
-    Write-Host ($winappOut -join "`n")
-    if ($LASTEXITCODE -eq 0 -and (Test-Path $msixFile)) {
+    winapp pack "$stagePath" --output "$msixFile"
+    $ecWin = $LASTEXITCODE
+    if ($ecWin -eq 0 -and (Test-Path $msixFile)) {
         $packaged = $true
         Write-Host "[+] WinApp CLI successfully produced: $msixFile" -ForegroundColor Green
     }
 }
-
-$ErrorActionPreference = $prevEAP
 
 if (-not $packaged) {
     Write-Error "Failed to package MSIX! Neither MakeAppx nor WinApp CLI succeeded."
@@ -251,15 +242,12 @@ if ($CreateDevCert -and (-not $CertPath -or -not (Test-Path $CertPath))) {
 
 if ($CertPath -and (Test-Path $CertPath) -and $signTool) {
     Write-Host "[*] Signing MSIX with SignTool: $signTool ..." -ForegroundColor Cyan
-    $prevEAP = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    $signOut = & $signTool sign /fd SHA256 /f $CertPath /p $CertPassword $msixFile 2>&1
-    Write-Host ($signOut -join "`n")
-    $ErrorActionPreference = $prevEAP
-    if ($LASTEXITCODE -eq 0) {
+    & "$signTool" sign /fd SHA256 /f "$CertPath" /p "$CertPassword" "$msixFile"
+    $signEc = $LASTEXITCODE
+    if ($signEc -eq 0) {
         Write-Host "[+] Successfully signed MSIX package!" -ForegroundColor Green
     } else {
-        Write-Warning "SignTool exited with code $LASTEXITCODE. Package is unsigned (acceptable for Store submission)."
+        Write-Warning "SignTool exited with code $signEc. Package is unsigned (acceptable for Store submission)."
     }
 } else {
     Write-Host "[i] Skipping SignTool signing (Store ingestion will sign the package)." -ForegroundColor DarkGray
