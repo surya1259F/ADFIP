@@ -62,9 +62,10 @@ def get_alembic_config(engine=None) -> Config:
 
     alembic_cfg = Config(str(ini_path))
     db_url = str(engine.url) if engine else str(settings.DATABASE_URL)
-    alembic_cfg.set_main_option("sqlalchemy.url", db_url)
+    # ConfigParser treats '%' as variable interpolation syntax. Escape literal '%' as '%%'
+    alembic_cfg.set_main_option("sqlalchemy.url", db_url.replace("%", "%%"))
     alembic_script_loc = alembic_dir.as_posix() if hasattr(alembic_dir, "as_posix") else str(alembic_dir)
-    alembic_cfg.set_main_option("script_location", alembic_script_loc)
+    alembic_cfg.set_main_option("script_location", alembic_script_loc.replace("%", "%%"))
     return alembic_cfg
 
 def run_db_migrations(target_engine=None):

@@ -84,6 +84,20 @@ class TestWindowsDataDirectorySafety:
         # SQLite URL must use POSIX forward slashes, never backslashes
         assert "\\" not in db_url.replace("sqlite:///", "")
 
+    def test_alembic_config_windows_drive_letter_interpolation(self):
+        from sqlalchemy import create_engine
+        from backend.app.core.migrations import get_alembic_config
+
+        # Simulated Windows SQLAlchemy URL with quoted colon (C%3A)
+        windows_sqlite_url = "sqlite:///C%3A/Users/runneradmin/AppData/Local/Temp/ADFIP_CI_DATA/adfir.db"
+        mock_engine = create_engine(windows_sqlite_url)
+
+        # ConfigParser must not raise ValueError: invalid interpolation syntax
+        alembic_cfg = get_alembic_config(mock_engine)
+        assert alembic_cfg is not None
+        resolved_url = alembic_cfg.get_main_option("sqlalchemy.url")
+        assert resolved_url == windows_sqlite_url
+
 
 class TestWindowsForensicToolPaths:
     """Verifies that tool and runtime executable paths conform to Windows conventions."""

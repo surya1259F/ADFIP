@@ -17,7 +17,8 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 db_url = os.environ.get("DATABASE_URL") or str(settings.DATABASE_URL)
-config.set_main_option("sqlalchemy.url", db_url)
+# ConfigParser treats '%' as variable interpolation syntax. Escape literal '%' as '%%'
+config.set_main_option("sqlalchemy.url", db_url.replace("%", "%%"))
 
 target_metadata = Base.metadata
 
