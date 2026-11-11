@@ -206,6 +206,13 @@ if ($ec -eq 0 -and (Test-Path $msixFile)) {
     Write-Host "         MakeAppx Packaging Failed        " -ForegroundColor Red
     Write-Host "==========================================" -ForegroundColor Red
     $makeAppxOut | ForEach-Object { Write-Host "MakeAppx: $_" -ForegroundColor Red }
+    $errLines = ($makeAppxOut | Where-Object { $_ -match "error|fail|0x|invalid" } | Select-Object -First 5) -join " -- "
+    $lastFew = (($makeAppxOut | Select-Object -Last 10) -join " -- ")
+    if ($errLines) {
+        Write-Host "::error title=MakeAppx Error Details::$errLines"
+    } else {
+        Write-Host "::error title=MakeAppx Failure Tail::$lastFew"
+    }
     Write-Error "Failed to package MSIX with MakeAppx! Exit code: $ec"
     exit 1
 }
