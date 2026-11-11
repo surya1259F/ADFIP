@@ -104,15 +104,10 @@ Copy-Item -Path "$backendDir\*" -Destination $stageBackendDir -Recurse -Force
 
 # Copy Manifest and Assets
 Copy-Item -Path $manifestSrc -Destination (Join-Path $stagePath "AppxManifest.xml") -Force
-Copy-Item -Path $manifestSrc -Destination (Join-Path $stagePath "Package.appxmanifest") -Force
 
 $stageAssetsDir = Join-Path $stagePath "Assets"
 New-Item -ItemType Directory -Path $stageAssetsDir -Force | Out-Null
 Copy-Item -Path "$assetsSrc\*" -Destination $stageAssetsDir -Recurse -Force
-
-if (Test-Path (Join-Path $root "msix\winapp.yaml")) {
-    Copy-Item -Path (Join-Path $root "msix\winapp.yaml") -Destination (Join-Path $stagePath "winapp.yaml") -Force
-}
 
 # Verify Staging Directory Content
 $requiredStaged = @(
@@ -188,35 +183,30 @@ if ($signTool) {
 
 $packaged = $false
 
-# Try MakeAppx first for direct, deterministic packaging
-if ($makeAppx -and (Test-Path $makeAppx)) {
-    Write-Host "[*] Packaging with MakeAppx: $makeAppx ..." -ForegroundColor Cyan
-    Write-Host "    Source directory: $stagePath"
-    Write-Host "    Output MSIX:      $msixFile"
-    & "$makeAppx" pack /d "$stagePath" /p "$msixFile" /o /v /nv
-    $ec = $LASTEXITCODE
-    Write-Host "[*] MakeAppx completed with exit code: $ec"
-    if ($ec -eq 0 -and (Test-Path $msixFile)) {
-        $packaged = $true
-        $f = Get-Item $msixFile
-        Write-Host "[+] MakeAppx successfully produced: $msixFile ($([math]::Round($f.Length / 1MB, 2)) MB)" -ForegroundColor Green
-    } else {
-        Write-Warning "MakeAppx failed with code $ec. Trying WinApp CLI..."
-    }
+# Direct, deterministic packaging with Windows SDK MakeAppx
+if (-not $makeAppx -or -not (Test-Path $makeAppx)) {
+    Write-Error "MakeAppx.exe not found in Windows Kits! Cannot package MSIX."
+    exit 1
 }
 
-if (-not $packaged -and $hasWinApp) {
-    Write-Host "[*] Packaging with WinApp CLI ..." -ForegroundColor Cyan
-    winapp pack "$stagePath" --output "$msixFile"
-    $ecWin = $LASTEXITCODE
-    if ($ecWin -eq 0 -and (Test-Path $msixFile)) {
-        $packaged = $true
-        Write-Host "[+] WinApp CLI successfully produced: $msixFile" -ForegroundColor Green
-    }
-}
+Write-Host "[*] Packaging with MakeAppx: $makeAppx ..." -ForegroundColor Cyan
+Write-Host "    Source directory: $stagePath"
+Write-Host "    Output MSIX:      $msixFile"
 
-if (-not $packaged) {
-    Write-Error "Failed to package MSIX! Neither MakeAppx nor WinApp CLI succeeded."
+$makeAppxOut = & "$makeAppx" pack /d "$stagePath" /p "$msixFile" /o /v /nv 2>&1
+$ec = $LASTEXITCODE
+
+Write-Host "[*] MakeAppx completed with exit code: $ec"
+if ($ec -eq 0 -and (Test-Path $msixFile)) {
+    $packaged = $true
+    $f = Get-Item $msixFile
+    Write-Host "[+] MakeAppx successfully produced: $msixFile ($([math]::Round($f.Length / 1MB, 2)) MB)" -ForegroundColor Green
+} else {
+    Write-Host "==========================================" -ForegroundColor Red
+    Write-Host "         MakeAppx Packaging Failed        " -ForegroundColor Red
+    Write-Host "==========================================" -ForegroundColor Red
+    $makeAppxOut | ForEach-Object { Write-Host "MakeAppx: $_" -ForegroundColor Red }
+    Write-Error "Failed to package MSIX with MakeAppx! Exit code: $ec"
     exit 1
 }
 

@@ -203,27 +203,10 @@ jobs:
       - name: Package MSIX Application
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath "powershell.exe" -ArgumentList "-ExecutionPolicy Bypass -File scripts/package-msix.ps1 -Version 0.1.0.0" -NoNewWindow -Wait -PassThru -RedirectStandardOutput "package_stdout.log" -RedirectStandardError "package_stderr.log"
-          $outText = Get-Content "package_stdout.log" -Raw -ErrorAction SilentlyContinue
-          $errText = Get-Content "package_stderr.log" -Raw -ErrorAction SilentlyContinue
-          Write-Host "=== Package Stdout ==="
-          Write-Host $outText
-          Write-Host "=== Package Stderr ==="
-          Write-Host $errText
-          if ($env:GITHUB_STEP_SUMMARY) {
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Package Stdout`n``````text`n$outText`n``````"
-            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Package Stderr`n``````text`n$errText`n``````"
-          }
-          if ($p.ExitCode -ne 0) {
-            $cleanOut = $outText -replace "`r?`n", " -- "
-            $cleanErr = $errText -replace "`r?`n", " -- "
-            $headOut = if ($cleanOut.Length -gt 1500) { $cleanOut.Substring(0, 1500) } else { $cleanOut }
-            $tailOut = if ($cleanOut.Length -gt 1500) { $cleanOut.Substring($cleanOut.Length - 1500) } else { $cleanOut }
-            $tailErr = if ($cleanErr.Length -gt 1500) { $cleanErr.Substring($cleanErr.Length - 1500) } else { $cleanErr }
-            Write-Host "::error title=MSIX Package Stdout Head::$headOut"
-            Write-Host "::error title=MSIX Package Stdout Tail::$tailOut"
-            Write-Host "::error title=MSIX Package Stderr Tail::$tailErr"
-            exit $p.ExitCode
+          powershell.exe -ExecutionPolicy Bypass -File scripts/package-msix.ps1 -Version 0.1.0.0 *>&1 | Tee-Object -FilePath "package_stdout.log"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "MSIX packaging script failed with exit code $LASTEXITCODE"
+            exit $LASTEXITCODE
           }
 
       - name: Install and Verify MSIX Desktop Application
