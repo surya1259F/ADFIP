@@ -80,6 +80,7 @@ jobs:
       - name: Verify Backend Executable Standalone Execution
         shell: pwsh
         run: |
+          $env:PYTHONUNBUFFERED = "1"
           $env:ADFIP_PORT = "54321"
           $env:ADFIR_PORT = "54321"
           $env:ADFIP_INTERNAL_SECRET = "ci_test_secret_12345"
@@ -88,10 +89,11 @@ jobs:
           $env:ADFIR_DATA_DIR = "$env:TEMP\ADFIP_CI_DATA"
           New-Item -ItemType Directory -Force -Path $env:ADFIP_DATA_DIR
 
-          $stdoutLog = "backend_stdout.log"
-          $stderrLog = "backend_stderr.log"
+          $stdoutLog = "$((Get-Location).Path)\backend_stdout.log"
+          $stderrLog = "$((Get-Location).Path)\backend_stderr.log"
 
           $proc = Start-Process -FilePath "dist/adfir-backend/adfir-backend.exe" `
+            -WorkingDirectory "dist/adfir-backend" `
             -RedirectStandardOutput $stdoutLog `
             -RedirectStandardError $stderrLog `
             -PassThru
@@ -133,15 +135,30 @@ jobs:
 
           $errContent = Get-Content $stderrLog -Raw -ErrorAction SilentlyContinue
           $outContent = Get-Content $stdoutLog -Raw -ErrorAction SilentlyContinue
+          $crashLog = "dist/adfir-backend/backend_crash.log"
+          $crashContent = ""
+          if (Test-Path $crashLog) {
+            $crashContent = Get-Content $crashLog -Raw -ErrorAction SilentlyContinue
+          }
 
           Write-Host "=== Backend Stderr ==="
           Write-Host $errContent
           Write-Host "=== Backend Stdout ==="
           Write-Host $outContent
+          if ($crashContent) {
+            Write-Host "=== Backend Crash Log ==="
+            Write-Host $crashContent
+          }
 
           if (-not $ready) {
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Backend Stderr`n``````text`n$errContent`n``````"
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Backend Stdout`n``````text`n$outContent`n``````"
+            if ($crashContent) {
+              Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Backend Crash Log`n``````text`n$crashContent`n``````"
+            }
+            $cleanErr = "$errContent $crashContent" -replace "`r?`n", " -- "
+            if ($cleanErr.Length -gt 250) { $cleanErr = $cleanErr.Substring(0, 250) }
+            Write-Host "::error title=Backend Startup Failure::$cleanErr"
             Write-Error "Backend readiness check timed out or failed. Stderr: $errContent"
             exit 1
           } else {
@@ -213,5 +230,6 @@ jobs:
             backend_stdout.log
             backend_stderr.log
             pytest_log.txt
+            dist/adfir-backend/backend_crash.log
           if-no-files-found: ignore
           retention-days: 7

@@ -122,14 +122,30 @@ async def correlation_id_middleware(request: Request, call_next):
 # Desktop Bootstrap Secret Trust Boundary Middleware
 @app.middleware("http")
 async def desktop_bootstrap_middleware(request: Request, call_next):
-    secret = os.getenv("ADFIR_INTERNAL_SECRET") or settings.ADFIR_INTERNAL_SECRET
+    secret = (
+        os.getenv("ADFIP_INTERNAL_SECRET")
+        or os.getenv("ADFIR_INTERNAL_SECRET")
+        or settings.ADFIP_INTERNAL_SECRET
+        or settings.ADFIR_INTERNAL_SECRET
+    )
     if secret and secret.strip():
         if request.method != "OPTIONS":
             path = request.url.path.rstrip("/")
-            is_health = path in ["/health", "/api/health", "/api/v1/health", "/api/v1/system/health"]
+            is_health = path in [
+                "/health",
+                "/api/health",
+                "/api/v1/health",
+                "/api/v1/system/health",
+                "/api/system/health",
+            ]
             if not is_health:
-                provided_header = request.headers.get("X-ADFIR-Bootstrap-Secret")
-                if not provided_header or not hmac.compare_digest(provided_header.encode("utf-8"), secret.encode("utf-8")):
+                provided_header = (
+                    request.headers.get("X-ADFIP-Bootstrap-Secret")
+                    or request.headers.get("X-ADFIR-Bootstrap-Secret")
+                )
+                if not provided_header or not hmac.compare_digest(
+                    provided_header.encode("utf-8"), secret.encode("utf-8")
+                ):
                     return JSONResponse(
                         status_code=status.HTTP_403_FORBIDDEN,
                         content={"detail": "Forbidden: Invalid or missing desktop bootstrap secret."}
