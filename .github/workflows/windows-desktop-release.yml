@@ -61,13 +61,10 @@ jobs:
         shell: pwsh
         run: |
           $env:PYTHONPATH = "."
-          python -m pytest backend/tests/test_windows_desktop_deployment.py -v --tb=short 2>&1 | Tee-Object -FilePath pytest_log.txt
-          $testExitCode = $LASTEXITCODE
-          $testOutput = Get-Content pytest_log.txt -Raw -ErrorAction SilentlyContinue
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Backend Automated Tests Output`n``````text`n$testOutput`n``````"
-          if ($testExitCode -ne 0) {
-            Write-Error "Backend automated tests failed with exit code $testExitCode"
-            exit $testExitCode
+          python -m pytest backend/tests/test_windows_desktop_deployment.py -v --tb=short -W ignore
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Backend automated tests failed with exit code $LASTEXITCODE"
+            exit $LASTEXITCODE
           }
 
       - name: Package Backend with PyInstaller

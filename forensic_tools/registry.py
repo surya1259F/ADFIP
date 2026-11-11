@@ -217,7 +217,7 @@ class PlatformAwareToolRegistry:
         """
         try:
             p = Path(path_str).resolve()
-            p_str = str(p)
+            p_str = p.as_posix()
 
             # 1. Reject paths in test mock or fixture directories
             if "tests/mocks" in p_str or "tests/fixtures" in p_str:
