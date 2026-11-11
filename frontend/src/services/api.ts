@@ -138,8 +138,13 @@ client.interceptors.request.use((config) => {
   if (currentToken && !config.headers.Authorization) {
     config.headers.Authorization = `Bearer ${currentToken}`;
   }
-  if (currentBootstrapSecret && !config.headers['X-ADFIR-Bootstrap-Secret']) {
-    config.headers['X-ADFIR-Bootstrap-Secret'] = currentBootstrapSecret;
+  if (currentBootstrapSecret) {
+    if (!config.headers['X-ADFIP-Bootstrap-Secret']) {
+      config.headers['X-ADFIP-Bootstrap-Secret'] = currentBootstrapSecret;
+    }
+    if (!config.headers['X-ADFIR-Bootstrap-Secret']) {
+      config.headers['X-ADFIR-Bootstrap-Secret'] = currentBootstrapSecret;
+    }
   }
   return config;
 }, (error) => {

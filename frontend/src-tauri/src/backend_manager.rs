@@ -261,10 +261,9 @@ impl BackendManager {
                 "adfir-backend.exe",
                 "adfip-backend.exe",
                 "ADFIP-backend.exe",
-                "ADFIP.exe",
             ][..]
         } else {
-            &["adfir-backend", "adfip-backend", "ADFIP-backend", "ADFIP"][..]
+            &["adfir-backend", "adfip-backend", "ADFIP-backend"][..]
         };
 
         let mut candidate_dirs: Vec<PathBuf> = Vec::new();
@@ -375,10 +374,16 @@ impl BackendManager {
         }
 
         let mut checked_paths: Vec<PathBuf> = Vec::new();
+        let current_exe = std::env::current_exe().ok();
 
         for dir in &candidate_dirs {
             for exe_name in exe_names {
                 let cand = dir.join(exe_name);
+                if let Some(ref cur) = current_exe {
+                    if &cand == cur {
+                        continue;
+                    }
+                }
                 if cand.exists() {
                     println!(
                         "[ADFIP Backend Manager] Discovered backend executable at: {}",
@@ -440,6 +445,9 @@ impl BackendManager {
                 let bootstrap_secret = Self::generate_bootstrap_secret();
 
                 let mut cmd = Command::new(&bin_path);
+                if let Some(parent_dir) = bin_path.parent() {
+                    cmd.current_dir(parent_dir);
+                }
                 cmd.env("ADFIP_PORT", port.to_string());
                 cmd.env("ADFIR_PORT", port.to_string());
                 cmd.env("ADFIP_INTERNAL_SECRET", &bootstrap_secret);
@@ -447,6 +455,19 @@ impl BackendManager {
                 if std::env::var("ADFIP_DATA_DIR").is_err() && std::env::var("ADFIR_DATA_DIR").is_err() {
                     cmd.env("ADFIP_DATA_DIR", &user_data_dir);
                     cmd.env("ADFIR_DATA_DIR", &user_data_dir);
+                }
+
+                #[cfg(target_os = "windows")]
+                {
+                    // If packaged as MSIX, attempt best-effort loopback exemption registration
+                    let _ = Command::new("powershell")
+                        .args([
+                            "-NoProfile",
+                            "-NonInteractive",
+                            "-Command",
+                            "if (Get-Command CheckNetIsolation.exe -ErrorAction SilentlyContinue) { $p = Get-AppxPackage -Name *ADFIP* -ErrorAction SilentlyContinue; if ($p) { CheckNetIsolation.exe LoopbackExempt -a -n=$p.PackageFamilyName 2>$null } }",
+                        ])
+                        .output();
                 }
 
                 let mut child = match cmd.spawn() {
@@ -480,12 +501,24 @@ impl BackendManager {
                     }
                 };
 
+                let timeout_secs = std::env::var("ADFIP_BACKEND_TIMEOUT_SECS")
+                    .or_else(|_| std::env::var("ADFIR_BACKEND_TIMEOUT_SECS"))
+                    .ok()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(60);
+                let max_wait = Duration::from_secs(timeout_secs);
                 let start = Instant::now();
                 let mut ready = false;
+                let mut last_log = Instant::now();
 
-                while start.elapsed() < Duration::from_secs(10) {
+                while start.elapsed() < max_wait {
                     // Check if child exited early (e.g. port collision / failed bind)
-                    if let Ok(Some(_status)) = child.try_wait() {
+                    if let Ok(Some(exit_status)) = child.try_wait() {
+                        last_err = format!(
+                            "Backend process (PID {}) exited prematurely with status: {:?}",
+                            pid, exit_status
+                        );
+                        eprintln!("[ADFIP Backend Manager] {}", last_err);
                         break;
                     }
 
@@ -498,9 +531,25 @@ impl BackendManager {
                     if let Ok(response) = res {
                         if response.status().is_success() {
                             ready = true;
+                            println!(
+                                "[ADFIP Backend Manager] Backend verified healthy on port {} in {:.1}s",
+                                port,
+                                start.elapsed().as_secs_f32()
+                            );
                             break;
                         }
                     }
+
+                    if last_log.elapsed() >= Duration::from_secs(5) {
+                        println!(
+                            "[ADFIP Backend Manager] Waiting for backend readiness at {} (elapsed: {:.0}s / {}s)...",
+                            health_url,
+                            start.elapsed().as_secs_f32(),
+                            timeout_secs
+                        );
+                        last_log = Instant::now();
+                    }
+
                     std::thread::sleep(Duration::from_millis(250));
                 }
 

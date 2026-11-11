@@ -36,6 +36,7 @@ apiClient.interceptors.request.use((config) => {
     config.headers.Authorization = `Bearer ${token}`;
   }
   if (currentBootstrapSecret) {
+    config.headers['X-ADFIP-Bootstrap-Secret'] = currentBootstrapSecret;
     config.headers['X-ADFIR-Bootstrap-Secret'] = currentBootstrapSecret;
   }
   if (typeof FormData !== 'undefined' && config.data instanceof FormData) {

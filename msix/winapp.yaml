@@ -1,0 +1,22 @@
+package:
+  identity:
+    name: "ADFIP.AutonomousForensicPlatform"
+    publisher: "CN=ADFIPDev, O=ADFIP, C=US"
+    version: "0.1.0.0"
+    processorArchitecture: "x64"
+  properties:
+    displayName: "ADFIP"
+    publisherDisplayName: "ADFIP Team"
+    description: "Autonomous Digital Forensic Investigation Platform"
+    logo: "Assets\\StoreLogo.png"
+  applications:
+    - id: "ADFIP"
+      executable: "ADFIP.exe"
+      displayName: "ADFIP"
+      description: "Autonomous Digital Forensic Investigation Platform"
+      visualElements:
+        square150x150Logo: "Assets\\Square150x150Logo.png"
+        square44x44Logo: "Assets\\Square44x44Logo.png"
+        wide310x150Logo: "Assets\\Wide310x150Logo.png"
+        square71x71Logo: "Assets\\Square71x71Logo.png"
+        splashScreen: "Assets\\SplashScreen.png"

@@ -392,3 +392,101 @@ class TestForensicRegistryAndTypingIntegrity:
 
         assert backend.app.main.app is not None
         assert forensic_tools.registry.PlatformAwareToolRegistry is not None
+
+
+class TestWindowsMSIXPackagingAndManifest:
+    """Verifies Microsoft Store MSIX packaging, AppxManifest schema, and asset integrity."""
+
+    def test_msix_appx_manifest_structure(self):
+        import xml.etree.ElementTree as ET
+
+        manifest_path = PROJECT_ROOT / "msix" / "AppxManifest.xml"
+        assert manifest_path.exists(), "msix/AppxManifest.xml must exist"
+
+        tree = ET.parse(manifest_path)
+        root = tree.getroot()
+
+        # Check root tag and namespaces
+        assert root.tag.endswith("Package")
+        namespaces = {
+            "ns": "http://schemas.microsoft.com/appx/manifest/foundation/windows10",
+            "uap": "http://schemas.microsoft.com/appx/manifest/uap/windows10",
+            "rescap": "http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities",
+        }
+
+        # Check Identity
+        identity = root.find("ns:Identity", namespaces)
+        assert identity is not None, "Identity element is missing"
+        assert identity.attrib.get("Name") == "ADFIP.AutonomousForensicPlatform"
+        assert "CN=" in identity.attrib.get("Publisher", "")
+        assert identity.attrib.get("ProcessorArchitecture") == "x64"
+
+        # Check Application EntryPoint and Executable
+        app = root.find("ns:Applications/ns:Application", namespaces)
+        assert app is not None, "Application element is missing"
+        assert app.attrib.get("Id") == "ADFIP"
+        assert app.attrib.get("Executable") == "ADFIP.exe"
+        assert app.attrib.get("EntryPoint") == "Windows.FullTrustApplication"
+
+        # Check Capabilities (runFullTrust and network isolation capabilities)
+        capabilities = root.find("ns:Capabilities", namespaces)
+        assert capabilities is not None, "Capabilities element is missing"
+
+        full_trust = capabilities.find("rescap:Capability[@Name='runFullTrust']", namespaces)
+        assert full_trust is not None, "runFullTrust capability is missing"
+
+        net_client = capabilities.find("ns:Capability[@Name='internetClient']", namespaces)
+        assert net_client is not None, "internetClient capability is missing"
+
+        private_net = capabilities.find("ns:Capability[@Name='privateNetworkClientServer']", namespaces)
+        assert private_net is not None, "privateNetworkClientServer capability is missing"
+
+        # Verify referenced assets exist
+        assets_dir = PROJECT_ROOT / "msix" / "Assets"
+        assert assets_dir.exists()
+        required_assets = [
+            "Square44x44Logo.png",
+            "Square71x71Logo.png",
+            "Square150x150Logo.png",
+            "Wide310x150Logo.png",
+            "StoreLogo.png",
+            "SplashScreen.png",
+        ]
+        for asset in required_assets:
+            asset_file = assets_dir / asset
+            assert asset_file.exists(), f"Required MSIX asset {asset} missing from {assets_dir}"
+            assert asset_file.stat().st_size > 0, f"Asset {asset} cannot be empty"
+
+    def test_msix_packaging_scripts_and_configuration(self):
+        package_script = PROJECT_ROOT / "scripts" / "package-msix.ps1"
+        verify_script = PROJECT_ROOT / "scripts" / "verify-msix-installed.ps1"
+        asset_script = PROJECT_ROOT / "scripts" / "prepare_msix_assets.py"
+        winapp_config = PROJECT_ROOT / "msix" / "winapp.yaml"
+
+        assert package_script.exists(), "package-msix.ps1 must exist"
+        assert verify_script.exists(), "verify-msix-installed.ps1 must exist"
+        assert asset_script.exists(), "prepare_msix_assets.py must exist"
+        assert winapp_config.exists(), "winapp.yaml must exist"
+
+        pkg_text = package_script.read_text(encoding="utf-8")
+        assert "MakeAppx" in pkg_text or "makeappx" in pkg_text
+        assert "ADFIP" in pkg_text
+
+        verify_text = verify_script.read_text(encoding="utf-8")
+        assert "CheckNetIsolation" in verify_text
+        assert "Add-AppxPackage" in verify_text
+
+    def test_backend_manager_excludes_frontend_exe_and_sets_dir(self):
+        bm_path = PROJECT_ROOT / "frontend" / "src-tauri" / "src" / "backend_manager.rs"
+        assert bm_path.exists()
+        content = bm_path.read_text(encoding="utf-8")
+
+        # Must not have "ADFIP.exe" in exe_names
+        assert '"ADFIP.exe"' not in content, "ADFIP.exe must NOT be in backend exe_names"
+        # Must skip candidate if it equals current_exe
+        assert "cand == cur" in content or "&cand == cur" in content, "Must reject current_exe candidate"
+        # Must set current_dir to parent directory
+        assert "cmd.current_dir" in content, "Must set current_dir for child process"
+        # Must have configurable timeout with 60s fallback
+        assert "ADFIP_BACKEND_TIMEOUT_SECS" in content, "Must support ADFIP_BACKEND_TIMEOUT_SECS"
+

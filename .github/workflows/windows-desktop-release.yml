@@ -185,12 +185,38 @@ jobs:
           cd frontend
           npx tauri build --bundles nsis,msi --no-sign
 
+      - name: Install WinApp CLI
+        shell: pwsh
+        run: |
+          npm install -g @microsoft/winappcli
+          if (Get-Command winapp -ErrorAction SilentlyContinue) {
+            Write-Host "WinApp CLI successfully installed: $(winapp --version 2>$null)"
+          } else {
+            Write-Warning "winapp command not found in global path, will fall back to MakeAppx."
+          }
+
+      - name: Generate MSIX Package Assets
+        shell: pwsh
+        run: |
+          python scripts/prepare_msix_assets.py
+
+      - name: Package MSIX Application
+        shell: pwsh
+        run: |
+          powershell -ExecutionPolicy Bypass -File scripts/package-msix.ps1 -Version "0.1.0.0"
+
+      - name: Install and Verify MSIX Desktop Application
+        shell: pwsh
+        run: |
+          powershell -ExecutionPolicy Bypass -File scripts/verify-msix-installed.ps1
+
       - name: Verify Generated Installers
         shell: pwsh
         run: |
           $bundleDir = "frontend/src-tauri/target/release/bundle"
           $nsisExes = Get-ChildItem -Path "$bundleDir/nsis/*.exe" -ErrorAction SilentlyContinue
           $msiPkgs = Get-ChildItem -Path "$bundleDir/msi/*.msi" -ErrorAction SilentlyContinue
+          $msixPkgs = Get-ChildItem -Path "dist/*.msix" -ErrorAction SilentlyContinue
           $backendExe = Get-Item -Path "dist/adfir-backend/adfir-backend.exe" -ErrorAction SilentlyContinue
 
           Write-Host "Discovered Standalone Backend Executable:"
@@ -207,8 +233,15 @@ jobs:
           Write-Host "Discovered MSI Installers:"
           $msiPkgs | ForEach-Object { Write-Host " - $($_.FullName) ($([math]::Round($_.Length / 1MB, 2)) MB)" }
 
-          if ($nsisExes.Count -eq 0 -and $msiPkgs.Count -eq 0) {
-            Write-Error "Neither NSIS .exe nor MSI installer was generated!"
+          Write-Host "Discovered MSIX Packages:"
+          $msixPkgs | ForEach-Object { Write-Host " - $($_.FullName) ($([math]::Round($_.Length / 1MB, 2)) MB)" }
+
+          if ($nsisExes.Count -eq 0 -and $msiPkgs.Count -eq 0 -and $msixPkgs.Count -eq 0) {
+            Write-Error "No Windows installer or MSIX package was generated!"
+            exit 1
+          }
+          if ($msixPkgs.Count -eq 0) {
+            Write-Error "MSIX package was not generated!"
             exit 1
           }
 
@@ -218,6 +251,8 @@ jobs:
           name: ADFIP-Windows-x64-Binaries-and-Installers
           path: |
             dist/adfir-backend/adfir-backend.exe
+            dist/*.msix
+            build/msix_staging/devcert.pfx
             frontend/src-tauri/target/release/bundle/nsis/*.exe
             frontend/src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
