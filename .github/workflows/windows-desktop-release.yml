@@ -215,9 +215,14 @@ jobs:
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Package Stderr`n``````text`n$errText`n``````"
           }
           if ($p.ExitCode -ne 0) {
-            $msg = "$errText $outText" -replace "`r?`n", " -- "
-            $headMsg = if ($msg.Length -gt 250) { $msg.Substring(0, 250) } else { $msg }
-            Write-Host "::error title=MSIX Packaging Failure::$headMsg"
+            $cleanOut = $outText -replace "`r?`n", " -- "
+            $cleanErr = $errText -replace "`r?`n", " -- "
+            $headOut = if ($cleanOut.Length -gt 250) { $cleanOut.Substring(0, 250) } else { $cleanOut }
+            $tailOut = if ($cleanOut.Length -gt 350) { $cleanOut.Substring($cleanOut.Length - 350) } else { $cleanOut }
+            $tailErr = if ($cleanErr.Length -gt 350) { $cleanErr.Substring($cleanErr.Length - 350) } else { $cleanErr }
+            Write-Host "::error title=MSIX Package Stdout Head::$headOut"
+            Write-Host "::error title=MSIX Package Stdout Tail::$tailOut"
+            Write-Host "::error title=MSIX Package Stderr Tail::$tailErr"
             exit $p.ExitCode
           }
 
@@ -236,9 +241,14 @@ jobs:
             Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Verify Stderr`n``````text`n$errText`n``````"
           }
           if ($p.ExitCode -ne 0) {
-            $msg = "$errText $outText" -replace "`r?`n", " -- "
-            $headMsg = if ($msg.Length -gt 250) { $msg.Substring(0, 250) } else { $msg }
-            Write-Host "::error title=MSIX Verify Failure::$headMsg"
+            $cleanOut = $outText -replace "`r?`n", " -- "
+            $cleanErr = $errText -replace "`r?`n", " -- "
+            $headOut = if ($cleanOut.Length -gt 250) { $cleanOut.Substring(0, 250) } else { $cleanOut }
+            $tailOut = if ($cleanOut.Length -gt 350) { $cleanOut.Substring($cleanOut.Length - 350) } else { $cleanOut }
+            $tailErr = if ($cleanErr.Length -gt 350) { $cleanErr.Substring($cleanErr.Length - 350) } else { $cleanErr }
+            Write-Host "::error title=MSIX Verify Stdout Head::$headOut"
+            Write-Host "::error title=MSIX Verify Stdout Tail::$tailOut"
+            Write-Host "::error title=MSIX Verify Stderr Tail::$tailErr"
             exit $p.ExitCode
           }
 
