@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Packages and signs ADFIP into a Microsoft Store-compatible MSIX package.
 .DESCRIPTION
@@ -24,12 +24,14 @@ Write-Host "   ADFIP Windows MSIX Packaging Pipeline  " -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 
 # 1. Locate Tauri Executable
-$tauriExes = @(
-    "$root/frontend/src-tauri/target/release/ADFIP.exe",
-    "$root/frontend/src-tauri/target/release/app.exe"
+$tauriCandidates = @(
+    (Join-Path $root "frontend\src-tauri\target\release\ADFIP.exe"),
+    (Join-Path $root "frontend\src-tauri\target\release\app.exe"),
+    (Join-Path $root "src-tauri\target\release\ADFIP.exe"),
+    (Join-Path $root "src-tauri\target\release\app.exe")
 )
 $tauriExe = $null
-foreach ($cand in $tauriExes) {
+foreach ($cand in $tauriCandidates) {
     if (Test-Path $cand) {
         $tauriExe = (Get-Item $cand).FullName
         break
@@ -37,22 +39,39 @@ foreach ($cand in $tauriExes) {
 }
 
 if (-not $tauriExe) {
-    Write-Error "Tauri release executable not found! Checked: $($tauriExes -join ', ')"
+    $searchDirs = @(
+        (Join-Path $root "frontend\src-tauri\target\release"),
+        (Join-Path $root "src-tauri\target\release")
+    )
+    foreach ($sDir in $searchDirs) {
+        if (Test-Path $sDir) {
+            $foundExes = Get-ChildItem -Path $sDir -Filter "*.exe" -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -notlike "*build*" -and $_.Name -notlike "*test*" }
+            if ($foundExes) {
+                $tauriExe = ($foundExes | Sort-Object Length -Descending | Select-Object -First 1).FullName
+                break
+            }
+        }
+    }
+}
+
+if (-not $tauriExe) {
+    Write-Error "Tauri release executable not found! Checked: $($tauriCandidates -join ', ')"
     exit 1
 }
 Write-Host "[+] Found Tauri executable: $tauriExe" -ForegroundColor Green
 
 # 2. Locate Backend Distribution Directory
-$backendDir = "$root/dist/adfir-backend"
-if (-not (Test-Path "$backendDir/adfir-backend.exe")) {
-    Write-Error "Backend executable missing at $backendDir/adfir-backend.exe!"
+$backendDir = Join-Path $root "dist\adfir-backend"
+if (-not (Test-Path (Join-Path $backendDir "adfir-backend.exe"))) {
+    Write-Error "Backend executable missing at $backendDir\adfir-backend.exe!"
     exit 1
 }
 Write-Host "[+] Found PyInstaller backend: $backendDir" -ForegroundColor Green
 
 # 3. Verify Manifest and Assets
-$manifestSrc = "$root/msix/AppxManifest.xml"
-$assetsSrc = "$root/msix/Assets"
+$manifestSrc = Join-Path $root "msix\AppxManifest.xml"
+$assetsSrc = Join-Path $root "msix\Assets"
 if (-not (Test-Path $manifestSrc)) {
     Write-Error "MSIX AppxManifest missing at $manifestSrc!"
     exit 1
@@ -78,15 +97,40 @@ Write-Host "[+] Staging files into $stagePath ..." -ForegroundColor Yellow
 # Copy Frontend executable as ADFIP.exe
 Copy-Item -Path $tauriExe -Destination (Join-Path $stagePath "ADFIP.exe") -Force
 
-# Copy Backend one-folder distribution
-Copy-Item -Path $backendDir -Destination (Join-Path $stagePath "adfir-backend") -Recurse -Force
+# Copy Backend one-folder distribution contents into adfir-backend\
+$stageBackendDir = Join-Path $stagePath "adfir-backend"
+New-Item -ItemType Directory -Path $stageBackendDir -Force | Out-Null
+Copy-Item -Path "$backendDir\*" -Destination $stageBackendDir -Recurse -Force
 
 # Copy Manifest and Assets
 Copy-Item -Path $manifestSrc -Destination (Join-Path $stagePath "AppxManifest.xml") -Force
 Copy-Item -Path $manifestSrc -Destination (Join-Path $stagePath "Package.appxmanifest") -Force
-Copy-Item -Path $assetsSrc -Destination (Join-Path $stagePath "Assets") -Recurse -Force
-if (Test-Path "$root/msix/winapp.yaml") {
-    Copy-Item -Path "$root/msix/winapp.yaml" -Destination (Join-Path $stagePath "winapp.yaml") -Force
+
+$stageAssetsDir = Join-Path $stagePath "Assets"
+New-Item -ItemType Directory -Path $stageAssetsDir -Force | Out-Null
+Copy-Item -Path "$assetsSrc\*" -Destination $stageAssetsDir -Recurse -Force
+
+if (Test-Path (Join-Path $root "msix\winapp.yaml")) {
+    Copy-Item -Path (Join-Path $root "msix\winapp.yaml") -Destination (Join-Path $stagePath "winapp.yaml") -Force
+}
+
+# Verify Staging Directory Content
+$requiredStaged = @(
+    "ADFIP.exe",
+    "AppxManifest.xml",
+    "Assets\StoreLogo.png",
+    "Assets\Square150x150Logo.png",
+    "Assets\Square44x44Logo.png",
+    "Assets\SplashScreen.png",
+    "adfir-backend\adfir-backend.exe"
+)
+foreach ($req in $requiredStaged) {
+    $fullReq = Join-Path $stagePath $req
+    if (-not (Test-Path $fullReq)) {
+        Write-Error "Staging verification failed: Missing required file $req at $fullReq"
+        exit 1
+    }
+    Write-Host "    [✓] Staged verified: $req" -ForegroundColor Green
 }
 
 $msixFile = Join-Path $outPath "ADFIP_$Version`_x64.msix"
@@ -144,6 +188,10 @@ if ($signTool) {
 
 $packaged = $false
 
+# Temporarily relax ErrorActionPreference so native CLI stderr does not cause NativeCommandError
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+
 # Try MakeAppx first for direct, deterministic packaging
 if ($makeAppx -and (Test-Path $makeAppx)) {
     Write-Host "[*] Packaging with MakeAppx: $makeAppx ..." -ForegroundColor Cyan
@@ -153,7 +201,7 @@ if ($makeAppx -and (Test-Path $makeAppx)) {
         $packaged = $true
         Write-Host "[+] MakeAppx successfully produced: $msixFile" -ForegroundColor Green
     } else {
-        Write-Warning "MakeAppx failed with exit code $LASTEXITCODE. Trying WinApp CLI..."
+        Write-Warning "MakeAppx failed with code $LASTEXITCODE. Trying WinApp CLI..."
     }
 }
 
@@ -166,6 +214,8 @@ if (-not $packaged -and $hasWinApp) {
         Write-Host "[+] WinApp CLI successfully produced: $msixFile" -ForegroundColor Green
     }
 }
+
+$ErrorActionPreference = $prevEAP
 
 if (-not $packaged) {
     Write-Error "Failed to package MSIX! Neither MakeAppx nor WinApp CLI succeeded."
@@ -201,8 +251,11 @@ if ($CreateDevCert -and (-not $CertPath -or -not (Test-Path $CertPath))) {
 
 if ($CertPath -and (Test-Path $CertPath) -and $signTool) {
     Write-Host "[*] Signing MSIX with SignTool: $signTool ..." -ForegroundColor Cyan
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     $signOut = & $signTool sign /fd SHA256 /f $CertPath /p $CertPassword $msixFile 2>&1
     Write-Host ($signOut -join "`n")
+    $ErrorActionPreference = $prevEAP
     if ($LASTEXITCODE -eq 0) {
         Write-Host "[+] Successfully signed MSIX package!" -ForegroundColor Green
     } else {

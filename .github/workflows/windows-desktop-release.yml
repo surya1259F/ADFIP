@@ -264,9 +264,9 @@ jobs:
         with:
           name: ADFIP-Diagnostic-Logs
           path: |
-            backend_stdout.log
-            backend_stderr.log
-            pytest_log.txt
+            *.log
+            dist/*.log
             dist/adfir-backend/backend_crash.log
+            pytest_log.txt
           if-no-files-found: ignore
           retention-days: 7
